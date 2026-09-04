@@ -10,8 +10,8 @@ const features = [
   {
     title: "チェックリスト取込",
     desc: "既存のExcelチェックリストを読み込み、点検項目として登録します。",
-    status: "未実装",
-    href: null,
+    status: "実装済み",
+    href: "/checklists",
   },
   {
     title: "現場チェック（iPad）",

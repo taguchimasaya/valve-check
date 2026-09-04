@@ -24,7 +24,10 @@ type EquipmentRecord = {
   hierarchy3: string | null;
   hierarchy4: string | null;
   qr_issued_at: string | null;
+  checklist_template_id: string | null;
 };
+
+type TemplateOption = { id: string; name: string };
 
 type StatusFilter = "all" | "issued" | "unissued";
 
@@ -51,6 +54,10 @@ export default function EquipmentPage() {
   const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
   const [qrPreview, setQrPreview] = useState<EquipmentRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignTemplateId, setAssignTemplateId] = useState("");
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -61,7 +68,7 @@ export default function EquipmentPage() {
     const { data, error } = await supabase
       .from("equipment")
       .select(
-        "id, code, name, valve_type, hierarchy1, hierarchy2, hierarchy3, hierarchy4, qr_issued_at"
+        "id, code, name, valve_type, hierarchy1, hierarchy2, hierarchy3, hierarchy4, qr_issued_at, checklist_template_id"
       )
       .order("code", { ascending: true });
     if (!error && data) {
@@ -70,9 +77,23 @@ export default function EquipmentPage() {
     setLoadingList(false);
   }, []);
 
+  const loadTemplates = useCallback(async () => {
+    const { data } = await supabase
+      .from("checklist_templates")
+      .select("id, name")
+      .order("name", { ascending: true });
+    if (data) setTemplates(data);
+  }, []);
+
   useEffect(() => {
     loadEquipment();
-  }, [loadEquipment]);
+    loadTemplates();
+  }, [loadEquipment, loadTemplates]);
+
+  const templateNameById = useMemo(
+    () => new Map(templates.map((t) => [t.id, t.name])),
+    [templates]
+  );
 
   const hierarchyFilter = useHierarchyFilter(equipmentList);
 
@@ -259,6 +280,21 @@ export default function EquipmentPage() {
       return;
     }
     deleteEquipment([eq.id]);
+  }
+
+  async function assignTemplateToSelected() {
+    if (selectedIds.size === 0 || !assignTemplateId) return;
+    setAssigning(true);
+    const { error } = await supabase
+      .from("equipment")
+      .update({ checklist_template_id: assignTemplateId })
+      .in("id", Array.from(selectedIds));
+    setAssigning(false);
+    if (!error) {
+      setAssignModalOpen(false);
+      setAssignTemplateId("");
+      loadEquipment();
+    }
   }
 
   function deleteSelected() {
@@ -512,6 +548,12 @@ export default function EquipmentPage() {
                 選択した機器のQRを発行・印刷
               </button>
               <button
+                onClick={() => setAssignModalOpen(true)}
+                className="rounded-lg border border-zinc-400 px-3 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                チェックリストを割り当て
+              </button>
+              <button
                 onClick={() => bulkSetIssued(true)}
                 disabled={bulkUpdating}
                 className="rounded-lg border border-emerald-700 px-3 py-1.5 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:text-emerald-300 dark:hover:bg-emerald-900"
@@ -573,6 +615,7 @@ export default function EquipmentPage() {
                     <th className="py-2 pr-4">機器名称</th>
                     <th className="py-2 pr-4">階層</th>
                     <th className="py-2 pr-4">バルブ種別</th>
+                    <th className="py-2 pr-4">チェックリスト</th>
                     <th className="py-2 pr-4">状態</th>
                     <th className="py-2 pr-2 text-right">操作</th>
                   </tr>
@@ -604,6 +647,11 @@ export default function EquipmentPage() {
                       </td>
                       <td className="py-2 pr-4 text-zinc-500">
                         {eq.valve_type || "—"}
+                      </td>
+                      <td className="py-2 pr-4 text-zinc-500">
+                        {eq.checklist_template_id
+                          ? templateNameById.get(eq.checklist_template_id) ?? "—"
+                          : "未割当"}
                       </td>
                       <td className="py-2 pr-4">
                         <span
@@ -644,6 +692,65 @@ export default function EquipmentPage() {
           )}
         </section>
       </div>
+
+      {/* チェックリスト割り当てモーダル */}
+      {assignModalOpen && (
+        <div
+          className="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setAssignModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white p-6 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">
+              チェックリストを割り当て
+            </h3>
+            <p className="mt-1 text-sm text-zinc-500">
+              選択中の{selectedIds.size}件に割り当てるチェックリストを選んでください。
+            </p>
+            {templates.length === 0 ? (
+              <p className="mt-4 text-sm text-amber-700 dark:text-amber-400">
+                まだチェックリストが登録されていません。
+                <Link href="/checklists" className="ml-1 underline">
+                  先にチェックリストを取り込んでください
+                </Link>
+                。
+              </p>
+            ) : (
+              <>
+                <select
+                  value={assignTemplateId}
+                  onChange={(e) => setAssignTemplateId(e.target.value)}
+                  className="mt-4 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  <option value="">選択してください</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    onClick={() => setAssignModalOpen(false)}
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-300"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={assignTemplateToSelected}
+                    disabled={!assignTemplateId || assigning}
+                    className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm text-white hover:bg-emerald-800 disabled:opacity-50"
+                  >
+                    {assigning ? "割り当て中..." : "割り当てる"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* QRプレビューモーダル */}
       {qrPreview && origin && (
