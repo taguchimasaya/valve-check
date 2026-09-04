@@ -61,6 +61,13 @@ create table if not exists inspection_results (
 alter publication supabase_realtime add table inspection_results;
 
 -- --- デモ用の簡易アクセス許可 ---
+-- 「Automatically expose new tables」をOFFにした場合に備え、テーブルへの
+-- アクセス権をここで明示的に付与します（ONの場合でも実行して問題ありません）。
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on
+  equipment, checklist_templates, checklist_items, inspection_sessions, inspection_results
+  to anon, authenticated;
+
 -- ログイン機能を作るまでの間、匿名キーからの読み書きを許可します。
 -- 本運用前には行レベルセキュリティ(RLS)のポリシーを利用実態に合わせて見直してください。
 alter table equipment enable row level security;

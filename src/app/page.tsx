@@ -1,23 +1,29 @@
+import Link from "next/link";
+
 const features = [
   {
     title: "機器マスター / QR発行",
     desc: "機器マスターをインポートし、機器ごとにQRコードを発行します。",
-    status: "未実装",
+    status: "実装済み",
+    href: "/equipment",
   },
   {
     title: "チェックリスト取込",
     desc: "既存のExcelチェックリストを読み込み、点検項目として登録します。",
     status: "未実装",
+    href: null,
   },
   {
     title: "現場チェック（iPad）",
     desc: "QRコードを読み取り、対象バルブのチェックリストにその場で記録します。",
     status: "未実装",
+    href: null,
   },
   {
     title: "点検ダッシュボード（制御室PC）",
     desc: "現場のチェック状況をリアルタイムに確認します。",
     status: "未実装",
+    href: null,
   },
 ];
 
@@ -36,24 +42,40 @@ export default function Home() {
         </p>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          {features.map((f) => (
-            <div
-              key={f.title}
-              className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
-                  {f.title}
-                </h2>
-                <span className="whitespace-nowrap rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  {f.status}
-                </span>
+          {features.map((f) => {
+            const card = (
+              <div
+                className={`rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950 ${
+                  f.href ? "transition-colors hover:border-emerald-400" : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
+                    {f.title}
+                  </h2>
+                  <span
+                    className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      f.status === "実装済み"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+                        : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                    }`}
+                  >
+                    {f.status}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  {f.desc}
+                </p>
               </div>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                {f.desc}
-              </p>
-            </div>
-          ))}
+            );
+            return f.href ? (
+              <Link key={f.title} href={f.href}>
+                {card}
+              </Link>
+            ) : (
+              <div key={f.title}>{card}</div>
+            );
+          })}
         </div>
       </div>
     </main>
