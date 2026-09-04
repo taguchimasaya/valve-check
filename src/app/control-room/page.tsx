@@ -15,7 +15,7 @@ type TemplateOption = { id: string; name: string; itemCount: number };
 type StepInfo = { id: string; itemNo: number; name: string };
 type CellState = "NA" | "PENDING" | "OK" | "NG";
 type TargetState = "open" | "close";
-type Cell = { state: CellState; target: TargetState | null };
+type Cell = { state: CellState; target: TargetState | null; confirmed: boolean };
 type ValveRow = {
   equipmentId: string;
   code: string;
@@ -114,12 +114,15 @@ export default function ControlRoomPage() {
 
     const { data: results } = await supabase
       .from("inspection_results")
-      .select("equipment_id, item_id, result")
+      .select("equipment_id, item_id, result, confirmed_at")
       .eq("session_id", session.id)
       .in("item_id", itemIds);
 
     const resultMap = new Map(
-      (results ?? []).map((r) => [`${r.equipment_id}:${r.item_id}`, r.result as CellState])
+      (results ?? []).map((r) => [
+        `${r.equipment_id}:${r.item_id}`,
+        { state: r.result as CellState, confirmed: !!r.confirmed_at },
+      ])
     );
 
     const rowMap = new Map<string, ValveRow>();
@@ -129,8 +132,10 @@ export default function ControlRoomPage() {
       const row =
         rowMap.get(m.equipment_id) ??
         ({ equipmentId: m.equipment_id, code: eq.code, name: eq.name, cells: {} } as ValveRow);
+      const existing = resultMap.get(`${m.equipment_id}:${m.item_id}`);
       row.cells[m.item_id] = {
-        state: resultMap.get(`${m.equipment_id}:${m.item_id}`) ?? "PENDING",
+        state: existing?.state ?? "PENDING",
+        confirmed: existing?.confirmed ?? false,
         target: m.target_state === "close" ? "close" : m.target_state === "open" ? "open" : null,
       };
       rowMap.set(m.equipment_id, row);
@@ -208,24 +213,26 @@ export default function ControlRoomPage() {
     };
   }, [checklistId, session, loadGrid, loadNotifications]);
 
-  async function confirmValve(row: ValveRow) {
+  // 工程（セル）単位で確認する。実際のExcelでも工程ごとに確認欄が分かれているため、
+  // バルブ全体ではなく1つの工程・1台のバルブごとに確認/取り消しをトグルする。
+  async function toggleConfirm(row: ValveRow, step: StepInfo) {
     if (!session) return;
-    setConfirmingId(row.equipmentId);
-    const doneItemIds = steps
-      .filter(
-        (s) =>
-          isCheckableStep(s.name) &&
-          (row.cells[s.id]?.state === "OK" || row.cells[s.id]?.state === "NG")
-      )
-      .map((s) => s.id);
-    if (doneItemIds.length > 0) {
-      await supabase
-        .from("inspection_results")
-        .update({ confirmed_at: new Date().toISOString(), confirmed_by: "制御室" })
-        .eq("session_id", session.id)
-        .eq("equipment_id", row.equipmentId)
-        .in("item_id", doneItemIds);
-    }
+    const cell = row.cells[step.id];
+    if (!cell || (cell.state !== "OK" && cell.state !== "NG")) return;
+
+    const cellKey = `${row.equipmentId}:${step.id}`;
+    setConfirmingId(cellKey);
+
+    await supabase
+      .from("inspection_results")
+      .update({
+        confirmed_at: cell.confirmed ? null : new Date().toISOString(),
+        confirmed_by: cell.confirmed ? null : "制御室",
+      })
+      .eq("session_id", session.id)
+      .eq("equipment_id", row.equipmentId)
+      .eq("item_id", step.id);
+
     setConfirmingId(null);
     loadGrid();
   }
@@ -236,15 +243,17 @@ export default function ControlRoomPage() {
 
   function cellLabel(cell: Cell): string {
     if (cell.state === "NA") return "／";
-    const targetLabel = cell.target === "close" ? "閉" : "開";
     if (cell.state === "NG") return "✕";
-    return targetLabel; // PENDING or OK
+    return cell.target === "close" ? "☓" : "◯"; // PENDING or OK
   }
   function cellClass(cell: Cell): string {
     if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
     if (cell.state === "PENDING") return "text-zinc-400 dark:text-zinc-600";
     if (cell.state === "NG") return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"; // OK
+    // OK: 開＝緑、閉＝赤
+    return cell.target === "close"
+      ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
   }
 
   const checkableSteps = steps.filter((s) => isCheckableStep(s.name));
@@ -351,52 +360,57 @@ export default function ControlRoomPage() {
                             {s.name}
                           </th>
                         ))}
-                        <th className="py-2 pl-3 text-right text-xs font-medium text-zinc-500">確認</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row) => {
-                        const doneCount = checkableSteps.filter(
-                          (s) => row.cells[s.id]?.state === "OK" || row.cells[s.id]?.state === "NG"
-                        ).length;
-                        const requiredCount = checkableSteps.filter(
-                          (s) => row.cells[s.id] && row.cells[s.id]?.state !== "NA"
-                        ).length;
-                        const complete = doneCount === requiredCount && requiredCount > 0;
-                        return (
-                          <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
-                            <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                              <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.code}</span>
-                              <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
-                            </td>
-                            {steps.map((s) => {
-                              const cell: Cell = row.cells[s.id] ?? { state: "NA", target: null };
-                              return (
-                                <td key={s.id} className="px-2 py-2 text-center">
-                                  <span
-                                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(cell)}`}
-                                  >
-                                    {cellLabel(cell)}
-                                  </span>
-                                </td>
-                              );
-                            })}
-                            <td className="py-2 pl-3 text-right">
-                              <button
-                                onClick={() => confirmValve(row)}
-                                disabled={!complete || confirmingId === row.equipmentId}
-                                className="rounded-lg border border-emerald-600 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-30 dark:text-emerald-400 dark:hover:bg-emerald-950"
-                              >
-                                確認
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {rows.map((row) => (
+                        <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                          <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.code}</span>
+                            <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
+                          </td>
+                          {steps.map((s) => {
+                            const cell: Cell = row.cells[s.id] ?? {
+                              state: "NA",
+                              target: null,
+                              confirmed: false,
+                            };
+                            const clickable = cell.state === "OK" || cell.state === "NG";
+                            const cellKey = `${row.equipmentId}:${s.id}`;
+                            return (
+                              <td key={s.id} className="px-2 py-2 text-center">
+                                <button
+                                  onClick={() => clickable && toggleConfirm(row, s)}
+                                  disabled={!clickable || confirmingId === cellKey}
+                                  title={
+                                    clickable
+                                      ? cell.confirmed
+                                        ? "確認済み（クリックで取り消し）"
+                                        : "クリックで確認"
+                                      : undefined
+                                  }
+                                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(cell)} ${
+                                    clickable ? "cursor-pointer" : "cursor-default"
+                                  } ${
+                                    cell.confirmed
+                                      ? "ring-2 ring-emerald-500 ring-offset-1 dark:ring-offset-zinc-950"
+                                      : ""
+                                  }`}
+                                >
+                                  {cellLabel(cell)}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
+              <p className="mt-3 text-xs text-zinc-400">
+                操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
+              </p>
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">

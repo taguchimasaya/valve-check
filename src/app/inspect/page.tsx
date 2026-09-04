@@ -324,16 +324,17 @@ export default function InspectScannerPage() {
 
   function cellLabel(cell: Cell): string {
     if (cell.state === "NA") return "／";
-    const targetLabel = cell.target === "close" ? "閉" : "開";
-    if (cell.state === "PENDING") return targetLabel;
     if (cell.state === "NG") return "✕";
-    return targetLabel; // OK
+    return cell.target === "close" ? "☓" : "◯"; // PENDING or OK
   }
   function cellClass(cell: Cell): string {
     if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
     if (cell.state === "PENDING") return "text-zinc-400 dark:text-zinc-600";
     if (cell.state === "NG") return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"; // OK
+    // OK: 開＝緑、閉＝赤
+    return cell.target === "close"
+      ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
   }
 
   return (
@@ -542,7 +543,7 @@ export default function InspectScannerPage() {
                 </div>
               )}
               <p className="mt-3 text-xs text-zinc-400">
-                色付き(開/閉) 操作済み ・ ✕ NG ・ グレーの開/閉 未操作（目標状態） ・ ／ 対象外。バルブ名をタップすると詳細を確認できます。
+                緑◯ 開操作済み ・ 赤☓ 閉操作済み ・ ✕ NG ・ グレーの◯/☓ 未操作（目標状態） ・ ／ 対象外。バルブ名をタップすると詳細を確認できます。
               </p>
             </div>
           </>
