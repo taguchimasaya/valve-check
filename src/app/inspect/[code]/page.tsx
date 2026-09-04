@@ -85,36 +85,17 @@ export default function InspectEquipmentPage({
       return;
     }
 
-    const { data: checklistItems } = await supabase
-      .from("checklist_items")
-      .select("id, item_no, item_name, criteria")
-      .eq("template_id", eq.checklist_template_id)
-      .order("item_no", { ascending: true });
+    // このバルブが操作対象になっている工程だけを表示する（対象外の工程は表示しない）
+    const { data: mapped } = await supabase
+      .from("checklist_item_equipment")
+      .select("checklist_items!inner(id, item_no, item_name, criteria, template_id)")
+      .eq("equipment_id", eq.id)
+      .eq("checklist_items.template_id", eq.checklist_template_id);
 
-    const allItems = checklistItems ?? [];
-    const itemIds = allItems.map((i) => i.id);
-
-    // 「バルブ×工程」形式のチェックリストは、このバルブが操作対象の工程だけを表示する。
-    // 紐付け（checklist_item_equipment）が1件も無いテンプレートは、
-    // 全バルブ共通の点検項目リスト形式とみなし、全項目を表示する。
-    let visibleItems = allItems;
-    if (itemIds.length > 0) {
-      const [{ data: mappedForThis }, { count: totalMappings }] = await Promise.all([
-        supabase
-          .from("checklist_item_equipment")
-          .select("item_id")
-          .eq("equipment_id", eq.id)
-          .in("item_id", itemIds),
-        supabase
-          .from("checklist_item_equipment")
-          .select("item_id", { count: "exact", head: true })
-          .in("item_id", itemIds),
-      ]);
-      if ((totalMappings ?? 0) > 0) {
-        const mappedSet = new Set((mappedForThis ?? []).map((m) => m.item_id));
-        visibleItems = allItems.filter((i) => mappedSet.has(i.id));
-      }
-    }
+    const visibleItems = (mapped ?? [])
+      .map((m) => m.checklist_items as unknown as ChecklistItem)
+      .filter((item): item is ChecklistItem => item?.id !== undefined)
+      .sort((a, b) => a.item_no - b.item_no);
 
     setItems(visibleItems);
 
