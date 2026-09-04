@@ -3,8 +3,11 @@ import * as XLSX from "xlsx";
 export type EquipmentRow = {
   code: string;
   name: string;
-  location: string;
   valveType: string;
+  hierarchy1: string;
+  hierarchy2: string;
+  hierarchy3: string;
+  hierarchy4: string;
 };
 
 export type ParsedRow = {
@@ -19,6 +22,7 @@ export type ParseResult = {
 };
 
 // 想定ヘッダー名 → 内部フィールド名。表記ゆれをある程度吸収する。
+// 「設置場所」しか無い古い形式のファイルは、階層1として取り込む。
 const HEADER_MAP: Record<string, keyof EquipmentRow> = {
   機器番号: "code",
   機器コード: "code",
@@ -26,12 +30,16 @@ const HEADER_MAP: Record<string, keyof EquipmentRow> = {
   機器名称: "name",
   機器名: "name",
   name: "name",
-  設置場所: "location",
-  場所: "location",
-  location: "location",
   バルブ種別: "valveType",
   種別: "valveType",
   valve_type: "valveType",
+  階層1: "hierarchy1",
+  階層2: "hierarchy2",
+  階層3: "hierarchy3",
+  階層4: "hierarchy4",
+  設置場所: "hierarchy1",
+  場所: "hierarchy1",
+  location: "hierarchy1",
 };
 
 export async function parseEquipmentFile(file: File): Promise<ParseResult> {
@@ -63,8 +71,11 @@ export async function parseEquipmentFile(file: File): Promise<ParseResult> {
       valid.push({
         code: data.code!,
         name: data.name!,
-        location: data.location ?? "",
         valveType: data.valveType ?? "",
+        hierarchy1: data.hierarchy1 ?? "",
+        hierarchy2: data.hierarchy2 ?? "",
+        hierarchy3: data.hierarchy3 ?? "",
+        hierarchy4: data.hierarchy4 ?? "",
       });
     } else {
       invalid.push({ rowNumber: index + 2, data, errors }); // +2: ヘッダー行+1始まり
@@ -76,9 +87,10 @@ export async function parseEquipmentFile(file: File): Promise<ParseResult> {
 
 export function buildTemplateWorkbook(): XLSX.WorkBook {
   const sheet = XLSX.utils.aoa_to_sheet([
-    ["機器番号", "機器名称", "設置場所", "バルブ種別"],
-    ["V-1001", "第1系統 元弁", "1号棟 1階 配管室", "仕切弁"],
-    ["V-1002", "第1系統 バイパス弁", "1号棟 1階 配管室", "玉形弁"],
+    ["機器番号", "機器名称", "階層1", "階層2", "階層3", "階層4", "バルブ種別"],
+    ["V-1001", "第1系統 元弁", "給油所A", "1号棟", "1階", "配管室", "仕切弁"],
+    ["V-1002", "第1系統 バイパス弁", "給油所A", "1号棟", "1階", "配管室", "玉形弁"],
+    ["V-2001", "第2系統 元弁", "給油所A", "2号棟", "1階", "配管室", "仕切弁"],
   ]);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "機器マスター");

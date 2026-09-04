@@ -6,7 +6,11 @@ create table if not exists equipment (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,          -- 機器番号（QRコードに埋め込む値）
   name text not null,                 -- 機器名称
-  location text,                      -- 設置場所
+  location text,                      -- 設置場所（旧形式。階層1〜4に置き換え中）
+  hierarchy1 text,                    -- 階層1（例: 給油所名）
+  hierarchy2 text,                    -- 階層2（例: 号棟）
+  hierarchy3 text,                    -- 階層3（例: 階）
+  hierarchy4 text,                    -- 階層4（例: 室・エリア）
   valve_type text,                    -- バルブ種別
   checklist_template_id uuid,         -- 適用するチェックリスト（後で設定）
   imported_at timestamptz not null default now(),
@@ -15,6 +19,10 @@ create table if not exists equipment (
 
 -- 既存DBに対する追記分（初回セットアップ時にも実行して問題ありません）
 alter table equipment add column if not exists qr_issued_at timestamptz;
+alter table equipment add column if not exists hierarchy1 text;
+alter table equipment add column if not exists hierarchy2 text;
+alter table equipment add column if not exists hierarchy3 text;
+alter table equipment add column if not exists hierarchy4 text;
 
 -- チェックリストのひな形（Excelチェックリストのインポート先）
 create table if not exists checklist_templates (
