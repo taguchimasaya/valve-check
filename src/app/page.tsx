@@ -16,8 +16,8 @@ const features = [
   {
     title: "現場チェック（iPad）",
     desc: "QRコードを読み取り、対象バルブのチェックリストにその場で記録します。",
-    status: "未実装",
-    href: null,
+    status: "実装済み",
+    href: "/inspect",
   },
   {
     title: "点検ダッシュボード（制御室PC）",
