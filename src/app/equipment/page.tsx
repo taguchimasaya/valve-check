@@ -48,6 +48,7 @@ export default function EquipmentPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
   const [qrPreview, setQrPreview] = useState<EquipmentRecord | null>(null);
 
   useEffect(() => {
@@ -115,6 +116,39 @@ export default function EquipmentPage() {
       return next;
     });
   }
+
+  // 行チェックボックスのクリック。Shiftキーを押しながらだと、直前にクリックした行から
+  // 今回の行までの範囲をまとめて選択する（表計算ソフトやファイル一覧と同じ操作感）。
+  function handleRowCheckboxClick(
+    id: string,
+    index: number,
+    shiftKey: boolean
+  ) {
+    if (shiftKey && lastCheckedIndex !== null) {
+      const [start, end] = [lastCheckedIndex, index].sort((a, b) => a - b);
+      const rangeIds = filteredList.slice(start, end + 1).map((eq) => eq.id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        rangeIds.forEach((rid) => next.add(rid));
+        return next;
+      });
+    } else {
+      toggleSelectOne(id);
+    }
+    setLastCheckedIndex(index);
+  }
+
+  const existingCodes = useMemo(
+    () => new Set(equipmentList.map((eq) => eq.code)),
+    [equipmentList]
+  );
+  const updateRows = useMemo(
+    () => (parseResult ? parseResult.valid.filter((r) => existingCodes.has(r.code)) : []),
+    [parseResult, existingCodes]
+  );
+  const updateCount = updateRows.length;
+  const newCount = (parseResult?.valid.length ?? 0) - updateCount;
+  const updateRowsPreview = updateRows.slice(0, 8).map((r) => r.code);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -200,6 +234,18 @@ export default function EquipmentPage() {
     router.push(`/equipment/print?codes=${encodeURIComponent(codes.join(","))}`);
   }
 
+  // 一覧の「印刷用QRシートを開く」は、今の絞り込み結果と必ず一致させる。
+  // 何も絞り込んでいなければ、印刷ページ側の初期表示（未発行のみ）に任せる。
+  const isFilterActive =
+    Boolean(hierarchyFilter.h1 || hierarchyFilter.h2 || hierarchyFilter.h3 || hierarchyFilter.h4) ||
+    statusFilter !== "all" ||
+    Boolean(searchText.trim());
+  const printAllHref = isFilterActive
+    ? `/equipment/print?codes=${encodeURIComponent(
+        filteredList.map((eq) => eq.code).join(",")
+      )}`
+    : "/equipment/print";
+
   const hierarchyLabels = ["階層1", "階層2", "階層3", "階層4"];
 
   return (
@@ -246,8 +292,8 @@ export default function EquipmentPage() {
             <div className="mt-4 rounded-lg bg-zinc-50 p-4 text-sm dark:bg-zinc-900">
               <p className="text-zinc-700 dark:text-zinc-300">
                 <span className="font-medium">{fileName}</span> を読み込みました。
-                有効: {parseResult.valid.length}件 / 無効:{" "}
-                {parseResult.invalid.length}件
+                有効: {parseResult.valid.length}件（新規{newCount}件 / 既存データを更新
+                {updateCount}件） / 無効: {parseResult.invalid.length}件
               </p>
               {parseResult.invalid.length > 0 && (
                 <ul className="mt-2 list-disc pl-5 text-amber-700 dark:text-amber-500">
@@ -261,6 +307,18 @@ export default function EquipmentPage() {
                   )}
                 </ul>
               )}
+              {updateCount > 0 && (
+                <div className="mt-2 rounded-lg bg-amber-50 p-3 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  <p className="font-medium">
+                    {updateCount}件は既存の機器番号と一致するため、内容を上書きします。
+                  </p>
+                  <p className="mt-1 text-xs">
+                    {updateRowsPreview.join("、")}
+                    {updateCount > updateRowsPreview.length &&
+                      ` ほか${updateCount - updateRowsPreview.length}件`}
+                  </p>
+                </div>
+              )}
               {parseResult.valid.length > 0 && (
                 <button
                   onClick={() => handleImport(parseResult.valid)}
@@ -269,7 +327,7 @@ export default function EquipmentPage() {
                 >
                   {importing
                     ? "登録中..."
-                    : `${parseResult.valid.length}件をインポート`}
+                    : `${parseResult.valid.length}件をインポート（新規${newCount} / 更新${updateCount}）`}
                 </button>
               )}
             </div>
@@ -295,10 +353,10 @@ export default function EquipmentPage() {
             </h2>
             {equipmentList.length > 0 && (
               <Link
-                href="/equipment/print"
+                href={printAllHref}
                 className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
               >
-                印刷用QRシートを開く
+                印刷用QRシートを開く{isFilterActive && `（絞り込み中の${filteredList.length}件）`}
               </Link>
             )}
           </div>
@@ -468,7 +526,7 @@ export default function EquipmentPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredList.map((eq) => (
+                  {filteredList.map((eq, index) => (
                     <tr
                       key={eq.id}
                       className="border-b border-zinc-100 dark:border-zinc-900"
@@ -477,7 +535,10 @@ export default function EquipmentPage() {
                         <input
                           type="checkbox"
                           checked={selectedIds.has(eq.id)}
-                          onChange={() => toggleSelectOne(eq.id)}
+                          onChange={() => {}}
+                          onClick={(e) =>
+                            handleRowCheckboxClick(eq.id, index, e.shiftKey)
+                          }
                         />
                       </td>
                       <td className="py-2 pr-4 font-medium text-zinc-900 dark:text-zinc-100">

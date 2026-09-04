@@ -51,7 +51,7 @@ export async function parseEquipmentFile(file: File): Promise<ParseResult> {
     defval: "",
   });
 
-  const valid: EquipmentRow[] = [];
+  const parsedValid: { rowNumber: number; row: EquipmentRow }[] = [];
   const invalid: ParsedRow[] = [];
 
   rows.forEach((row, index) => {
@@ -66,21 +66,48 @@ export async function parseEquipmentFile(file: File): Promise<ParseResult> {
     const errors: string[] = [];
     if (!data.code) errors.push("機器番号が空です");
     if (!data.name) errors.push("機器名称が空です");
+    const rowNumber = index + 2; // +2: ヘッダー行+1始まり
 
     if (errors.length === 0) {
-      valid.push({
-        code: data.code!,
-        name: data.name!,
-        valveType: data.valveType ?? "",
-        hierarchy1: data.hierarchy1 ?? "",
-        hierarchy2: data.hierarchy2 ?? "",
-        hierarchy3: data.hierarchy3 ?? "",
-        hierarchy4: data.hierarchy4 ?? "",
+      parsedValid.push({
+        rowNumber,
+        row: {
+          code: data.code!,
+          name: data.name!,
+          valveType: data.valveType ?? "",
+          hierarchy1: data.hierarchy1 ?? "",
+          hierarchy2: data.hierarchy2 ?? "",
+          hierarchy3: data.hierarchy3 ?? "",
+          hierarchy4: data.hierarchy4 ?? "",
+        },
       });
     } else {
-      invalid.push({ rowNumber: index + 2, data, errors }); // +2: ヘッダー行+1始まり
+      invalid.push({ rowNumber, data, errors });
     }
   });
+
+  // ファイル内で機器番号が重複している場合、Supabaseへの一括更新がエラーになるため、
+  // 最初の行だけを有効とし、以降の重複行は無効行として理由つきで報告する。
+  const firstSeenAt = new Map<string, number>();
+  parsedValid.forEach(({ rowNumber, row }) => {
+    if (!firstSeenAt.has(row.code)) firstSeenAt.set(row.code, rowNumber);
+  });
+
+  const valid: EquipmentRow[] = [];
+  parsedValid.forEach(({ rowNumber, row }) => {
+    if (firstSeenAt.get(row.code) === rowNumber) {
+      valid.push(row);
+    } else {
+      invalid.push({
+        rowNumber,
+        data: row,
+        errors: [
+          `機器番号「${row.code}」がファイル内の${firstSeenAt.get(row.code)}行目と重複しています`,
+        ],
+      });
+    }
+  });
+  invalid.sort((a, b) => a.rowNumber - b.rowNumber);
 
   return { valid, invalid };
 }
