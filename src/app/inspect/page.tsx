@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import {
@@ -62,11 +62,14 @@ export default function InspectScannerPage() {
   // スキャナー
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [manualCode, setManualCode] = useState("");
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const scannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
   const startingRef = useRef(false);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // グリッドのマスをタップしたときの確認ポップアップ
+  const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
+  const [tapSaving, setTapSaving] = useState(false);
 
   useEffect(() => {
     ensureActiveSession().then(setSession);
@@ -180,6 +183,13 @@ export default function InspectScannerPage() {
     setRows([]);
   }
 
+  // 指定したバルブの「次の未完了工程」を割り出す（作業前は対象外）。
+  function findNextStep(row: ValveRow): StepInfo | null {
+    return (
+      steps.find((s) => isCheckableStep(s.name) && row.cells[s.id]?.state === "PENDING") ?? null
+    );
+  }
+
   // QRコード（または手入力）を読み取ったバルブを「操作済み」として記録する。
   // そのバルブが必要とする工程のうち、まだ済んでいない最も早い工程をOKにする。
   // 全て終わっていれば完了済みの旨を伝える。工程が完了したら制御室へ通知する。
@@ -200,13 +210,19 @@ export default function InspectScannerPage() {
       return;
     }
 
-    const nextStep = steps.find(
-      (s) => isCheckableStep(s.name) && row.cells[s.id]?.state === "PENDING"
-    );
+    const nextStep = findNextStep(row);
     if (!nextStep) {
       showFlash({ type: "info", text: `${code}（${row.name}）はすべて操作済みです。` });
       return;
     }
+
+    await completeStep(row, nextStep);
+  }
+
+  // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
+  async function completeStep(row: ValveRow, nextStep: StepInfo) {
+    if (!session || !checklist) return;
+    const code = row.code;
 
     const { error } = await supabase.from("inspection_results").upsert(
       {
@@ -274,6 +290,24 @@ export default function InspectScannerPage() {
     showFlash({ type: "success", text: `${actionText}（工程: ${nextStep.name}）` });
   }
 
+  // グリッドのマスをタップ：そのバルブの次の未完了工程を確認ポップアップで表示する
+  function openTapConfirm(row: ValveRow) {
+    const nextStep = findNextStep(row);
+    if (!nextStep) {
+      showFlash({ type: "info", text: `${row.code}（${row.name}）はすべて操作済みです。` });
+      return;
+    }
+    setTapConfirm({ row, step: nextStep });
+  }
+
+  async function confirmTap() {
+    if (!tapConfirm) return;
+    setTapSaving(true);
+    await completeStep(tapConfirm.row, tapConfirm.step);
+    setTapSaving(false);
+    setTapConfirm(null);
+  }
+
   async function startScanner() {
     if (startingRef.current) return;
     startingRef.current = true;
@@ -293,7 +327,7 @@ export default function InspectScannerPage() {
       setScanning(true);
     } catch {
       setCameraError(
-        "カメラを起動できませんでした。ブラウザのカメラ許可設定を確認するか、下の欄に機器番号を直接入力してください。"
+        "カメラを起動できませんでした。ブラウザのカメラ許可設定を確認するか、下の一覧でバルブの丸をタップして記録してください。"
       );
     } finally {
       startingRef.current = false;
@@ -322,19 +356,45 @@ export default function InspectScannerPage() {
     t.name.toLowerCase().includes(searchText.trim().toLowerCase())
   );
 
+  // 行の必須工程を工程順に並べたもの（作業前を含む＝状態比較の起点になる）
+  function requiredSequence(row: ValveRow) {
+    return steps
+      .filter((s) => row.cells[s.id]?.target)
+      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
+  }
+  // 直前の必須工程から開閉状態が変わる工程＝「操作する」工程かどうか
+  function isOperateStep(row: ValveRow, step: StepInfo): boolean {
+    const action = classifyAction(requiredSequence(row), step.id);
+    return action ? action.endsWith("-operate") : true;
+  }
+
   function cellLabel(cell: Cell): string {
     if (cell.state === "NA") return "／";
     if (cell.state === "NG") return "✕";
     return cell.target === "close" ? "☓" : "◯"; // PENDING or OK
   }
-  function cellClass(cell: Cell): string {
+  // 済んだかどうかは色ではなく、隣のチェック欄（☐→☑）で示す。
+  // 「作業前」は操作対象ではないため、チェック欄自体を出さない。
+  function checkGlyph(cell: Cell, step: StepInfo): string {
+    if (cell.state === "NA" || !isCheckableStep(step.name)) return "";
+    return cell.state === "PENDING" ? "☐" : "☑";
+  }
+  // 色を付けるのは「前の工程から開閉状態が変わる＝実際に操作するバルブ」の工程だけ。
+  // 状態が変わらない（確認だけでよい）工程はグレーのまま。
+  function cellClass(row: ValveRow, step: StepInfo): string {
+    const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null };
     if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
-    if (cell.state === "PENDING") return "text-zinc-400 dark:text-zinc-600";
-    if (cell.state === "NG") return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    // OK: 開＝緑、閉＝赤
-    return cell.target === "close"
-      ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
+    if (cell.state === "NG") {
+      return "bg-red-600 text-white ring-2 ring-red-900 dark:ring-red-400";
+    }
+    // 「作業前」は初期状態の記録であり操作対象ではないため、常に色をつけない
+    if (!isCheckableStep(step.name) || !isOperateStep(row, step)) {
+      return "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400";
+    }
+    const isOpen = cell.target !== "close";
+    return isOpen
+      ? "bg-emerald-500 text-white dark:bg-emerald-600"
+      : "bg-red-500 text-white dark:bg-red-600";
   }
 
   return (
@@ -440,32 +500,9 @@ export default function InspectScannerPage() {
                 <p className="mt-3 text-sm text-red-600 dark:text-red-400">{cameraError}</p>
               )}
 
-              <div className="mt-4 flex gap-2">
-                <input
-                  type="text"
-                  value={manualCode}
-                  onChange={(e) => setManualCode(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && manualCode.trim()) {
-                      handleScan(manualCode);
-                      setManualCode("");
-                    }
-                  }}
-                  placeholder="読み取れない場合はバルブ名を直接入力（例: V-1001）"
-                  className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-                <button
-                  onClick={() => {
-                    if (manualCode.trim()) {
-                      handleScan(manualCode);
-                      setManualCode("");
-                    }
-                  }}
-                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900"
-                >
-                  記録
-                </button>
-              </div>
+              <p className="mt-3 text-center text-xs text-zinc-400">
+                読み取れない場合は、下の一覧でバルブの丸をタップしても記録できます。
+              </p>
 
               {flash && (
                 <p
@@ -494,19 +531,35 @@ export default function InspectScannerPage() {
                 </p>
               ) : (
                 <div className="mt-3 overflow-x-auto">
-                  <table className="w-full min-w-[480px] border-collapse text-sm">
+                  <table className="w-full min-w-[560px] border-collapse text-sm">
                     <thead>
                       <tr>
-                        <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
+                        <th
+                          rowSpan={2}
+                          className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950"
+                        >
                           バルブ
                         </th>
                         {steps.map((s) => (
                           <th
                             key={s.id}
-                            className="px-2 py-2 text-center text-xs font-medium text-zinc-500"
+                            colSpan={2}
+                            className="px-2 py-1 text-center text-xs font-medium text-zinc-500"
                           >
                             {s.name}
                           </th>
+                        ))}
+                      </tr>
+                      <tr>
+                        {steps.map((s) => (
+                          <Fragment key={s.id}>
+                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                              状態
+                            </th>
+                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                              済
+                            </th>
+                          </Fragment>
                         ))}
                       </tr>
                     </thead>
@@ -526,14 +579,36 @@ export default function InspectScannerPage() {
                           </td>
                           {steps.map((s) => {
                             const cell: Cell = row.cells[s.id] ?? { state: "NA", target: null };
+                            const clickable = cell.state === "PENDING" && isCheckableStep(s.name);
                             return (
-                              <td key={s.id} className="px-2 py-2 text-center">
-                                <span
-                                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(cell)}`}
-                                >
-                                  {cellLabel(cell)}
-                                </span>
-                              </td>
+                              <Fragment key={s.id}>
+                                <td className="px-1 py-2 text-center">
+                                  <button
+                                    onClick={() => clickable && openTapConfirm(row)}
+                                    disabled={!clickable}
+                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(
+                                      row,
+                                      s
+                                    )} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
+                                  >
+                                    {cellLabel(cell)}
+                                  </button>
+                                </td>
+                                <td className="px-1 py-2 text-center text-base">
+                                  <span
+                                    onClick={() => clickable && openTapConfirm(row)}
+                                    className={
+                                      clickable
+                                        ? "cursor-pointer text-zinc-400"
+                                        : cell.state === "NA"
+                                        ? "text-zinc-200 dark:text-zinc-800"
+                                        : "text-emerald-600 dark:text-emerald-400"
+                                    }
+                                  >
+                                    {checkGlyph(cell, s)}
+                                  </span>
+                                </td>
+                              </Fragment>
                             );
                           })}
                         </tr>
@@ -543,12 +618,63 @@ export default function InspectScannerPage() {
                 </div>
               )}
               <p className="mt-3 text-xs text-zinc-400">
-                緑◯ 開操作済み ・ 赤☓ 閉操作済み ・ ✕ NG ・ グレーの◯/☓ 未操作（目標状態） ・ ／ 対象外。バルブ名をタップすると詳細を確認できます。
+                色つき◯/☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外 ・ ☑ 記録済み。◯/☓か☐をタップすると記録できます。バルブ名をタップすると詳細を確認できます。
               </p>
             </div>
           </>
         )}
       </div>
+
+      {tapConfirm && (
+        <div
+          className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !tapSaving && setTapConfirm(null)}
+        >
+          <div
+            className="w-full max-w-xs rounded-xl bg-white p-6 text-center dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-xs text-zinc-500">{tapConfirm.step.name}</p>
+            <p className="mt-1 text-xl font-bold text-zinc-900 dark:text-zinc-100">
+              {tapConfirm.row.code}
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{tapConfirm.row.name}</p>
+            <p className="mt-3 text-lg font-semibold">
+              {(() => {
+                const target = tapConfirm.row.cells[tapConfirm.step.id]?.target;
+                const action = classifyAction(
+                  requiredSequence(tapConfirm.row),
+                  tapConfirm.step.id
+                );
+                const isClose = target === "close";
+                const verb = action?.endsWith("confirm") ? "確認" : "操作";
+                const label = `${isClose ? "閉" : "開"}${verb}（${isClose ? "☓" : "◯"}）`;
+                return (
+                  <span className={isClose ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                    {label}
+                  </span>
+                );
+              })()}
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => setTapConfirm(null)}
+                disabled={tapSaving}
+                className="flex-1 rounded-lg border border-zinc-300 py-2.5 text-sm font-medium text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={confirmTap}
+                disabled={tapSaving}
+                className="flex-1 rounded-lg bg-zinc-900 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              >
+                {tapSaving ? "記録中..." : "記録する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

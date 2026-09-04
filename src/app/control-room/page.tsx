@@ -241,19 +241,39 @@ export default function ControlRoomPage() {
     t.name.toLowerCase().includes(searchText.trim().toLowerCase())
   );
 
+  // 行の必須工程を工程順に並べたもの（作業前を含む＝状態比較の起点になる）
+  function requiredSequence(row: ValveRow) {
+    return steps
+      .filter((s) => row.cells[s.id]?.target)
+      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
+  }
+  // 直前の必須工程から開閉状態が変わる工程＝「操作する」工程かどうか
+  function isOperateStep(row: ValveRow, step: StepInfo): boolean {
+    const action = classifyAction(requiredSequence(row), step.id);
+    return action ? action.endsWith("-operate") : true;
+  }
+
   function cellLabel(cell: Cell): string {
     if (cell.state === "NA") return "／";
     if (cell.state === "NG") return "✕";
     return cell.target === "close" ? "☓" : "◯"; // PENDING or OK
   }
-  function cellClass(cell: Cell): string {
+  // 色を付けるのは「前の工程から開閉状態が変わる＝実際に操作するバルブ」の工程だけ。
+  // 状態が変わらない（確認だけでよい）工程はグレーのまま。現場と同じ配色。
+  function cellClass(row: ValveRow, step: StepInfo): string {
+    const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null, confirmed: false };
     if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
-    if (cell.state === "PENDING") return "text-zinc-400 dark:text-zinc-600";
-    if (cell.state === "NG") return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    // OK: 開＝緑、閉＝赤
-    return cell.target === "close"
-      ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
+    if (cell.state === "NG") {
+      return "bg-red-600 text-white ring-2 ring-red-900 dark:ring-red-400";
+    }
+    // 「作業前」は初期状態の記録であり操作対象ではないため、常に色をつけない
+    if (!isCheckableStep(step.name) || !isOperateStep(row, step)) {
+      return "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400";
+    }
+    const isOpen = cell.target !== "close";
+    return isOpen
+      ? "bg-emerald-500 text-white dark:bg-emerald-600"
+      : "bg-red-500 text-white dark:bg-red-600";
   }
 
   const checkableSteps = steps.filter((s) => isCheckableStep(s.name));
@@ -389,7 +409,7 @@ export default function ControlRoomPage() {
                                         : "クリックで確認"
                                       : undefined
                                   }
-                                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(cell)} ${
+                                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(row, s)} ${
                                     clickable ? "cursor-pointer" : "cursor-default"
                                   } ${
                                     cell.confirmed
@@ -409,7 +429,7 @@ export default function ControlRoomPage() {
                 </div>
               )}
               <p className="mt-3 text-xs text-zinc-400">
-                操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
+緑◯/赤☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外。操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
               </p>
             </div>
 
