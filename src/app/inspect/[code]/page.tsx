@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { ensureActiveSession, type InspectionSession } from "@/lib/inspectionSession";
+import { getActiveChecklist, type ActiveChecklist } from "@/lib/activeChecklist";
 
 type EquipmentInfo = {
   id: string;
@@ -48,6 +49,7 @@ export default function InspectEquipmentPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [session, setSession] = useState<InspectionSession | null>(null);
+  const [checklist, setChecklist] = useState<ActiveChecklist | null>(null);
   const [equipment, setEquipment] = useState<EquipmentInfo | null>(null);
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [states, setStates] = useState<Record<string, ItemState>>({});
@@ -65,6 +67,14 @@ export default function InspectEquipmentPage({
     }
     setSession(activeSession);
 
+    const activeChecklist = getActiveChecklist();
+    if (!activeChecklist) {
+      setLoadError("先に作業（チェックリスト）を選択してください。");
+      setLoading(false);
+      return;
+    }
+    setChecklist(activeChecklist);
+
     const { data: eq, error: eqError } = await supabase
       .from("equipment")
       .select(
@@ -80,17 +90,12 @@ export default function InspectEquipmentPage({
     }
     setEquipment(eq);
 
-    if (!eq.checklist_template_id) {
-      setLoading(false);
-      return;
-    }
-
-    // このバルブが操作対象になっている工程だけを表示する（対象外の工程は表示しない）
+    // このバルブが、選択中の作業（チェックリスト）で操作対象になっている工程だけを表示する
     const { data: mapped } = await supabase
       .from("checklist_item_equipment")
       .select("checklist_items!inner(id, item_no, item_name, criteria, template_id)")
       .eq("equipment_id", eq.id)
-      .eq("checklist_items.template_id", eq.checklist_template_id);
+      .eq("checklist_items.template_id", activeChecklist.id);
 
     const visibleItems = (mapped ?? [])
       .map((m) => m.checklist_items as unknown as ChecklistItem)
@@ -225,7 +230,9 @@ export default function InspectEquipmentPage({
         </Link>
 
         <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-          <p className="text-xs text-zinc-500">{session?.title}</p>
+          <p className="text-xs text-zinc-500">
+            {session?.title} ・ {checklist?.name}
+          </p>
           <h1 className="mt-1 text-xl font-bold text-zinc-900 dark:text-zinc-50">
             {equipment.code}
           </h1>
@@ -236,13 +243,10 @@ export default function InspectEquipmentPage({
           </p>
         </div>
 
-        {!equipment.checklist_template_id ? (
+        {items.length === 0 ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-            この機器にはチェックリストが割り当てられていません。機器マスター管理画面から割り当ててください。
-          </div>
-        ) : items.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
-            このバルブが対象となる工程がありません（この手順ではこのバルブは操作対象外です）。
+            このバルブは選択中の作業「{checklist?.name}」には含まれていません。
+            スキャンするバルブか、選択中の作業が正しいか確認してください。
           </div>
         ) : (
           <>
