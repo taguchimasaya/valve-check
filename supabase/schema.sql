@@ -57,17 +57,28 @@ create table if not exists inspection_sessions (
 );
 
 -- 点検結果（iPadでのQRスキャン→チェックの記録。制御室PCがここをリアルタイム購読する）
+-- checked_at = 現場（操作者）がQRを読んでチェックした証跡
+-- confirmed_at = 制御室が「確認」を押した証跡（現場と制御室、双方の記録を別々に残す）
 create table if not exists inspection_results (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references inspection_sessions(id) on delete cascade,
   equipment_id uuid not null references equipment(id),
   item_id uuid not null references checklist_items(id),
-  result text not null check (result in ('OK', 'NG')),
+  result text not null check (result in ('OK', 'NG', 'NA')),
   comment text,
   checked_by text,
   checked_at timestamptz not null default now(),
+  confirmed_by text,
+  confirmed_at timestamptz,
   unique (session_id, equipment_id, item_id)
 );
+
+-- 既存DBに対する追記分（初回セットアップ時にも実行して問題ありません）
+alter table inspection_results add column if not exists confirmed_by text;
+alter table inspection_results add column if not exists confirmed_at timestamptz;
+alter table inspection_results drop constraint if exists inspection_results_result_check;
+alter table inspection_results add constraint inspection_results_result_check
+  check (result in ('OK', 'NG', 'NA'));
 
 -- 制御室PC側のダッシュボードがリアルタイム更新を受け取れるようにする
 alter publication supabase_realtime add table inspection_results;

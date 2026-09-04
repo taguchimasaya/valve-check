@@ -24,8 +24,10 @@ type ChecklistItem = {
   criteria: string | null;
 };
 
+type ResultValue = "OK" | "NG" | "NA";
+
 type ItemState = {
-  result: "OK" | "NG" | null;
+  result: ResultValue | null;
   comment: string;
   saving: boolean;
 };
@@ -101,7 +103,7 @@ export default function InspectEquipmentPage({
     (checklistItems ?? []).forEach((item) => {
       const existing = existingResults?.find((r) => r.item_id === item.id);
       initialStates[item.id] = {
-        result: (existing?.result as "OK" | "NG" | undefined) ?? null,
+        result: (existing?.result as ResultValue | undefined) ?? null,
         comment: existing?.comment ?? "",
         saving: false,
       };
@@ -114,7 +116,7 @@ export default function InspectEquipmentPage({
     load();
   }, [load]);
 
-  async function saveResult(itemId: string, result: "OK" | "NG", comment: string) {
+  async function saveResult(itemId: string, result: ResultValue, comment: string) {
     if (!session || !equipment) return;
     setStates((prev) => ({
       ...prev,
@@ -269,6 +271,8 @@ export default function InspectEquipmentPage({
                         ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
                         : s.result === "OK"
                         ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
+                        : s.result === "NA"
+                        ? "border-zinc-300 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900"
                         : "border-zinc-200 bg-white dark:border-zinc-800"
                     }`}
                   >
@@ -280,7 +284,7 @@ export default function InspectEquipmentPage({
                       <p className="mt-0.5 text-sm text-zinc-500">{item.criteria}</p>
                     )}
 
-                    <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="mt-3 grid grid-cols-3 gap-2">
                       <button
                         onClick={() => saveResult(item.id, "OK", s.comment)}
                         className={`rounded-lg py-3 text-base font-semibold ${
@@ -300,6 +304,16 @@ export default function InspectEquipmentPage({
                         }`}
                       >
                         NG
+                      </button>
+                      <button
+                        onClick={() => saveResult(item.id, "NA", s.comment)}
+                        className={`rounded-lg py-3 text-base font-semibold ${
+                          s.result === "NA"
+                            ? "bg-zinc-500 text-white"
+                            : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200"
+                        }`}
+                      >
+                        対象外
                       </button>
                     </div>
 
