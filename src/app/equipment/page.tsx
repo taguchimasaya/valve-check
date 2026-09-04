@@ -18,7 +18,10 @@ type EquipmentRecord = {
   name: string;
   location: string | null;
   valve_type: string | null;
+  qr_issued_at: string | null;
 };
+
+type StatusFilter = "all" | "issued" | "unissued";
 
 export default function EquipmentPage() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
@@ -29,6 +32,9 @@ export default function EquipmentPage() {
   const [equipmentList, setEquipmentList] = useState<EquipmentRecord[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [origin, setOrigin] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -38,7 +44,7 @@ export default function EquipmentPage() {
     setLoadingList(true);
     const { data, error } = await supabase
       .from("equipment")
-      .select("id, code, name, location, valve_type")
+      .select("id, code, name, location, valve_type, qr_issued_at")
       .order("code", { ascending: true });
     if (!error && data) {
       setEquipmentList(data);
@@ -95,6 +101,38 @@ export default function EquipmentPage() {
     const wb = buildTemplateWorkbook();
     XLSX.writeFile(wb, "機器マスター_テンプレート.xlsx");
   }
+
+  async function toggleIssued(eq: EquipmentRecord) {
+    setUpdatingId(eq.id);
+    const nextValue = eq.qr_issued_at ? null : new Date().toISOString();
+    const { error } = await supabase
+      .from("equipment")
+      .update({ qr_issued_at: nextValue })
+      .eq("id", eq.id);
+    if (!error) {
+      setEquipmentList((prev) =>
+        prev.map((item) =>
+          item.id === eq.id ? { ...item, qr_issued_at: nextValue } : item
+        )
+      );
+    }
+    setUpdatingId(null);
+  }
+
+  const filteredList = equipmentList.filter((eq) => {
+    if (statusFilter === "issued" && !eq.qr_issued_at) return false;
+    if (statusFilter === "unissued" && eq.qr_issued_at) return false;
+    if (searchText.trim()) {
+      const q = searchText.trim().toLowerCase();
+      const haystack = [eq.code, eq.name, eq.location, eq.valve_type]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+  const issuedCount = equipmentList.filter((eq) => eq.qr_issued_at).length;
 
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-12 dark:bg-black">
@@ -183,9 +221,9 @@ export default function EquipmentPage() {
 
         {/* 一覧・QRカード */}
         <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
-              2. 登録済み機器とQRコード（{equipmentList.length}件）
+              2. 登録済み機器とQRコード
             </h2>
             {equipmentList.length > 0 && (
               <Link
@@ -197,19 +235,72 @@ export default function EquipmentPage() {
             )}
           </div>
 
+          {equipmentList.length > 0 && (
+            <>
+              <p className="mt-1 text-sm text-zinc-500">
+                全{equipmentList.length}件 / 発行済み{issuedCount}件 / 未発行
+                {equipmentList.length - issuedCount}件
+              </p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder="機器番号・機器名称・設置場所で検索"
+                  className="min-w-[220px] flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+                <div className="flex gap-1 rounded-lg border border-zinc-300 p-1 dark:border-zinc-700">
+                  {(
+                    [
+                      { key: "all", label: "すべて" },
+                      { key: "issued", label: "発行済み" },
+                      { key: "unissued", label: "未発行" },
+                    ] as { key: StatusFilter; label: string }[]
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setStatusFilter(opt.key)}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                        statusFilter === opt.key
+                          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                          : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
           {loadingList ? (
             <p className="mt-4 text-sm text-zinc-500">読み込み中...</p>
           ) : equipmentList.length === 0 ? (
             <p className="mt-4 text-sm text-zinc-500">
               まだ機器が登録されていません。上のフォームから取り込んでください。
             </p>
+          ) : filteredList.length === 0 ? (
+            <p className="mt-4 text-sm text-zinc-500">
+              条件に一致する機器がありません。
+            </p>
           ) : (
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {equipmentList.map((eq) => (
+              {filteredList.map((eq) => (
                 <div
                   key={eq.id}
                   className="flex flex-col items-center rounded-lg border border-zinc-200 p-3 text-center dark:border-zinc-800"
                 >
+                  <span
+                    className={`mb-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      eq.qr_issued_at
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+                        : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                    }`}
+                  >
+                    {eq.qr_issued_at ? "発行済み" : "未発行"}
+                  </span>
                   {origin && (
                     <QRCodeSVG
                       value={`${origin}/inspect/${eq.code}`}
@@ -220,6 +311,13 @@ export default function EquipmentPage() {
                     {eq.code}
                   </p>
                   <p className="text-xs text-zinc-500">{eq.name}</p>
+                  <button
+                    onClick={() => toggleIssued(eq)}
+                    disabled={updatingId === eq.id}
+                    className="mt-2 text-xs font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-400"
+                  >
+                    {eq.qr_issued_at ? "未発行に戻す" : "発行済みにする"}
+                  </button>
                 </div>
               ))}
             </div>

@@ -9,8 +9,12 @@ create table if not exists equipment (
   location text,                      -- 設置場所
   valve_type text,                    -- バルブ種別
   checklist_template_id uuid,         -- 適用するチェックリスト（後で設定）
-  imported_at timestamptz not null default now()
+  imported_at timestamptz not null default now(),
+  qr_issued_at timestamptz            -- QRコードを発行済み（現場のバルブに貼付済み）にした日時
 );
+
+-- 既存DBに対する追記分（初回セットアップ時にも実行して問題ありません）
+alter table equipment add column if not exists qr_issued_at timestamptz;
 
 -- チェックリストのひな形（Excelチェックリストのインポート先）
 create table if not exists checklist_templates (
