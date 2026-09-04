@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import {
+  buildProcedureExportWorkbook,
   buildProcedureTemplateWorkbook,
   parseProcedureChecklistFile,
   type ProcedureParseResult,
@@ -50,6 +51,7 @@ export default function ChecklistsPage() {
   const [openTemplate, setOpenTemplate] = useState<TemplateRecord | null>(null);
   const [openItems, setOpenItems] = useState<ItemRecord[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   const loadTemplates = useCallback(async () => {
     setLoadingList(true);
@@ -239,6 +241,49 @@ export default function ChecklistsPage() {
     setOpenItems(data ?? []);
   }
 
+  async function exportTemplate(t: TemplateRecord) {
+    setExportingId(t.id);
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("id, item_no, item_name")
+      .eq("template_id", t.id)
+      .order("item_no", { ascending: true });
+
+    const itemList = items ?? [];
+    const itemIds = itemList.map((i) => i.id);
+    const steps = itemList.map((i) => i.item_name);
+
+    const { data: mappings } = itemIds.length
+      ? await supabase
+          .from("checklist_item_equipment")
+          .select("item_id, equipment(code)")
+          .in("item_id", itemIds)
+      : { data: [] as { item_id: string; equipment: { code: string } | null }[] };
+
+    const itemIndexById = new Map(itemList.map((it, i) => [it.id, i]));
+    const rowsByCode = new Map<string, Set<number>>();
+    (mappings ?? []).forEach((m) => {
+      const eq = m.equipment as unknown as { code: string } | null;
+      if (!eq) return;
+      const stepIndex = itemIndexById.get(m.item_id);
+      if (stepIndex === undefined) return;
+      const set = rowsByCode.get(eq.code) ?? new Set<number>();
+      set.add(stepIndex);
+      rowsByCode.set(eq.code, set);
+    });
+
+    const rows = Array.from(rowsByCode.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([equipmentCode, set]) => ({
+        equipmentCode,
+        requiredStepIndexes: Array.from(set),
+      }));
+
+    const wb = buildProcedureExportWorkbook(steps, rows);
+    XLSX.writeFile(wb, `${t.name}.xlsx`);
+    setExportingId(null);
+  }
+
   async function deleteTemplate(t: TemplateRecord) {
     if (
       !window.confirm(
@@ -412,6 +457,13 @@ export default function ChecklistsPage() {
                       className="text-zinc-600 hover:underline dark:text-zinc-300"
                     >
                       工程を見る
+                    </button>
+                    <button
+                      onClick={() => exportTemplate(t)}
+                      disabled={exportingId === t.id}
+                      className="text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-400"
+                    >
+                      {exportingId === t.id ? "出力中..." : "エクスポート"}
                     </button>
                     <button
                       onClick={() => deleteTemplate(t)}

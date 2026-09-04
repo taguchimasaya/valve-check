@@ -90,6 +90,38 @@ export async function parseProcedureChecklistFile(
   return { steps, rows: parsedRows, errors };
 }
 
+export type ProcedureExportRow = {
+  equipmentCode: string;
+  requiredStepIndexes: number[];
+};
+
+// 登録済みチェックリストを、取込時と同じ「バルブ×工程表」形式で書き出す。
+// 操作者・制御室の確認欄は空欄のまま出力する（記録はアプリ内のデータとして保持されるため）。
+export function buildProcedureExportWorkbook(
+  steps: string[],
+  rows: ProcedureExportRow[]
+): XLSX.WorkBook {
+  const header: string[] = ["バルブ名"];
+  steps.forEach((step) => {
+    header.push(step, "操作者", "制御室");
+  });
+
+  const aoa: (string | number)[][] = [header];
+  rows.forEach((row) => {
+    const required = new Set(row.requiredStepIndexes);
+    const line: (string | number)[] = [row.equipmentCode];
+    steps.forEach((_, i) => {
+      line.push(required.has(i) ? "○" : "／", "", "");
+    });
+    aoa.push(line);
+  });
+
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "作業手順");
+  return workbook;
+}
+
 export function buildProcedureTemplateWorkbook(): XLSX.WorkBook {
   const sheet = XLSX.utils.aoa_to_sheet([
     [
