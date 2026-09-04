@@ -166,9 +166,10 @@ export default function ChecklistsPage() {
 
     const itemIdByStepIndex = new Map(insertedItems.map((it) => [it.item_no - 1, it.id]));
     const mappingRows = result.rows.flatMap((row) =>
-      row.requiredStepIndexes.map((stepIndex) => ({
+      row.requiredSteps.map(({ stepIndex, target }) => ({
         item_id: itemIdByStepIndex.get(stepIndex)!,
         equipment_id: equipmentByCode.get(row.equipmentCode)!,
+        target_state: target,
       }))
     );
 
@@ -256,27 +257,30 @@ export default function ChecklistsPage() {
     const { data: mappings } = itemIds.length
       ? await supabase
           .from("checklist_item_equipment")
-          .select("item_id, equipment(code)")
+          .select("item_id, target_state, equipment(code)")
           .in("item_id", itemIds)
-      : { data: [] as { item_id: string; equipment: { code: string } | null }[] };
+      : { data: [] as { item_id: string; target_state: string | null; equipment: { code: string } | null }[] };
 
     const itemIndexById = new Map(itemList.map((it, i) => [it.id, i]));
-    const rowsByCode = new Map<string, Set<number>>();
+    const rowsByCode = new Map<string, Map<number, "open" | "close">>();
     (mappings ?? []).forEach((m) => {
       const eq = m.equipment as unknown as { code: string } | null;
       if (!eq) return;
       const stepIndex = itemIndexById.get(m.item_id);
       if (stepIndex === undefined) return;
-      const set = rowsByCode.get(eq.code) ?? new Set<number>();
-      set.add(stepIndex);
-      rowsByCode.set(eq.code, set);
+      const map = rowsByCode.get(eq.code) ?? new Map<number, "open" | "close">();
+      map.set(stepIndex, m.target_state === "close" ? "close" : "open");
+      rowsByCode.set(eq.code, map);
     });
 
     const rows = Array.from(rowsByCode.entries())
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([equipmentCode, set]) => ({
+      .map(([equipmentCode, map]) => ({
         equipmentCode,
-        requiredStepIndexes: Array.from(set),
+        requiredSteps: Array.from(map.entries()).map(([stepIndex, target]) => ({
+          stepIndex,
+          target,
+        })),
       }));
 
     const wb = buildProcedureExportWorkbook(steps, rows);

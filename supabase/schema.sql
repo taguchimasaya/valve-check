@@ -51,8 +51,15 @@ alter table equipment
 create table if not exists checklist_item_equipment (
   item_id uuid not null references checklist_items(id) on delete cascade,
   equipment_id uuid not null references equipment(id) on delete cascade,
+  target_state text check (target_state in ('open', 'close')), -- その工程でこのバルブが「開」「閉」どちらになる想定か
   primary key (item_id, equipment_id)
 );
+
+-- 既存DBに対する追記分（初回セットアップ時にも実行して問題ありません）
+alter table checklist_item_equipment add column if not exists target_state text;
+alter table checklist_item_equipment drop constraint if exists checklist_item_equipment_target_state_check;
+alter table checklist_item_equipment add constraint checklist_item_equipment_target_state_check
+  check (target_state in ('open', 'close'));
 
 -- 点検セッション（1回の点検作業の単位）
 create table if not exists inspection_sessions (
@@ -91,13 +98,27 @@ alter table inspection_results add constraint inspection_results_result_check
 -- 制御室PC側のダッシュボードがリアルタイム更新を受け取れるようにする
 alter publication supabase_realtime add table inspection_results;
 
+-- ある工程の操作対象バルブが全てQRスキャンされた（＝工程完了）タイミングの記録。
+-- 制御室ダッシュボードはこのテーブルをリアルタイム購読して通知を表示する。
+create table if not exists step_notifications (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references inspection_sessions(id) on delete cascade,
+  item_id uuid not null references checklist_items(id),
+  item_name text not null,
+  template_id uuid not null references checklist_templates(id),
+  template_name text not null,
+  notified_at timestamptz not null default now(),
+  unique (session_id, item_id)
+);
+alter publication supabase_realtime add table step_notifications;
+
 -- --- デモ用の簡易アクセス許可 ---
 -- 「Automatically expose new tables」をOFFにした場合に備え、テーブルへの
 -- アクセス権をここで明示的に付与します（ONの場合でも実行して問題ありません）。
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on
   equipment, checklist_templates, checklist_items, checklist_item_equipment,
-  inspection_sessions, inspection_results
+  inspection_sessions, inspection_results, step_notifications
   to anon, authenticated;
 
 -- ログイン機能を作るまでの間、匿名キーからの読み書きを許可します。

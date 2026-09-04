@@ -1,7 +1,5 @@
 import { supabase } from "@/lib/supabase";
 
-const STORAGE_KEY = "activeInspectionSessionId";
-
 export type InspectionSession = {
   id: string;
   title: string;
@@ -16,20 +14,18 @@ function todayLabel() {
   });
 }
 
+// セッションは端末ごとではなく、進行中のもの（status = in_progress）を
+// DBから探して全端末で共有する。こうすることで、現場のiPadと制御室のPCが
+// 自動的に同じ点検セッションを見ることになり、事前の共有作業が要らない。
 export async function getActiveSession(): Promise<InspectionSession | null> {
-  if (typeof window === "undefined") return null;
-  const id = window.localStorage.getItem(STORAGE_KEY);
-  if (!id) return null;
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("inspection_sessions")
     .select("id, title, session_date")
-    .eq("id", id)
+    .eq("status", "in_progress")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
-  if (error || !data) {
-    window.localStorage.removeItem(STORAGE_KEY);
-    return null;
-  }
-  return data;
+  return data ?? null;
 }
 
 export async function ensureActiveSession(): Promise<InspectionSession | null> {
@@ -43,11 +39,14 @@ export async function ensureActiveSession(): Promise<InspectionSession | null> {
     .single();
 
   if (error || !data) return null;
-  window.localStorage.setItem(STORAGE_KEY, data.id);
   return data;
 }
 
-export function clearActiveSession() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(STORAGE_KEY);
+// 進行中のセッションをすべて完了扱いにし、新しいセッションを開始する。
+export async function startNewSession(): Promise<InspectionSession | null> {
+  await supabase
+    .from("inspection_sessions")
+    .update({ status: "completed" })
+    .eq("status", "in_progress");
+  return ensureActiveSession();
 }

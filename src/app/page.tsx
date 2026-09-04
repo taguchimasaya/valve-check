@@ -22,8 +22,8 @@ const features = [
   {
     title: "点検ダッシュボード（制御室PC）",
     desc: "現場のチェック状況をリアルタイムに確認します。",
-    status: "未実装",
-    href: null,
+    status: "実装済み",
+    href: "/control-room",
   },
 ];
 
