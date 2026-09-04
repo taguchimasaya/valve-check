@@ -61,9 +61,11 @@ function EquipmentPrintContent() {
     ? equipmentList.filter((eq) => explicitCodes.includes(eq.code))
     : hierarchyFilter.filtered;
 
-  const visibleList = unissuedOnly
-    ? scoped.filter((eq) => !eq.qr_issued_at)
-    : scoped;
+  // 明示的に選んだ機器（codes指定）は、発行済みでも常にそのまま表示する
+  const visibleList =
+    !explicitCodes && unissuedOnly
+      ? scoped.filter((eq) => !eq.qr_issued_at)
+      : scoped;
 
   async function markVisibleAsIssued() {
     if (visibleList.length === 0) return;
@@ -77,6 +79,13 @@ function EquipmentPrintContent() {
     if (!error) loadEquipment();
   }
 
+  // 印刷ダイアログを開き、閉じたら（＝印刷操作をしたら）表示中の分を自動で発行済みにする。
+  // window.print()はダイアログが閉じるまで処理を止めるため、後続のawaitはその後に実行される。
+  async function handlePrint() {
+    window.print();
+    await markVisibleAsIssued();
+  }
+
   return (
     <div className="min-h-screen bg-white px-6 py-8">
       <div className="mx-auto max-w-4xl print:max-w-none">
@@ -85,10 +94,11 @@ function EquipmentPrintContent() {
             ← 機器マスター管理に戻る
           </Link>
           <button
-            onClick={() => window.print()}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+            onClick={handlePrint}
+            disabled={marking}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
           >
-            印刷する
+            印刷する（印刷後に自動で発行済みにします）
           </button>
         </div>
 
