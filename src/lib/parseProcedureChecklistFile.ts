@@ -1,0 +1,115 @@
+import * as XLSX from "xlsx";
+
+export type ProcedureRow = {
+  rowNumber: number;
+  equipmentCode: string;
+  requiredStepIndexes: number[]; // steps[] 内でのインデックス（0始まり）
+};
+
+export type ProcedureRowError = {
+  rowNumber: number;
+  message: string;
+};
+
+export type ProcedureParseResult = {
+  steps: string[];
+  rows: ProcedureRow[];
+  errors: ProcedureRowError[];
+};
+
+// これらのマークは「対象外（＝その工程でこのバルブは操作しない）」を意味する。
+// それ以外の値が入っているセルは「操作対象」とみなす。
+const NA_MARKERS = new Set(["／", "/", "-", "－", "ー", "―", "対象外", "na", "n/a"]);
+
+// 「操作者」「制御室」列は工程ごとの確認欄（誰が確認したかの記録用）で、
+// 現場のQRスキャン／制御室の確認ボタンでアプリ側が自動的に記録するため、
+// 手順の定義としては読み飛ばす。
+const SKIP_COLUMN_HEADERS = new Set(["操作者", "制御室"]);
+
+function isRequiredCell(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  return !NA_MARKERS.has(text.toLowerCase()) && !NA_MARKERS.has(text);
+}
+
+export async function parseProcedureChecklistFile(
+  file: File
+): Promise<ProcedureParseResult> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: "",
+  });
+
+  if (rows.length === 0) {
+    return { steps: [], rows: [], errors: [] };
+  }
+
+  const headerRow = rows[0];
+
+  // (元の列インデックス, 工程名) の組。「操作者」「制御室」列と空欄列は除く。
+  const stepColumns: { colIndex: number; name: string }[] = [];
+  headerRow.forEach((cell, colIndex) => {
+    if (colIndex === 0) return; // 1列目はバルブ名
+    const name = String(cell ?? "").trim();
+    if (!name || SKIP_COLUMN_HEADERS.has(name)) return;
+    stepColumns.push({ colIndex, name });
+  });
+
+  const steps = stepColumns.map((c) => c.name);
+
+  const parsedRows: ProcedureRow[] = [];
+  const errors: ProcedureRowError[] = [];
+
+  rows.slice(1).forEach((row, index) => {
+    const rowNumber = index + 2; // ヘッダー行+1始まり
+    const equipmentCode = String(row[0] ?? "").trim();
+    if (!equipmentCode) return; // 空行はスキップ
+
+    const requiredStepIndexes: number[] = [];
+    stepColumns.forEach(({ colIndex }, stepIndex) => {
+      if (isRequiredCell(row[colIndex])) {
+        requiredStepIndexes.push(stepIndex);
+      }
+    });
+
+    if (requiredStepIndexes.length === 0) {
+      errors.push({
+        rowNumber,
+        message: `機器番号「${equipmentCode}」はどの工程にも印がありません`,
+      });
+      return;
+    }
+
+    parsedRows.push({ rowNumber, equipmentCode, requiredStepIndexes });
+  });
+
+  return { steps, rows: parsedRows, errors };
+}
+
+export function buildProcedureTemplateWorkbook(): XLSX.WorkBook {
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [
+      "バルブ名",
+      "作業前",
+      "作業工程１",
+      "操作者",
+      "制御室",
+      "作業工程２",
+      "操作者",
+      "制御室",
+      "作業後",
+      "操作者",
+      "制御室",
+    ],
+    ["V-1001", "○", "○", "", "", "／", "", "", "○", "", ""],
+    ["V-1002", "／", "○", "", "", "○", "", "", "／", "", ""],
+    ["V-1003", "／", "／", "", "", "○", "", "", "○", "", ""],
+  ]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "作業手順");
+  return workbook;
+}

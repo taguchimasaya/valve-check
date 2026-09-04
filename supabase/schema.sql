@@ -46,6 +46,14 @@ alter table equipment
   add constraint equipment_checklist_template_fk
   foreign key (checklist_template_id) references checklist_templates(id);
 
+-- 「バルブ×工程」手順チェックリスト用: どの工程(項目)でどのバルブの操作が
+-- 必要かを表す。ここに存在しない組み合わせは「対象外（／）」として扱う。
+create table if not exists checklist_item_equipment (
+  item_id uuid not null references checklist_items(id) on delete cascade,
+  equipment_id uuid not null references equipment(id) on delete cascade,
+  primary key (item_id, equipment_id)
+);
+
 -- 点検セッション（1回の点検作業の単位）
 create table if not exists inspection_sessions (
   id uuid primary key default gen_random_uuid(),
@@ -88,7 +96,8 @@ alter publication supabase_realtime add table inspection_results;
 -- アクセス権をここで明示的に付与します（ONの場合でも実行して問題ありません）。
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on
-  equipment, checklist_templates, checklist_items, inspection_sessions, inspection_results
+  equipment, checklist_templates, checklist_items, checklist_item_equipment,
+  inspection_sessions, inspection_results
   to anon, authenticated;
 
 -- ログイン機能を作るまでの間、匿名キーからの読み書きを許可します。
@@ -96,11 +105,13 @@ grant select, insert, update, delete on
 alter table equipment enable row level security;
 alter table checklist_templates enable row level security;
 alter table checklist_items enable row level security;
+alter table checklist_item_equipment enable row level security;
 alter table inspection_sessions enable row level security;
 alter table inspection_results enable row level security;
 
 create policy "demo: allow all on equipment" on equipment for all using (true) with check (true);
 create policy "demo: allow all on checklist_templates" on checklist_templates for all using (true) with check (true);
 create policy "demo: allow all on checklist_items" on checklist_items for all using (true) with check (true);
+create policy "demo: allow all on checklist_item_equipment" on checklist_item_equipment for all using (true) with check (true);
 create policy "demo: allow all on inspection_sessions" on inspection_sessions for all using (true) with check (true);
 create policy "demo: allow all on inspection_results" on inspection_results for all using (true) with check (true);

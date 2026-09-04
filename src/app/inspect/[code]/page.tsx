@@ -91,7 +91,32 @@ export default function InspectEquipmentPage({
       .eq("template_id", eq.checklist_template_id)
       .order("item_no", { ascending: true });
 
-    setItems(checklistItems ?? []);
+    const allItems = checklistItems ?? [];
+    const itemIds = allItems.map((i) => i.id);
+
+    // 「バルブ×工程」形式のチェックリストは、このバルブが操作対象の工程だけを表示する。
+    // 紐付け（checklist_item_equipment）が1件も無いテンプレートは、
+    // 全バルブ共通の点検項目リスト形式とみなし、全項目を表示する。
+    let visibleItems = allItems;
+    if (itemIds.length > 0) {
+      const [{ data: mappedForThis }, { count: totalMappings }] = await Promise.all([
+        supabase
+          .from("checklist_item_equipment")
+          .select("item_id")
+          .eq("equipment_id", eq.id)
+          .in("item_id", itemIds),
+        supabase
+          .from("checklist_item_equipment")
+          .select("item_id", { count: "exact", head: true })
+          .in("item_id", itemIds),
+      ]);
+      if ((totalMappings ?? 0) > 0) {
+        const mappedSet = new Set((mappedForThis ?? []).map((m) => m.item_id));
+        visibleItems = allItems.filter((i) => mappedSet.has(i.id));
+      }
+    }
+
+    setItems(visibleItems);
 
     const { data: existingResults } = await supabase
       .from("inspection_results")
@@ -100,7 +125,7 @@ export default function InspectEquipmentPage({
       .eq("equipment_id", eq.id);
 
     const initialStates: Record<string, ItemState> = {};
-    (checklistItems ?? []).forEach((item) => {
+    visibleItems.forEach((item) => {
       const existing = existingResults?.find((r) => r.item_id === item.id);
       initialStates[item.id] = {
         result: (existing?.result as ResultValue | undefined) ?? null,
@@ -236,7 +261,7 @@ export default function InspectEquipmentPage({
           </div>
         ) : items.length === 0 ? (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950">
-            割り当てられたチェックリストに点検項目がありません。
+            このバルブが対象となる工程がありません（この手順ではこのバルブは操作対象外です）。
           </div>
         ) : (
           <>
