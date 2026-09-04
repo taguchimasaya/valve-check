@@ -50,6 +50,7 @@ export default function EquipmentPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
   const [qrPreview, setQrPreview] = useState<EquipmentRecord | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -232,6 +233,44 @@ export default function EquipmentPage() {
       .filter((eq) => selectedIds.has(eq.id))
       .map((eq) => eq.code);
     router.push(`/equipment/print?codes=${encodeURIComponent(codes.join(","))}`);
+  }
+
+  async function deleteEquipment(ids: string[]) {
+    setDeleteError(null);
+    setBulkUpdating(true);
+    const { error } = await supabase.from("equipment").delete().in("id", ids);
+    setBulkUpdating(false);
+    if (error) {
+      setDeleteError(
+        `削除に失敗しました: ${error.message}（点検記録などから参照されている機器は削除できません）`
+      );
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    loadEquipment();
+  }
+
+  function deleteOne(eq: EquipmentRecord) {
+    if (!window.confirm(`「${eq.code} ${eq.name}」を削除します。この操作は取り消せません。よろしいですか？`)) {
+      return;
+    }
+    deleteEquipment([eq.id]);
+  }
+
+  function deleteSelected() {
+    if (selectedIds.size === 0) return;
+    if (
+      !window.confirm(
+        `選択中の${selectedIds.size}件を削除します。この操作は取り消せません。よろしいですか？`
+      )
+    ) {
+      return;
+    }
+    deleteEquipment(Array.from(selectedIds));
   }
 
   // 一覧の「印刷用QRシートを開く」は、今の絞り込み結果と必ず一致させる。
@@ -487,12 +526,25 @@ export default function EquipmentPage() {
                 未発行に戻す
               </button>
               <button
+                onClick={deleteSelected}
+                disabled={bulkUpdating}
+                className="rounded-lg border border-red-300 px-3 py-1.5 text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+              >
+                削除
+              </button>
+              <button
                 onClick={() => setSelectedIds(new Set())}
                 className="ml-auto text-zinc-500 hover:underline"
               >
                 選択解除
               </button>
             </div>
+          )}
+
+          {deleteError && (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+              {deleteError}
+            </p>
           )}
 
           {loadingList ? (
@@ -573,9 +625,15 @@ export default function EquipmentPage() {
                         </button>
                         <button
                           onClick={() => toggleIssued(eq)}
-                          className="text-emerald-700 hover:underline dark:text-emerald-400"
+                          className="mr-3 text-emerald-700 hover:underline dark:text-emerald-400"
                         >
                           {eq.qr_issued_at ? "未発行に戻す" : "発行済みにする"}
+                        </button>
+                        <button
+                          onClick={() => deleteOne(eq)}
+                          className="text-red-600 hover:underline dark:text-red-400"
+                        >
+                          削除
                         </button>
                       </td>
                     </tr>
