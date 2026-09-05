@@ -935,9 +935,10 @@ export default function InspectScannerPage() {
                       </table>
                     </div>
                   ) : (
-                    <div className="mt-3 flex flex-wrap gap-6 overflow-x-auto">
-                      {steps.map((step) => (
-                        <div key={step.id} className="flex-1 min-w-[600px]">
+                    <div className="mt-3 overflow-x-auto">
+                      <div className="flex gap-6 pb-4">
+                        {steps.map((step) => (
+                          <div key={step.id} className="flex-shrink-0 w-[600px]">
                           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
                             {step.name}（{rows.length}台）
                           </p>
@@ -1036,7 +1037,8 @@ export default function InspectScannerPage() {
                             </tbody>
                           </table>
                         </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   )}
                 </>
