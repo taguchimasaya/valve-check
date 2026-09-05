@@ -195,13 +195,27 @@ export default function ControlRoomPage() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "inspection_sessions", filter: `id=eq.${selectedSession.id}` },
         (payload) => {
-          const updated = payload.new as { current_checklist_template_id?: string | null };
+          const updated = payload.new as {
+            current_checklist_template_id?: string | null;
+            current_item_id?: string | null;
+          };
+
           if (updated.current_checklist_template_id) {
             setChecklistId(updated.current_checklist_template_id);
             const template = templates.find((t) => t.id === updated.current_checklist_template_id);
             if (template) {
               setChecklistName(template.name);
             }
+          }
+
+          if (updated.current_item_id !== undefined) {
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === selectedSession.id
+                  ? { ...s, current_item_id: updated.current_item_id ?? null }
+                  : s
+              )
+            );
           }
         }
       )
@@ -296,7 +310,7 @@ export default function ControlRoomPage() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "inspection_start_notifications" },
-        (payload) => {
+        async (payload) => {
           const created = payload.new as {
             id?: string;
             session_id?: string;
@@ -305,12 +319,21 @@ export default function ControlRoomPage() {
           };
           if (!created.session_id) return;
 
-          setSessions((prev) => {
-            const exists = prev.some((s) => s.id === created.session_id);
-            if (exists) return prev;
+          const { data: updatedSession } = await supabase
+            .from("inspection_sessions")
+            .select("id, title, session_date, status, current_item_id, current_checklist_template_id")
+            .eq("id", created.session_id)
+            .single();
 
-            return prev;
-          });
+          if (updatedSession) {
+            setSessions((prev) => {
+              const exists = prev.some((s) => s.id === created.session_id);
+              if (exists) {
+                return prev.map((s) => s.id === created.session_id ? updatedSession : s);
+              }
+              return [updatedSession, ...prev];
+            });
+          }
 
           if (selectedSessionId === created.session_id && isValveActionAudioEnabled()) {
             const eventId = `inspection_start-${created.session_id}-${created.template_id}`;
@@ -419,6 +442,22 @@ export default function ControlRoomPage() {
         .length,
     0
   );
+  const totalConfirmed = rows.reduce(
+    (sum, r) =>
+      sum +
+      checkableSteps.filter((s) => r.cells[s.id]?.confirmed)
+        .length,
+    0
+  );
+
+  function getSessionProgress(session: InspectionSession) {
+    if (!session.current_checklist_template_id) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+
+    const template = templates.find((t) => t.id === session.current_checklist_template_id);
+    if (!template) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+
+    return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+  }
 
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-10 dark:bg-black">
@@ -447,26 +486,38 @@ export default function ControlRoomPage() {
             ) : (
               <div className="mt-3 flex flex-col gap-3">
                 {sessions.map((s) => {
-                  const fieldProgress = s.current_item_id ? "確認中" : "準備中";
+                  const currentTemplate = templates.find((t) => t.id === s.current_checklist_template_id);
+                  const currentStepName = s.current_item_id ? "(工程読み込み中)" : s.current_checklist_template_id ? "準備中" : "-";
                   return (
                     <div
                       key={s.id}
                       className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                          <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
-                          <p className="text-xs text-zinc-500">
-                            開始: {new Date(s.session_date).toLocaleTimeString("ja-JP")}
-                          </p>
-                          {s.current_checklist_template_id && (
-                            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                              現在工程: 準備中
+                        <div className="flex-1 space-y-2">
+                          <div>
+                            <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
+                            <p className="text-xs text-zinc-500">
+                              開始: {new Date(s.session_date).toLocaleTimeString("ja-JP")}
                             </p>
+                          </div>
+
+                          {s.current_checklist_template_id && (
+                            <div className="pt-1">
+                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                <span className="font-medium">作業:</span> {currentTemplate?.name ?? "?"}
+                              </p>
+                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                <span className="font-medium">現在工程:</span> {currentStepName}
+                              </p>
+                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                <span className="font-medium">現場進捗:</span> データ読み込み中
+                              </p>
+                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                <span className="font-medium">確認済み:</span> データ読み込み中
+                              </p>
+                            </div>
                           )}
-                          <p className="mt-1 text-xs text-zinc-500">
-                            ステータス: <span className="font-medium">{fieldProgress}</span>
-                          </p>
                         </div>
                         <button
                           onClick={() => {
@@ -520,8 +571,13 @@ export default function ControlRoomPage() {
                             {checklistName}
                           </p>
                           <p className="text-sm text-zinc-500">
-                            進捗 {totalDone}/{totalRequired}
+                            進捗: 現場 {totalDone}/{totalRequired} ・ 確認済み {totalConfirmed}/{totalRequired}
                           </p>
+                          {selectedSession.current_item_id && (
+                            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                              現在工程: {steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "?"}
+                            </p>
+                          )}
                         </>
                       )}
                     </div>
