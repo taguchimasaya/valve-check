@@ -630,6 +630,32 @@ export default function InspectScannerPage() {
         undefined
       );
       setScanning(true);
+
+      // QRスキャナーの枠を赤くする
+      setTimeout(() => {
+        const qrReader = document.getElementById("qr-reader");
+        if (qrReader) {
+          // すべての可能なセレクターを試す
+          const selectors = [
+            ".qr-shaded-region",
+            "[style*='border']",
+            "svg",
+          ];
+          selectors.forEach((selector) => {
+            const elements = qrReader.querySelectorAll(selector);
+            elements.forEach((el: Element) => {
+              if (el instanceof SVGElement) {
+                el.style.stroke = "#dc2626";
+              } else {
+                (el as HTMLElement).style.borderColor = "#dc2626";
+              }
+            });
+          });
+
+          // 直接 qr-reader のスタイルも変更
+          (qrReader as HTMLElement).style.borderColor = "#dc2626";
+        }
+      }, 500);
     } catch {
       setCameraError(
         "カメラを起動できませんでした。ブラウザのカメラ許可設定を確認するか、下の一覧でバルブの丸をタップして記録してください。"
