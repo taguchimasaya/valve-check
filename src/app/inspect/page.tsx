@@ -1050,7 +1050,7 @@ export default function InspectScannerPage() {
                                       </td>
                                     </Fragment>
                                   );
-                                }) as any}
+                                })() as any}
                               </tr>
                             );
                           })}
