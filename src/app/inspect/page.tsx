@@ -347,6 +347,35 @@ export default function InspectScannerPage() {
       return;
     }
 
+    // 現在工程で対象か確認（安全チェック）
+    const currentStepId = selectedSession.current_item_id;
+    if (!currentStepId) {
+      showFlash({
+        type: "error",
+        text: "現在工程が確定していません。画面を再度読み込んでください。",
+      });
+      return;
+    }
+
+    const currentStepCell = row.cells[currentStepId];
+    if (!currentStepCell) {
+      const currentStep = steps.find((s) => s.id === currentStepId);
+      showFlash({
+        type: "error",
+        text: `${code}（${row.name}）は現在の工程「${currentStep?.name ?? "不明"}」の対象ではありません。`,
+      });
+      return;
+    }
+
+    // 既にOK で完了済みか確認
+    if (currentStepCell.state === "OK") {
+      showFlash({
+        type: "info",
+        text: `${code}（${row.name}）は現在の工程で既に記録済みです。`,
+      });
+      return;
+    }
+
     const nextStep = findNextStep(row);
     if (!nextStep) {
       showFlash({ type: "info", text: `${code}（${row.name}）はすべて操作済みです。` });

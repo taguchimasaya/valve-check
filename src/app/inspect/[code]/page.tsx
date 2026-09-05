@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { ensureActiveSession, type InspectionSession } from "@/lib/inspectionSession";
@@ -45,6 +46,8 @@ export default function InspectEquipmentPage({
   params: Promise<{ code: string }>;
 }) {
   const { code } = use(params);
+  const searchParams = useSearchParams();
+  const sessionIdFromUrl = searchParams.get("session_id");
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -59,20 +62,38 @@ export default function InspectEquipmentPage({
     setLoading(true);
     setLoadError(null);
 
-    const activeSession = await ensureActiveSession();
-    if (!activeSession) {
-      setLoadError("点検セッションを開始できませんでした。通信環境を確認してください。");
+    // session_id を URL パラメータから取得
+    if (!sessionIdFromUrl) {
+      setLoadError("セッション情報が見つかりません。セッション一覧から再度操作してください。");
       setLoading(false);
       return;
     }
-    setSession(activeSession);
 
-    const activeChecklist = getActiveChecklist();
-    if (!activeChecklist) {
-      setLoadError("先に作業（チェックリスト）を選択してください。");
+    // session を DB から取得
+    const { data: sessionData, error: sessionError } = await supabase
+      .from("inspection_sessions")
+      .select("id, title, session_date, status, current_item_id, current_checklist_template_id")
+      .eq("id", sessionIdFromUrl)
+      .single();
+
+    if (sessionError || !sessionData) {
+      setLoadError("セッション情報が見つかりません。セッション一覧から再度操作してください。");
       setLoading(false);
       return;
     }
+    setSession(sessionData);
+
+    // 現在工程が確定しているか確認
+    if (!sessionData.current_item_id || !sessionData.current_checklist_template_id) {
+      setLoadError("現在の工程が確定していません。セッション一覧から再度操作してください。");
+      setLoading(false);
+      return;
+    }
+
+    const activeChecklist: ActiveChecklist = {
+      id: sessionData.current_checklist_template_id,
+      name: "",
+    };
     setChecklist(activeChecklist);
 
     const { data: eq, error: eqError } = await supabase
@@ -89,6 +110,22 @@ export default function InspectEquipmentPage({
       return;
     }
     setEquipment(eq);
+
+    // 現在工程でそのバルブが対象か確認（安全チェック）
+    const { data: currentStepTarget } = await supabase
+      .from("checklist_item_equipment")
+      .select("id")
+      .eq("equipment_id", eq.id)
+      .eq("item_id", sessionData.current_item_id)
+      .maybeSingle();
+
+    if (!currentStepTarget) {
+      setLoadError(
+        `${code}（${eq.name}）は現在の工程の対象ではありません。セッション一覧から再度操作してください。`
+      );
+      setLoading(false);
+      return;
+    }
 
     // このバルブが、選択中の作業（チェックリスト）で操作対象になっている工程だけを表示する
     const { data: mapped } = await supabase
@@ -107,7 +144,7 @@ export default function InspectEquipmentPage({
     const { data: existingResults } = await supabase
       .from("inspection_results")
       .select("item_id, result, comment")
-      .eq("session_id", activeSession.id)
+      .eq("session_id", sessionData.id)
       .eq("equipment_id", eq.id);
 
     const initialStates: Record<string, ItemState> = {};
@@ -121,7 +158,7 @@ export default function InspectEquipmentPage({
     });
     setStates(initialStates);
     setLoading(false);
-  }, [code]);
+  }, [code, sessionIdFromUrl]);
 
   useEffect(() => {
     load();
