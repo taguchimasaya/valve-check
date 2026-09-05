@@ -20,18 +20,18 @@ import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessa
 import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
 // OK/NG時の音を再生（Web Audio API）
-function playResultBeep(type: "OK" | "NG") {
+async function playResultBeep(type: "OK" | "NG") {
   try {
-    if (typeof window === "undefined" || !("AudioContext" in window && "webkitAudioContext" in window)) {
+    if (typeof window === "undefined" || !("AudioContext" in window || "webkitAudioContext" in window)) {
       console.warn("AudioContext not available");
       return;
     }
 
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
-    // iOS対策：ユーザーインタラクション後のみ再生可能なため、リジューム処理を追加
+    // iOS/Android対策：ユーザーインタラクション後のみ再生可能なため、リジューム完了を待つ
     if (audioContext.state === "suspended") {
-      audioContext.resume();
+      await audioContext.resume();
     }
 
     const now = audioContext.currentTime;
@@ -496,8 +496,8 @@ export default function InspectScannerPage() {
     if (!currentSession || !currentChecklist) return;
     const code = row.code;
 
-    // 結果音を再生
-    playResultBeep(result);
+    // 結果音を再生（内部でresume完了を待つが、DB保存はブロックしない）
+    void playResultBeep(result);
 
     const { error } = await supabase.from("inspection_results").upsert(
       {
