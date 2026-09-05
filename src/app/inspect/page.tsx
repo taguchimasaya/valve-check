@@ -82,23 +82,16 @@ export default function InspectScannerPage() {
   const [tapSaving, setTapSaving] = useState(false);
   const [startingNextStep, setStartingNextStep] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
+  const [sessionProgress, setSessionProgress] = useState<
+    Record<string, { currentStepName: string; fieldDone: number; fieldTotal: number; confirmedDone: number } | null>
+  >({});
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
-    let data = await getActiveSessions();
-
-    // アクティブセッションがなければ新規作成
-    if (data.length === 0) {
-      const newSession = await ensureActiveSession();
-      if (newSession) data = [newSession];
-    }
-
+    const data = await getActiveSessions();
     setSessions(data);
-    if (data.length > 0 && !selectedSessionId) {
-      setSelectedSessionId(data[0].id);
-    }
     setLoadingSessions(false);
-  }, [selectedSessionId]);
+  }, []);
 
   useEffect(() => {
     loadSessions();
@@ -128,7 +121,9 @@ export default function InspectScannerPage() {
     const startCompletionCheck = async () => {
       completionCheckInterval = setInterval(async () => {
         if (selectedSession && steps.length > 0 && rows.length > 0) {
-          const lastStep = steps[steps.length - 1];
+          const checkableSteps = steps.filter((s) => isCheckableStep(s.name));
+          if (checkableSteps.length === 0) return;
+          const lastStep = checkableSteps[checkableSteps.length - 1];
           const requiredRows = rows.filter((r) => lastStep.id in r.cells && r.cells[lastStep.id]?.state !== "NA");
           const allComplete = requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
 
@@ -150,9 +145,13 @@ export default function InspectScannerPage() {
             // 新しいセッションを作成
             const newSession = await ensureActiveSession();
             if (newSession) {
-              setSelectedSessionId(newSession.id);
+              setSessionCompleted(false);
+              setSelectedSessionId(null);
               setChecklist(null);
               clearActiveChecklist();
+              setSteps([]);
+              setRows([]);
+              setQrNotIssuedEquipment([]);
               setSessions([newSession]);
             }
 
@@ -588,12 +587,83 @@ export default function InspectScannerPage() {
     stopScanner();
     const next = await startNewSession();
     if (next) {
-      setSessions([next, ...sessions]);
-      setSelectedSessionId(next.id);
+      setSessionCompleted(false);
+      setSelectedSessionId(null);
       setChecklist(null);
       clearActiveChecklist();
+      setSteps([]);
+      setRows([]);
+      setQrNotIssuedEquipment([]);
+      setSessions([next, ...sessions]);
     }
   }
+
+  async function getSessionProgress(session: InspectionSession) {
+    if (!session.current_checklist_template_id || !session.current_item_id) {
+      return { currentStepName: "準備中", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+    }
+
+    const { data: currentItem } = await supabase
+      .from("checklist_items")
+      .select("item_name")
+      .eq("id", session.current_item_id)
+      .single();
+
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("id")
+      .eq("template_id", session.current_checklist_template_id);
+
+    if (!items || items.length === 0) {
+      return { currentStepName: currentItem?.item_name ?? "?", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+    }
+
+    const itemIds = items.map((i) => i.id);
+    const checkableItemIds = await Promise.all(
+      itemIds.map(async (id) => {
+        const { data } = await supabase.from("checklist_items").select("item_name").eq("id", id).single();
+        return !UNCHECKED_STEP_NAMES.has(data?.item_name ?? "") ? id : null;
+      })
+    ).then((ids) => ids.filter((id): id is string => id !== null));
+
+    const { data: mappings } = await supabase
+      .from("checklist_item_equipment")
+      .select("item_id, equipment_id")
+      .in("item_id", checkableItemIds);
+
+    if (!mappings || mappings.length === 0) {
+      return { currentStepName: currentItem?.item_name ?? "?", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+    }
+
+    const { data: results } = await supabase
+      .from("inspection_results")
+      .select("item_id, result, confirmed_at")
+      .eq("session_id", session.id)
+      .eq("item_id", session.current_item_id);
+
+    const fieldDone = (results ?? []).filter((r) => r.result !== "PENDING" && r.result !== "NA").length;
+    const confirmedDone = (results ?? []).filter((r) => r.confirmed_at).length;
+    const fieldTotal = mappings.filter((m) => m.item_id === session.current_item_id).length;
+
+    return { currentStepName: currentItem?.item_name ?? "?", fieldDone, fieldTotal, confirmedDone };
+  }
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+
+    const loadAllProgress = async () => {
+      const progress: Record<
+        string,
+        { currentStepName: string; fieldDone: number; fieldTotal: number; confirmedDone: number } | null
+      > = {};
+      for (const session of sessions) {
+        progress[session.id] = await getSessionProgress(session);
+      }
+      setSessionProgress(progress);
+    };
+
+    loadAllProgress();
+  }, [sessions]);
 
   const filteredTemplates = templates.filter((t) =>
     t.name.toLowerCase().includes(searchText.trim().toLowerCase())
@@ -668,25 +738,54 @@ export default function InspectScannerPage() {
                 </button>
               </div>
             ) : (
-              <div className="mt-3 flex flex-col gap-2">
-                {sessions.map((s) => (
+              <div className="mt-3 flex flex-col gap-4">
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【点検中の作業】</p>
+                  {sessions.map((s) => {
+                    const progress = sessionProgress[s.id];
+                    return (
+                      <div
+                        key={s.id}
+                        className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-950"
+                      >
+                        <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
+                        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                          開始：{new Date(s.session_date).toLocaleTimeString("ja-JP")}
+                        </p>
+                        {progress ? (
+                          <>
+                            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                              現在工程：{progress.currentStepName}
+                            </p>
+                            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                              現場進捗：{progress.fieldDone} / {progress.fieldTotal}
+                            </p>
+                            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                              制御室確認：{progress.confirmedDone} / {progress.fieldTotal}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-xs text-zinc-500">読み込み中...</p>
+                        )}
+                        <button
+                          onClick={() => setSelectedSessionId(s.id)}
+                          className="mt-3 w-full rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
+                        >
+                          この点検を再開
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
                   <button
-                    key={s.id}
-                    onClick={() => setSelectedSessionId(s.id)}
-                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
+                    onClick={handleStartNewSession}
+                    className="w-full rounded-lg bg-zinc-700 py-2.5 text-sm font-semibold text-white hover:bg-zinc-600 dark:bg-zinc-600"
                   >
-                    <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
-                    <p className="text-xs text-zinc-500">
-                      {new Date(s.session_date).toLocaleDateString("ja-JP")} 開始
-                    </p>
+                    新しい点検を開始
                   </button>
-                ))}
-                <button
-                  onClick={handleStartNewSession}
-                  className="mt-2 rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
-                >
-                  新しい点検を開始
-                </button>
+                </div>
               </div>
             )}
           </div>
