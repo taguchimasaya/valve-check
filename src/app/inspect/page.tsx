@@ -371,16 +371,8 @@ export default function InspectScannerPage() {
     setRows([]);
   }
 
-  // 指定したバルブの「次の未完了工程」を割り出す（作業前は対象外）。
-  function findNextStep(row: ValveRow): StepInfo | null {
-    return (
-      steps.find((s) => isCheckableStep(s.name) && row.cells[s.id]?.state === "PENDING") ?? null
-    );
-  }
-
-  // QRコード（または手入力）を読み取ったバルブを「操作済み」として記録する。
-  // そのバルブが必要とする工程のうち、まだ済んでいない最も早い工程をOKにする。
-  // 全て終わっていれば完了済みの旨を伝える。工程が完了したら制御室へ通知する。
+  // QRコード（または手入力）を読み取ったバルブの「現在工程」を記録する。
+  // QRスキャン時は常に selectedSession.current_item_id を現在工程として使用する。
   async function handleScan(rawText: string) {
     if (!selectedSession || !checklist) return;
     const marker = "/inspect/";
@@ -427,13 +419,18 @@ export default function InspectScannerPage() {
       return;
     }
 
-    const nextStep = findNextStep(row);
-    if (!nextStep) {
-      showFlash({ type: "info", text: `${code}（${row.name}）はすべて操作済みです。` });
+    // 現在工程に対応する StepInfo を取得
+    const currentStep = steps.find((s) => s.id === currentStepId);
+    if (!currentStep) {
+      showFlash({
+        type: "error",
+        text: "現在工程が見つかりません。画面を再度読み込んでください。",
+      });
       return;
     }
 
-    await completeStep(row, nextStep);
+    // QRスキャン時は常に現在工程を記録する
+    await completeStep(row, currentStep);
   }
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
