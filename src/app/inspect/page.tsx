@@ -103,9 +103,16 @@ export default function InspectScannerPage() {
     setChecklist(getActiveChecklist());
     const saved = localStorage.getItem("inspectDisplayMode") as "current" | "all" | null;
     if (saved) setDisplayMode(saved);
+
+    // 制御室での更新を反映するため、定期的にグリッドをリロード
+    const interval = setInterval(() => {
+      loadGrid();
+    }, 3000); // 3秒ごと
+
     return () => {
       stopScanner();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
