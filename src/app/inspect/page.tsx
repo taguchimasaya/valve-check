@@ -81,6 +81,7 @@ export default function InspectScannerPage() {
   const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
   const [tapSaving, setTapSaving] = useState(false);
   const [startingNextStep, setStartingNextStep] = useState(false);
+  const [sessionCompleted, setSessionCompleted] = useState(false);
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
@@ -110,10 +111,28 @@ export default function InspectScannerPage() {
       loadGrid();
     }, 1000); // 1秒ごと
 
+    // 最後の工程完了を定期的に検出してセッション終了
+    const completionCheckInterval = setInterval(async () => {
+      if (selectedSession && !sessionCompleted && steps.length > 0 && rows.length > 0) {
+        const lastStep = steps[steps.length - 1];
+        const requiredRows = rows.filter((r) => lastStep.id in r.cells && r.cells[lastStep.id]?.state !== "NA");
+        const allComplete = requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
+
+        if (allComplete) {
+          setSessionCompleted(true);
+          await supabase
+            .from("inspection_sessions")
+            .update({ status: "completed" })
+            .eq("id", selectedSession.id);
+        }
+      }
+    }, 2000); // 2秒ごと
+
     return () => {
       stopScanner();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       clearInterval(interval);
+      clearInterval(completionCheckInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -405,6 +424,14 @@ export default function InspectScannerPage() {
     return requiredRows.length > 0 && requiredRows.every((r) => r.cells[currentStep.id]?.state !== "PENDING");
   }
 
+  // 最後の工程がすべて完了したかを判定（セッション終了判定用）
+  function isLastStepComplete(): boolean {
+    if (!steps.length || !rows.length) return false;
+    const lastStep = steps[steps.length - 1];
+    const requiredRows = rows.filter((r) => lastStep.id in r.cells && r.cells[lastStep.id]?.state !== "NA");
+    return requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
+  }
+
   // 次工程を開始
   async function startNextStep() {
     try {
@@ -660,6 +687,30 @@ export default function InspectScannerPage() {
                   </button>
                 ))
               )}
+            </div>
+          </div>
+        ) : selectedSession && checklist && sessionCompleted ? (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-8 text-center dark:border-emerald-900 dark:bg-emerald-950">
+            <p className="text-3xl">✓</p>
+            <p className="mt-4 text-xl font-semibold text-emerald-900 dark:text-emerald-100">
+              セッション完了！
+            </p>
+            <p className="mt-2 text-sm text-emerald-800 dark:text-emerald-300">
+              復旧状態まですべての工程が完了しました。
+            </p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+              <button
+                onClick={handleStartNewSession}
+                className="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
+              >
+                新規セッションを開始
+              </button>
+              <Link
+                href="/"
+                className="rounded-lg border border-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-400 dark:text-emerald-400 dark:hover:bg-emerald-950"
+              >
+                ホームに戻る
+              </Link>
             </div>
           </div>
         ) : selectedSession && checklist ? (
