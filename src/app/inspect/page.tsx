@@ -19,6 +19,44 @@ import {
 import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessage } from "@/lib/valveAction";
 import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
+// OK/NG時の音を再生
+function playResultBeep(type: "OK" | "NG") {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const now = audioContext.currentTime;
+
+    if (type === "OK") {
+      // OK: ピッ（高音、短い）
+      const osc = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      osc.connect(gain);
+      gain.connect(audioContext.destination);
+      osc.frequency.value = 1000; // 高い音
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } else {
+      // NG: ブブー（低音、複数回）
+      const playTone = (startTime: number, duration: number) => {
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.frequency.value = 400; // 低い音
+        gain.gain.setValueAtTime(0.3, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      playTone(now, 0.15);
+      playTone(now + 0.2, 0.15);
+    }
+  } catch (err) {
+    console.warn("Beep could not be played:", err);
+  }
+}
+
 type TemplateOption = {
   id: string;
   name: string;
@@ -386,16 +424,19 @@ export default function InspectScannerPage() {
   }
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
-  async function completeStep(row: ValveRow, nextStep: StepInfo) {
+  async function completeStep(row: ValveRow, nextStep: StepInfo, result: "OK" | "NG" = "OK") {
     if (!selectedSession || !checklist) return;
     const code = row.code;
+
+    // 結果音を再生
+    playResultBeep(result);
 
     const { error } = await supabase.from("inspection_results").upsert(
       {
         session_id: selectedSession.id,
         equipment_id: row.equipmentId,
         item_id: nextStep.id,
-        result: "OK",
+        result: result,
         checked_at: new Date().toISOString(),
       },
       { onConflict: "session_id,equipment_id,item_id" }
@@ -414,7 +455,7 @@ export default function InspectScannerPage() {
               ...r,
               cells: {
                 ...r.cells,
-                [nextStep.id]: { ...r.cells[nextStep.id], state: "OK" },
+                [nextStep.id]: { ...r.cells[nextStep.id], state: result },
               },
             }
           : r
