@@ -427,10 +427,16 @@ export default function InspectScannerPage() {
 
     const row = currentRows.find((r) => r.code === code);
     if (!row) {
+      void playResultBeep("NG");
       showFlash({
         type: "error",
         text: `${code} は選択中の作業「${currentChecklist.name}」には含まれていません。`,
       });
+      // 同一QRの連続検出でブブーが鳴り続けないよう短時間ロック
+      scanLockRef.current = true;
+      setTimeout(() => {
+        scanLockRef.current = false;
+      }, 1500);
       return;
     }
 
@@ -447,11 +453,17 @@ export default function InspectScannerPage() {
 
     const currentStepCell = row.cells[currentStepId];
     if (!currentStepCell) {
+      void playResultBeep("NG");
       const currentStep = currentSteps.find((s) => s.id === currentStepId);
       showFlash({
         type: "error",
         text: `${code}（${row.name}）は現在の工程「${currentStep?.name ?? "不明"}」の対象ではありません。`,
       });
+      // 同一QRの連続検出でブブーが鳴り続けないよう短時間ロック
+      scanLockRef.current = true;
+      setTimeout(() => {
+        scanLockRef.current = false;
+      }, 1500);
       return;
     }
 
