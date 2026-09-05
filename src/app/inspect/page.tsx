@@ -134,14 +134,20 @@ export default function InspectScannerPage() {
 
           if (allComplete) {
             setSessionCompleted(true);
-            await supabase
+
+            // セッションを完了状態に更新
+            const { error: updateError } = await supabase
               .from("inspection_sessions")
               .update({ status: "completed" })
               .eq("id", selectedSession.id);
 
-            // セッションの更新完了を待ってから新しいセッションを作成
-            await new Promise(resolve => setTimeout(resolve, 500));
+            if (updateError) {
+              console.error("Failed to update session status:", updateError);
+              clearInterval(completionCheckInterval);
+              return;
+            }
 
+            // 新しいセッションを作成
             const newSession = await ensureActiveSession();
             if (newSession) {
               setSelectedSessionId(newSession.id);
@@ -285,21 +291,32 @@ export default function InspectScannerPage() {
     setActiveChecklist({ id: t.id, name: t.name });
     setChecklist({ id: t.id, name: t.name });
 
-    // 最初の工程を current_item_id に設定
+    // 最初のチェック可能な工程を取得
     const { data: items } = await supabase
       .from("checklist_items")
       .select("id, item_no, item_name")
       .eq("template_id", t.id)
-      .order("item_no", { ascending: true })
-      .limit(1);
+      .order("item_no", { ascending: true });
 
-    if (items && items.length > 0) {
-      const firstItem = items[0];
-      await setCurrentStep(selectedSession.id, t.id, firstItem.id);
+    if (!items || items.length === 0) return;
+
+    // 最初のチェック可能な工程を探す（「作業前」をスキップ）
+    const firstCheckableItem = items.find((item) => !UNCHECKED_STEP_NAMES.has(item.item_name)) || items[0];
+
+    // セッションの現在工程を設定
+    const { error: stepError } = await supabase
+      .from("inspection_sessions")
+      .update({
+        current_checklist_template_id: t.id,
+        current_item_id: firstCheckableItem.id,
+      })
+      .eq("id", selectedSession.id);
+
+    if (!stepError) {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === selectedSession.id
-            ? { ...s, current_item_id: firstItem.id, current_checklist_template_id: t.id }
+            ? { ...s, current_item_id: firstCheckableItem.id, current_checklist_template_id: t.id }
             : s
         )
       );
