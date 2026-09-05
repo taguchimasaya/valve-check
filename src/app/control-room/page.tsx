@@ -58,6 +58,9 @@ export default function ControlRoomPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const playedEventsRef = useRef<Set<string>>(new Set());
+  const [sessionProgress, setSessionProgress] = useState<
+    Record<string, { fieldDone: number; fieldTotal: number; confirmedDone: number } | null>
+  >({});
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
@@ -77,6 +80,20 @@ export default function ControlRoomPage() {
       }
     }
   }, [selectedSession, templates]);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+
+    const loadAllProgress = async () => {
+      const progress: Record<string, { fieldDone: number; fieldTotal: number; confirmedDone: number } | null> = {};
+      for (const session of sessions) {
+        progress[session.id] = await getSessionProgress(session);
+      }
+      setSessionProgress(progress);
+    };
+
+    loadAllProgress();
+  }, [sessions]);
 
   useEffect(() => {
     loadSessions();
@@ -450,13 +467,36 @@ export default function ControlRoomPage() {
     0
   );
 
-  function getSessionProgress(session: InspectionSession) {
+  async function getSessionProgress(session: InspectionSession) {
     if (!session.current_checklist_template_id) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
 
-    const template = templates.find((t) => t.id === session.current_checklist_template_id);
-    if (!template) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("id")
+      .eq("template_id", session.current_checklist_template_id);
 
-    return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+    if (!items || items.length === 0) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+
+    const itemIds = items.map((i) => i.id);
+
+    const { data: mappings } = await supabase
+      .from("checklist_item_equipment")
+      .select("item_id, equipment_id")
+      .in("item_id", itemIds);
+
+    if (!mappings || mappings.length === 0) return { fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+
+    const { data: results } = await supabase
+      .from("inspection_results")
+      .select("item_id, result, confirmed_at")
+      .eq("session_id", session.id)
+      .in("item_id", itemIds);
+
+    const fieldDone = (results ?? []).filter((r) => r.result !== "PENDING" && r.result !== "NA").length;
+    const confirmedDone = (results ?? []).filter((r) => r.confirmed_at).length;
+    const fieldTotal = mappings.length;
+
+    return { fieldDone, fieldTotal, confirmedDone };
   }
 
   return (
@@ -487,7 +527,17 @@ export default function ControlRoomPage() {
               <div className="mt-3 flex flex-col gap-3">
                 {sessions.map((s) => {
                   const currentTemplate = templates.find((t) => t.id === s.current_checklist_template_id);
-                  const currentStepName = s.current_item_id ? "(工程読み込み中)" : s.current_checklist_template_id ? "準備中" : "-";
+                  const progress = sessionProgress[s.id];
+                  let currentStepName = "-";
+                  if (s.current_item_id && checklistId === s.current_checklist_template_id) {
+                    const step = steps.find((st) => st.id === s.current_item_id);
+                    if (step) currentStepName = step.name;
+                  } else if (s.current_item_id) {
+                    currentStepName = "(工程読み込み中)";
+                  } else if (s.current_checklist_template_id) {
+                    currentStepName = "準備中";
+                  }
+
                   return (
                     <div
                       key={s.id}
@@ -510,12 +560,20 @@ export default function ControlRoomPage() {
                               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                                 <span className="font-medium">現在工程:</span> {currentStepName}
                               </p>
-                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                                <span className="font-medium">現場進捗:</span> データ読み込み中
-                              </p>
-                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                                <span className="font-medium">確認済み:</span> データ読み込み中
-                              </p>
+                              {progress ? (
+                                <>
+                                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                    <span className="font-medium">現場進捗:</span> {progress.fieldDone}/{progress.fieldTotal}
+                                  </p>
+                                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                    <span className="font-medium">確認済み:</span> {progress.confirmedDone}/{progress.fieldTotal}
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <p className="text-xs text-zinc-500">読み込み中...</p>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
