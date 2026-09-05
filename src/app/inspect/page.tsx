@@ -995,46 +995,62 @@ export default function InspectScannerPage() {
                                   </span>
                                 </td>
                                 <td className="px-1 py-2 text-center">
-                                  <button
-                                    onClick={() => clickable && openTapConfirm(row)}
-                                    disabled={!clickable}
-                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(
-                                      row,
-                                      steps.find((s) => s.id === selectedSession.current_item_id)!
-                                    )} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
-                                  >
-                                    {cellLabel(cell)}
-                                  </button>
+                                  {(() => {
+                                    const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+                                    if (!currentStep) return null;
+                                    return (
+                                      <button
+                                        onClick={() => clickable && openTapConfirm(row)}
+                                        disabled={!clickable}
+                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(
+                                          row,
+                                          currentStep
+                                        )} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
+                                      >
+                                        {cellLabel(cell)}
+                                      </button>
+                                    );
+                                  })()}
                                 </td>
-                                {isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") && (
-                                  <td className="px-1 py-2 text-center text-base">
-                                    <span
-                                      onClick={() => clickable && openTapConfirm(row)}
-                                      className={
-                                        clickable
-                                          ? "cursor-pointer text-zinc-400"
-                                          : cell.state === "NA"
-                                          ? "text-zinc-200 dark:text-zinc-800"
-                                          : "text-emerald-600 dark:text-emerald-400"
-                                      }
-                                    >
-                                      {checkGlyph(cell, steps.find((s) => s.id === selectedSession.current_item_id)!)}
-                                    </span>
-                                  </td>
-                                )}
-                                {isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") && (
-                                  <td className="px-1 py-2 text-center text-base">
-                                    <span
-                                      className={
-                                        cell.confirmed
-                                          ? "text-emerald-600 dark:text-emerald-400"
-                                          : "text-zinc-300 dark:text-zinc-700"
-                                      }
-                                    >
-                                      {cell.confirmed ? "☑" : "☐"}
-                                    </span>
-                                  </td>
-                                )}
+                                {(() => {
+                                  const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+                                  if (!isCheckableStep(currentStep?.name ?? "")) return null;
+                                  return (
+                                    <td className="px-1 py-2 text-center text-base">
+                                      <span
+                                        onClick={() => clickable && openTapConfirm(row)}
+                                        className={
+                                          clickable
+                                            ? "cursor-pointer text-zinc-400"
+                                            : cell.state === "NA"
+                                            ? "text-zinc-200 dark:text-zinc-800"
+                                            : "text-emerald-600 dark:text-emerald-400"
+                                        }
+                                      >
+                                        {checkGlyph(cell, currentStep!)}
+                                      </span>
+                                    </td>
+                                  );
+                                })()}
+                                {(() => {
+                                  const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+                                  if (!isCheckableStep(currentStep?.name ?? "")) return null;
+                                  return (
+                                    <Fragment key="confirm">
+                                      <td className="px-1 py-2 text-center text-base">
+                                        <span
+                                          className={
+                                            cell.confirmed
+                                              ? "text-emerald-600 dark:text-emerald-400"
+                                              : "text-zinc-300 dark:text-zinc-700"
+                                          }
+                                        >
+                                          {cell.confirmed ? "☑" : "☐"}
+                                        </span>
+                                      </td>
+                                    </Fragment>
+                                  );
+                                }) as any}
                               </tr>
                             );
                           })}
