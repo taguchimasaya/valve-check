@@ -17,7 +17,7 @@ import {
   type ActiveChecklist,
 } from "@/lib/activeChecklist";
 import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessage } from "@/lib/valveAction";
-import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
+import { speak, isValveActionAudioEnabled, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
 // OK/NG時の音を再生（Web Audio API）
 function playResultBeep(type: "OK" | "NG") {
@@ -120,6 +120,12 @@ export default function InspectScannerPage() {
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
+  // Stale closure 対策：QRコールバック内で常に最新の state を参照する
+  const selectedSessionRef = useRef<InspectionSession | undefined>(undefined);
+  const rowsRef = useRef<ValveRow[]>([]);
+  const stepsRef = useRef<StepInfo[]>([]);
+  const checklistRef = useRef<ActiveChecklist | null>(null);
+
   // スキャナー
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -136,6 +142,9 @@ export default function InspectScannerPage() {
   const [sessionProgress, setSessionProgress] = useState<
     Record<string, { currentStepName: string; fieldDone: number; fieldTotal: number; confirmedDone: number } | null>
   >({});
+
+  // デバッグ表示用
+  const [debugInfo, setDebugInfo] = useState<string>("");
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
@@ -161,6 +170,24 @@ export default function InspectScannerPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Stale closure 対策：最新の state を ref に同期
+  // QRスキャンコールバック内で常に最新の current_item_id を参照できるように
+  useEffect(() => {
+    selectedSessionRef.current = selectedSession;
+  }, [selectedSession]);
+
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+
+  useEffect(() => {
+    stepsRef.current = steps;
+  }, [steps]);
+
+  useEffect(() => {
+    checklistRef.current = checklist;
+  }, [checklist]);
 
   // 最後の工程完了を定期的に検出してセッション終了
   useEffect(() => {
@@ -348,12 +375,17 @@ export default function InspectScannerPage() {
       .eq("id", selectedSession.id);
 
     if (!stepError) {
+      // Stale closure 対策：useEffectのコミットを待たず、同期的に即座にrefへ反映する。
+      // これによりQRスキャンcallbackが直後に発火しても最新のcurrent_item_idを参照できる。
+      const updatedSession: InspectionSession = {
+        ...selectedSession,
+        current_item_id: firstCheckableItem.id,
+        current_checklist_template_id: t.id,
+      };
+      selectedSessionRef.current = updatedSession;
+
       setSessions((prev) =>
-        prev.map((s) =>
-          s.id === selectedSession.id
-            ? { ...s, current_item_id: firstCheckableItem.id, current_checklist_template_id: t.id }
-            : s
-        )
+        prev.map((s) => (s.id === selectedSession.id ? updatedSession : s))
       );
 
       // 制御室に通知を送信
@@ -372,26 +404,34 @@ export default function InspectScannerPage() {
   }
 
   // QRコード（または手入力）を読み取ったバルブの「現在工程」を記録する。
-  // QRスキャン時は常に selectedSession.current_item_id を現在工程として使用する。
+  // QRスキャン時は常に inspection_sessions.current_item_id を現在工程として使用する。
+  // Stale closure 対策：最新の ref を使用して最新の state を参照
   async function handleScan(rawText: string) {
-    if (!selectedSession || !checklist) return;
+    // 常に最新の state を参照するため、ref から取得
+    const currentSession = selectedSessionRef.current;
+    const currentRows = rowsRef.current;
+    const currentSteps = stepsRef.current;
+    const currentChecklist = checklistRef.current;
+
+    if (!currentSession || !currentChecklist) return;
     const marker = "/inspect/";
     const trimmed = rawText.trim();
     const idx = trimmed.indexOf(marker);
     const code = (idx >= 0 ? trimmed.slice(idx + marker.length) : trimmed).trim();
     if (!code) return;
 
-    const row = rows.find((r) => r.code === code);
+    const row = currentRows.find((r) => r.code === code);
     if (!row) {
       showFlash({
         type: "error",
-        text: `${code} は選択中の作業「${checklist.name}」には含まれていません。`,
+        text: `${code} は選択中の作業「${currentChecklist.name}」には含まれていません。`,
       });
       return;
     }
 
     // 現在工程で対象か確認（安全チェック）
-    const currentStepId = selectedSession.current_item_id;
+    // 常に inspection_sessions.current_item_id を使用
+    const currentStepId = currentSession.current_item_id;
     if (!currentStepId) {
       showFlash({
         type: "error",
@@ -402,7 +442,7 @@ export default function InspectScannerPage() {
 
     const currentStepCell = row.cells[currentStepId];
     if (!currentStepCell) {
-      const currentStep = steps.find((s) => s.id === currentStepId);
+      const currentStep = currentSteps.find((s) => s.id === currentStepId);
       showFlash({
         type: "error",
         text: `${code}（${row.name}）は現在の工程「${currentStep?.name ?? "不明"}」の対象ではありません。`,
@@ -420,7 +460,7 @@ export default function InspectScannerPage() {
     }
 
     // 現在工程に対応する StepInfo を取得
-    const currentStep = steps.find((s) => s.id === currentStepId);
+    const currentStep = currentSteps.find((s) => s.id === currentStepId);
     if (!currentStep) {
       showFlash({
         type: "error",
@@ -429,21 +469,45 @@ export default function InspectScannerPage() {
       return;
     }
 
+    // QR検出直後に、ユーザーアクティベーションを使用して actionText を先読みし speak() を実行
+    const requiredSequence = currentSteps
+      .filter((s) => row.cells[s.id]?.target)
+      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
+    const action = classifyAction(requiredSequence, currentStep.id);
+    const actionText = action ? valveActionMessage(code, action) : `${code}を記録しました`;
+
+    const currentStepName = currentStep?.name || "不明";
+    console.log("[handleScan] QR detected with current_item_id:", currentStepId, "stepName:", currentStepName, "actionText:", actionText);
+
+    // デバッグ情報を画面に表示
+    setDebugInfo(`QR: ${code} | Step: ${currentStepName} (${currentStepId?.slice(0, 8)}...)`);
+
+    if (isValveActionAudioEnabled()) {
+      speak(actionText);
+    }
+
     // QRスキャン時は常に現在工程を記録する
     await completeStep(row, currentStep);
   }
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
+  // Stale closure 対策：state を直接参照せず、常に ref から最新値を取得する
   async function completeStep(row: ValveRow, nextStep: StepInfo, result: "OK" | "NG" = "OK") {
-    if (!selectedSession || !checklist) return;
+    const currentSession = selectedSessionRef.current;
+    const currentChecklist = checklistRef.current;
+    const currentSteps = stepsRef.current;
+
+    if (!currentSession || !currentChecklist) return;
     const code = row.code;
+
+    console.log("[completeStep] session_id:", currentSession.id, "item_id:", nextStep.id, "item_name:", nextStep.name);
 
     // 結果音を再生
     playResultBeep(result);
 
     const { error } = await supabase.from("inspection_results").upsert(
       {
-        session_id: selectedSession.id,
+        session_id: currentSession.id,
         equipment_id: row.equipmentId,
         item_id: nextStep.id,
         result: result,
@@ -457,9 +521,9 @@ export default function InspectScannerPage() {
       return;
     }
 
-    // ローカルの表示を即時更新
-    setRows((prev) =>
-      prev.map((r) =>
+    // ローカルの表示を即時更新（updater関数で常に最新のprevを使用、かつrefにも同期反映）
+    setRows((prev) => {
+      const updated = prev.map((r) =>
         r.equipmentId === row.equipmentId
           ? {
               ...r,
@@ -469,29 +533,37 @@ export default function InspectScannerPage() {
               },
             }
           : r
-      )
-    );
+      );
+      rowsRef.current = updated;
+      return updated;
+    });
 
     // この工程が必要な全バルブが完了したかを確認し、完了していれば制御室へ通知する
-    const requiredRows = rows.filter((r) => nextStep.id in r.cells);
+    // rowsRef は setRows の直後に即座に同期済みなので最新値を使える
+    const currentRows = rowsRef.current;
+    const requiredRows = currentRows.filter((r) => nextStep.id in r.cells);
     const allDone = requiredRows.every((r) =>
       r.equipmentId === row.equipmentId ? true : r.cells[nextStep.id]?.state !== "PENDING"
     );
 
-    const requiredSequence = steps
+    const requiredSequence = currentSteps
       .filter((s) => row.cells[s.id]?.target)
       .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
     const action = classifyAction(requiredSequence, nextStep.id);
     const actionText = action ? valveActionMessage(code, action) : `${code}を記録しました`;
 
+    // 注: 音声再生は handleScan() で QR検出直後に実行済み
+    // または confirmTap() で タップ直後に実行する必要がある
+    // completeStep() での speak() は削除（二重音声防止）
+
     if (allDone) {
       const { error: notifyError } = await supabase.from("step_notifications").upsert(
         {
-          session_id: selectedSession.id,
+          session_id: currentSession.id,
           item_id: nextStep.id,
           item_name: nextStep.name,
-          template_id: checklist.id,
-          template_name: checklist.name,
+          template_id: currentChecklist.id,
+          template_name: currentChecklist.name,
         },
         { onConflict: "session_id,item_id", ignoreDuplicates: true }
       );
@@ -523,6 +595,20 @@ export default function InspectScannerPage() {
   async function confirmTap() {
     if (!tapConfirm) return;
     setTapSaving(true);
+
+    // タップ確認ボタンクリック直後に、ユーザーアクティベーション内で actionText を生成して speak()
+    const requiredSequence = steps
+      .filter((s) => tapConfirm.row.cells[s.id]?.target)
+      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: tapConfirm.row.cells[s.id]!.target! }));
+    const action = classifyAction(requiredSequence, tapConfirm.step.id);
+    const actionText = action ? valveActionMessage(tapConfirm.row.code, action) : `${tapConfirm.row.code}を記録しました`;
+
+    console.log("[confirmTap] tap confirmed, actionText:", actionText);
+    if (isValveActionAudioEnabled()) {
+      console.log("[confirmTap] calling speak()");
+      speak(actionText);
+    }
+
     await completeStep(tapConfirm.row, tapConfirm.step);
     setTapSaving(false);
     setTapConfirm(null);
@@ -575,13 +661,20 @@ export default function InspectScannerPage() {
         return;
       }
 
+      console.log("[startNextStep] current_item_id updated to:", nextStep.id, "name:", nextStep.name);
+
+      // Stale closure 対策：useEffectのコミットを待たず、同期的に即座にrefへ反映する。
+      // これにより、この直後にQRを読んでもhandleScan()が最新のcurrent_item_idを参照できる。
+      const updatedSession: InspectionSession = {
+        ...selectedSession,
+        current_item_id: nextStep.id,
+        current_checklist_template_id: checklist.id,
+      };
+      selectedSessionRef.current = updatedSession;
+
       // ローカル state 更新
       setSessions((prev) =>
-        prev.map((s) =>
-          s.id === selectedSession.id
-            ? { ...s, current_item_id: nextStep.id, current_checklist_template_id: checklist.id }
-            : s
-        )
+        prev.map((s) => (s.id === selectedSession.id ? updatedSession : s))
       );
 
       // 通知を挿入
@@ -605,6 +698,10 @@ export default function InspectScannerPage() {
         type: "success",
         text: `${nextStep.name}を開始しました`,
       });
+
+      // 工程変更後、グリッドデータを即座に再ロード
+      // これにより、QRスキャン時に正しい工程のデータを使用できる
+      await loadGrid();
     } finally {
       setStartingNextStep(false);
     }
@@ -1026,6 +1123,15 @@ export default function InspectScannerPage() {
                   {flash.text}
                 </p>
               )}
+
+              {debugInfo && (
+                <div className="mt-3 rounded-lg border border-purple-300 bg-purple-50 p-3 text-xs dark:border-purple-700 dark:bg-purple-950">
+                  <p className="font-mono text-purple-800 dark:text-purple-300">{debugInfo}</p>
+                  <p className="mt-1 text-purple-700 dark:text-purple-400">
+                    Current Session: {selectedSession?.current_item_id?.slice(0, 8) || "なし"}
+                  </p>
+                </div>
+              )}
             </div>
 
             {selectedSession && checklist && steps.length > 0 && (
@@ -1078,14 +1184,17 @@ export default function InspectScannerPage() {
                           <button
                             key={step.id}
                             onClick={() => {
-                              if (isPast || isCurrent) return;
+                              if (isPast || isCurrent || isFuture) return;
                               setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
+                                // Stale closure 対策：同期的に即座にrefへ反映
+                                const updatedSession: InspectionSession = {
+                                  ...selectedSession,
+                                  current_item_id: step.id,
+                                  current_checklist_template_id: checklist.id,
+                                };
+                                selectedSessionRef.current = updatedSession;
                                 setSessions((prev) =>
-                                  prev.map((s) =>
-                                    s.id === selectedSession.id
-                                      ? { ...s, current_item_id: step.id, current_checklist_template_id: checklist.id }
-                                      : s
-                                  )
+                                  prev.map((s) => (s.id === selectedSession.id ? updatedSession : s))
                                 );
                               });
                             }}
