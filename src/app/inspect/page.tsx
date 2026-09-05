@@ -764,13 +764,11 @@ export default function InspectScannerPage() {
                         const isCurrent = step.id === selectedSession.current_item_id;
                         const isCheckable = isCheckableStep(step.name);
                         const isPast = idx < getCurrentStepIndex();
-                        const isFuture = idx > getCurrentStepIndex();
-                        const canClick = isPast || isCurrent || !isFuture;
 
                         return (
                           <button
                             key={step.id}
-                            onClick={() => canClick && setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
+                            onClick={() => setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
                               setSessions((prev) =>
                                 prev.map((s) =>
                                   s.id === selectedSession.id
@@ -779,15 +777,14 @@ export default function InspectScannerPage() {
                                 )
                               );
                             })}
-                            disabled={!canClick}
-                            className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border ${
+                            className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border cursor-pointer ${
                               isCurrent
                                 ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200"
                                 : isPast
-                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                : isFuture && isCheckable
-                                ? "bg-zinc-200 border-zinc-400 text-zinc-500 dark:bg-zinc-700 dark:border-zinc-600 dark:text-zinc-500 opacity-60 cursor-not-allowed"
-                                : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 cursor-not-allowed"
+                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                : isCheckable
+                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
                             }`}
                           >
                             {isCurrent ? "●" : isPast ? "✓" : isCheckable ? "○" : "‐"} {step.name}
@@ -820,21 +817,25 @@ export default function InspectScannerPage() {
                             <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
                               バルブ
                             </th>
-                            <th colSpan={3} className="px-2 py-2 text-center text-xs font-medium text-zinc-500">
-                              状態
+                            <th colSpan={isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") ? 3 : 1} className="px-2 py-2 text-center text-xs font-medium text-zinc-500">
+                              {steps.find((s) => s.id === selectedSession.current_item_id)?.name}
                             </th>
                           </tr>
                           <tr>
                             <th></th>
                             <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                              操作
+                              状態
                             </th>
-                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                              現場
-                            </th>
-                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                              制御室
-                            </th>
+                            {isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") && (
+                              <>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  現場
+                                </th>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  制御室
+                                </th>
+                              </>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -873,31 +874,35 @@ export default function InspectScannerPage() {
                                     {cellLabel(cell)}
                                   </button>
                                 </td>
-                                <td className="px-1 py-2 text-center text-base">
-                                  <span
-                                    onClick={() => clickable && openTapConfirm(row)}
-                                    className={
-                                      clickable
-                                        ? "cursor-pointer text-zinc-400"
-                                        : cell.state === "NA"
-                                        ? "text-zinc-200 dark:text-zinc-800"
-                                        : "text-emerald-600 dark:text-emerald-400"
-                                    }
-                                  >
-                                    {checkGlyph(cell, steps.find((s) => s.id === selectedSession.current_item_id)!)}
-                                  </span>
-                                </td>
-                                <td className="px-1 py-2 text-center text-base">
-                                  <span
-                                    className={
-                                      cell.confirmed
-                                        ? "text-emerald-600 dark:text-emerald-400"
-                                        : "text-zinc-300 dark:text-zinc-700"
-                                    }
-                                  >
-                                    {cell.confirmed ? "☑" : "☐"}
-                                  </span>
-                                </td>
+                                {isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") && (
+                                  <td className="px-1 py-2 text-center text-base">
+                                    <span
+                                      onClick={() => clickable && openTapConfirm(row)}
+                                      className={
+                                        clickable
+                                          ? "cursor-pointer text-zinc-400"
+                                          : cell.state === "NA"
+                                          ? "text-zinc-200 dark:text-zinc-800"
+                                          : "text-emerald-600 dark:text-emerald-400"
+                                      }
+                                    >
+                                      {checkGlyph(cell, steps.find((s) => s.id === selectedSession.current_item_id)!)}
+                                    </span>
+                                  </td>
+                                )}
+                                {isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "") && (
+                                  <td className="px-1 py-2 text-center text-base">
+                                    <span
+                                      className={
+                                        cell.confirmed
+                                          ? "text-emerald-600 dark:text-emerald-400"
+                                          : "text-zinc-300 dark:text-zinc-700"
+                                      }
+                                    >
+                                      {cell.confirmed ? "☑" : "☐"}
+                                    </span>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
