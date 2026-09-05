@@ -17,7 +17,7 @@ import {
   type ActiveChecklist,
 } from "@/lib/activeChecklist";
 import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessage } from "@/lib/valveAction";
-import { speak, isValveActionAudioEnabled, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
+import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
 // OK/NG時の音を再生（Web Audio API）
 function playResultBeep(type: "OK" | "NG") {
@@ -142,9 +142,6 @@ export default function InspectScannerPage() {
   const [sessionProgress, setSessionProgress] = useState<
     Record<string, { currentStepName: string; fieldDone: number; fieldTotal: number; confirmedDone: number } | null>
   >({});
-
-  // デバッグ表示用
-  const [debugInfo, setDebugInfo] = useState<string>("");
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
@@ -469,24 +466,7 @@ export default function InspectScannerPage() {
       return;
     }
 
-    // QR検出直後に、ユーザーアクティベーションを使用して actionText を先読みし speak() を実行
-    const requiredSequence = currentSteps
-      .filter((s) => row.cells[s.id]?.target)
-      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
-    const action = classifyAction(requiredSequence, currentStep.id);
-    const actionText = action ? valveActionMessage(code, action) : `${code}を記録しました`;
-
-    const currentStepName = currentStep?.name || "不明";
-    console.log("[handleScan] QR detected with current_item_id:", currentStepId, "stepName:", currentStepName, "actionText:", actionText);
-
-    // デバッグ情報を画面に表示
-    setDebugInfo(`QR: ${code} | Step: ${currentStepName} (${currentStepId?.slice(0, 8)}...)`);
-
-    if (isValveActionAudioEnabled()) {
-      speak(actionText);
-    }
-
-    // QRスキャン時は常に現在工程を記録する
+    // QRスキャン時は常に現在工程を記録する（結果音のみ、読み上げ音声はなし）
     await completeStep(row, currentStep);
   }
 
@@ -499,8 +479,6 @@ export default function InspectScannerPage() {
 
     if (!currentSession || !currentChecklist) return;
     const code = row.code;
-
-    console.log("[completeStep] session_id:", currentSession.id, "item_id:", nextStep.id, "item_name:", nextStep.name);
 
     // 結果音を再生
     playResultBeep(result);
@@ -552,10 +530,6 @@ export default function InspectScannerPage() {
     const action = classifyAction(requiredSequence, nextStep.id);
     const actionText = action ? valveActionMessage(code, action) : `${code}を記録しました`;
 
-    // 注: 音声再生は handleScan() で QR検出直後に実行済み
-    // または confirmTap() で タップ直後に実行する必要がある
-    // completeStep() での speak() は削除（二重音声防止）
-
     if (allDone) {
       const { error: notifyError } = await supabase.from("step_notifications").upsert(
         {
@@ -595,20 +569,7 @@ export default function InspectScannerPage() {
   async function confirmTap() {
     if (!tapConfirm) return;
     setTapSaving(true);
-
-    // タップ確認ボタンクリック直後に、ユーザーアクティベーション内で actionText を生成して speak()
-    const requiredSequence = steps
-      .filter((s) => tapConfirm.row.cells[s.id]?.target)
-      .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: tapConfirm.row.cells[s.id]!.target! }));
-    const action = classifyAction(requiredSequence, tapConfirm.step.id);
-    const actionText = action ? valveActionMessage(tapConfirm.row.code, action) : `${tapConfirm.row.code}を記録しました`;
-
-    console.log("[confirmTap] tap confirmed, actionText:", actionText);
-    if (isValveActionAudioEnabled()) {
-      console.log("[confirmTap] calling speak()");
-      speak(actionText);
-    }
-
+    // 結果音（ピッ/ブブー）のみ。読み上げ音声はなし
     await completeStep(tapConfirm.row, tapConfirm.step);
     setTapSaving(false);
     setTapConfirm(null);
@@ -660,8 +621,6 @@ export default function InspectScannerPage() {
         showFlash({ type: "error", text: "次工程への遷移に失敗しました" });
         return;
       }
-
-      console.log("[startNextStep] current_item_id updated to:", nextStep.id, "name:", nextStep.name);
 
       // Stale closure 対策：useEffectのコミットを待たず、同期的に即座にrefへ反映する。
       // これにより、この直後にQRを読んでもhandleScan()が最新のcurrent_item_idを参照できる。
@@ -1122,15 +1081,6 @@ export default function InspectScannerPage() {
                 >
                   {flash.text}
                 </p>
-              )}
-
-              {debugInfo && (
-                <div className="mt-3 rounded-lg border border-purple-300 bg-purple-50 p-3 text-xs dark:border-purple-700 dark:bg-purple-950">
-                  <p className="font-mono text-purple-800 dark:text-purple-300">{debugInfo}</p>
-                  <p className="mt-1 text-purple-700 dark:text-purple-400">
-                    Current Session: {selectedSession?.current_item_id?.slice(0, 8) || "なし"}
-                  </p>
-                </div>
               )}
             </div>
 

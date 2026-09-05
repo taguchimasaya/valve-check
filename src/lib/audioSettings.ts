@@ -28,30 +28,8 @@ export function setStepCompleteAudioEnabled(value: boolean) {
 }
 
 export function speak(text: string) {
-  console.log("[speak] called with text:", text);
-
-  if (typeof window === "undefined") {
-    console.log("[speak] window undefined");
-    return;
-  }
-
-  if (!("speechSynthesis" in window)) {
-    console.log("[speak] speechSynthesis not available");
-    return;
-  }
-
-  try {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "ja-JP";
-
-    utterance.onstart = () => console.log("[speak.onstart] started");
-    utterance.onend = () => console.log("[speak.onend] ended");
-    utterance.onerror = (e) => console.log("[speak.onerror]", e.error);
-
-    console.log("[speak] calling speechSynthesis.speak()");
-    window.speechSynthesis.speak(utterance);
-    console.log("[speak] speechSynthesis.speak() returned");
-  } catch (err) {
-    console.log("[speak] error:", err);
-  }
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ja-JP";
+  window.speechSynthesis.speak(utterance);
 }
