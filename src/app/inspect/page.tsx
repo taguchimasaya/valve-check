@@ -921,22 +921,17 @@ export default function InspectScannerPage() {
                             return (
                               <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
                                 <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                                  <Link
-                                    href={`/inspect/${encodeURIComponent(row.code)}`}
-                                    className="hover:underline"
-                                  >
-                                    <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                                      {row.code}
-                                    </span>
-                                    <span className="ml-1 block text-xs text-zinc-500">
-                                      {row.name}
-                                      {row.qrIssuedAt ? (
-                                        <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
-                                      ) : (
-                                        <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
-                                      )}
-                                    </span>
-                                  </Link>
+                                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                                    {row.code}
+                                  </span>
+                                  <span className="ml-1 block text-xs text-zinc-500">
+                                    {row.name}
+                                    {row.qrIssuedAt ? (
+                                      <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                    ) : (
+                                      <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                    )}
+                                  </span>
                                 </td>
                                 <td className="px-1 py-2 text-center">
                                   <button
@@ -1023,22 +1018,17 @@ export default function InspectScannerPage() {
                           {rows.map((row) => (
                             <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
                               <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                                <Link
-                                  href={`/inspect/${encodeURIComponent(row.code)}`}
-                                  className="hover:underline"
-                                >
-                                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                                    {row.code}
-                                  </span>
-                                  <span className="ml-1 block text-xs text-zinc-500">
-                                    {row.name}
-                                    {row.qrIssuedAt ? (
-                                      <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
-                                    ) : (
-                                      <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
-                                    )}
-                                  </span>
-                                </Link>
+                                <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                                  {row.code}
+                                </span>
+                                <span className="ml-1 block text-xs text-zinc-500">
+                                  {row.name}
+                                  {row.qrIssuedAt ? (
+                                    <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                  ) : (
+                                    <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                  )}
+                                </span>
                               </td>
                               {steps.map((step) => {
                                 const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null, confirmed: false };
