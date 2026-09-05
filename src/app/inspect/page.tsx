@@ -107,7 +107,7 @@ export default function InspectScannerPage() {
     // 制御室での更新を反映するため、定期的にグリッドをリロード
     const interval = setInterval(() => {
       loadGrid();
-    }, 3000); // 3秒ごと
+    }, 1000); // 1秒ごと
 
     return () => {
       stopScanner();
