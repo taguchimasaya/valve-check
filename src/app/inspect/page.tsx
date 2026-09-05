@@ -936,28 +936,25 @@ export default function InspectScannerPage() {
                     </div>
                   ) : (
                     <div className="mt-3 overflow-x-auto">
-                      <div className="flex gap-6 pb-4">
-                        {steps.map((step) => (
-                          <div key={step.id} className="flex-shrink-0 w-[600px]">
-                          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                            {step.name}（{rows.length}台）
-                          </p>
-                          <table className="w-full min-w-[560px] border-collapse text-sm">
-                            <thead>
-                              <tr>
-                                <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
-                                  バルブ
-                                </th>
-                                <th colSpan={isCheckableStep(step.name) ? 3 : 1} className="px-2 py-2 text-center text-xs font-medium text-zinc-500">
-                                  {step.name}
-                                </th>
-                              </tr>
-                              <tr>
-                                <th></th>
+                      <table className="w-full min-w-[560px] border-collapse text-sm">
+                        <thead>
+                          <tr>
+                            <th rowSpan={2} className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950">
+                              バルブ
+                            </th>
+                            {steps.map((s) => (
+                              <th key={s.id} colSpan={isCheckableStep(s.name) ? 3 : 1} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
+                                {s.name}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr>
+                            {steps.map((s) => (
+                              <Fragment key={s.id}>
                                 <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
                                   状態
                                 </th>
-                                {isCheckableStep(step.name) && (
+                                {isCheckableStep(s.name) && (
                                   <>
                                     <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
                                       現場
@@ -967,37 +964,44 @@ export default function InspectScannerPage() {
                                     </th>
                                   </>
                                 )}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rows.map((row) => {
+                              </Fragment>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row) => (
+                            <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                              <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
+                                <Link
+                                  href={`/inspect/${encodeURIComponent(row.code)}`}
+                                  className="hover:underline"
+                                >
+                                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                                    {row.code}
+                                  </span>
+                                  <span className="ml-1 block text-xs text-zinc-500">
+                                    {row.name}
+                                    {row.qrIssuedAt ? (
+                                      <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                    ) : (
+                                      <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                    )}
+                                  </span>
+                                </Link>
+                              </td>
+                              {steps.map((step) => {
                                 const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null, confirmed: false };
                                 const clickable = cell.state === "PENDING" && isCheckableStep(step.name);
                                 return (
-                                  <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
-                                    <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                                      <Link
-                                        href={`/inspect/${encodeURIComponent(row.code)}`}
-                                        className="hover:underline"
-                                      >
-                                        <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                                          {row.code}
-                                        </span>
-                                        <span className="ml-1 block text-xs text-zinc-500">
-                                          {row.name}
-                                          {row.qrIssuedAt ? (
-                                            <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
-                                          ) : (
-                                            <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
-                                          )}
-                                        </span>
-                                      </Link>
-                                    </td>
+                                  <Fragment key={step.id}>
                                     <td className="px-1 py-2 text-center">
                                       <button
                                         onClick={() => clickable && setTapConfirm({ row, step })}
                                         disabled={!clickable}
-                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(row, step)} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
+                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(
+                                          row,
+                                          step
+                                        )} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
                                       >
                                         {cellLabel(cell)}
                                       </button>
@@ -1031,14 +1035,13 @@ export default function InspectScannerPage() {
                                         </span>
                                       </td>
                                     )}
-                                  </tr>
+                                  </Fragment>
                                 );
                               })}
-                            </tbody>
-                          </table>
-                        </div>
-                        ))}
-                      </div>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </>
