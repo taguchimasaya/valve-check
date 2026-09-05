@@ -80,6 +80,7 @@ export default function InspectScannerPage() {
   // グリッドのマスをタップしたときの確認ポップアップ
   const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
   const [tapSaving, setTapSaving] = useState(false);
+  const [startingNextStep, setStartingNextStep] = useState(false);
 
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
@@ -406,56 +407,61 @@ export default function InspectScannerPage() {
 
   // 次工程を開始
   async function startNextStep() {
-    if (!selectedSession || !checklist) return;
-    const currentIndex = getCurrentStepIndex();
-    if (currentIndex === -1) {
-      showFlash({ type: "error", text: "現在工程が見つかりません" });
-      return;
+    try {
+      setStartingNextStep(true);
+      if (!selectedSession || !checklist) return;
+      const currentIndex = getCurrentStepIndex();
+      if (currentIndex === -1) {
+        showFlash({ type: "error", text: "現在工程が見つかりません" });
+        return;
+      }
+
+      const nextStep = steps[currentIndex + 1];
+      if (!nextStep) {
+        showFlash({ type: "info", text: "すべての工程が完了しました" });
+        return;
+      }
+
+      // DB 更新
+      const success = await setCurrentStep(selectedSession.id, checklist.id, nextStep.id);
+      if (!success) {
+        showFlash({ type: "error", text: "次工程への遷移に失敗しました" });
+        return;
+      }
+
+      // ローカル state 更新
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === selectedSession.id
+            ? { ...s, current_item_id: nextStep.id, current_checklist_template_id: checklist.id }
+            : s
+        )
+      );
+
+      // 通知を挿入
+      await supabase.from("step_start_notifications").upsert(
+        {
+          session_id: selectedSession.id,
+          item_id: nextStep.id,
+          item_name: nextStep.name,
+          template_id: checklist.id,
+          template_name: checklist.name,
+        },
+        { onConflict: "session_id,item_id", ignoreDuplicates: true }
+      );
+
+      // 音声再生
+      if (isStepCompleteAudioEnabled()) {
+        speak(stepStartMessage(checklist.name, nextStep.name));
+      }
+
+      showFlash({
+        type: "success",
+        text: `${nextStep.name}を開始しました`,
+      });
+    } finally {
+      setStartingNextStep(false);
     }
-
-    const nextStep = steps[currentIndex + 1];
-    if (!nextStep) {
-      showFlash({ type: "info", text: "すべての工程が完了しました" });
-      return;
-    }
-
-    // DB 更新
-    const success = await setCurrentStep(selectedSession.id, checklist.id, nextStep.id);
-    if (!success) {
-      showFlash({ type: "error", text: "次工程への遷移に失敗しました" });
-      return;
-    }
-
-    // ローカル state 更新
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === selectedSession.id
-          ? { ...s, current_item_id: nextStep.id, current_checklist_template_id: checklist.id }
-          : s
-      )
-    );
-
-    // 通知を挿入
-    await supabase.from("step_start_notifications").upsert(
-      {
-        session_id: selectedSession.id,
-        item_id: nextStep.id,
-        item_name: nextStep.name,
-        template_id: checklist.id,
-        template_name: checklist.name,
-      },
-      { onConflict: "session_id,item_id", ignoreDuplicates: true }
-    );
-
-    // 音声再生
-    if (isStepCompleteAudioEnabled()) {
-      speak(stepStartMessage(checklist.name, nextStep.name));
-    }
-
-    showFlash({
-      type: "success",
-      text: `${nextStep.name}を開始しました`,
-    });
   }
 
   async function startScanner() {
@@ -759,9 +765,9 @@ export default function InspectScannerPage() {
                   </div>
                   <button
                     onClick={startNextStep}
-                    disabled={!isCurrentStepComplete()}
+                    disabled={!isCurrentStepComplete() || startingNextStep}
                     className={`whitespace-nowrap rounded-lg py-2.5 px-4 text-sm font-semibold text-white ${
-                      isCurrentStepComplete()
+                      isCurrentStepComplete() && !startingNextStep
                         ? "bg-emerald-700 hover:bg-emerald-600 dark:bg-emerald-600"
                         : "bg-zinc-400 cursor-not-allowed dark:bg-zinc-700"
                     }`}
@@ -929,9 +935,9 @@ export default function InspectScannerPage() {
                       </table>
                     </div>
                   ) : (
-                    <div className="mt-3 space-y-6 overflow-x-auto">
+                    <div className="mt-3 flex flex-wrap gap-6 overflow-x-auto">
                       {steps.map((step) => (
-                        <div key={step.id}>
+                        <div key={step.id} className="flex-1 min-w-[600px]">
                           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
                             {step.name}（{rows.length}台）
                           </p>
