@@ -241,6 +241,13 @@ export default function InspectScannerPage() {
     loadGrid();
   }, [loadGrid]);
 
+  // 工程が切り替わったときにグリッドを再ロード
+  useEffect(() => {
+    if (selectedSession?.current_item_id && checklist) {
+      loadGrid();
+    }
+  }, [selectedSession?.current_item_id]);
+
   function showFlash(msg: FlashMessage) {
     setFlash(msg);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -846,7 +853,6 @@ export default function InspectScannerPage() {
                                     : s
                                 )
                               );
-                              loadGrid();
                             })}
                             className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border cursor-pointer ${
                               isCurrent
