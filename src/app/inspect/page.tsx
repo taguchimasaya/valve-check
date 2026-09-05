@@ -133,6 +133,8 @@ export default function InspectScannerPage() {
   const scannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
   const startingRef = useRef(false);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 同一QRの連続検出防止：処理中〜一定時間は再スキャンを無視する
+  const scanLockRef = useRef(false);
 
   // グリッドのマスをタップしたときの確認ポップアップ
   const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
@@ -404,6 +406,12 @@ export default function InspectScannerPage() {
   // QRスキャン時は常に inspection_sessions.current_item_id を現在工程として使用する。
   // Stale closure 対策：最新の ref を使用して最新の state を参照
   async function handleScan(rawText: string) {
+    // 同一QRの連続検出防止：処理中は無視する
+    // （html5-qrcodeはfps設定に応じて視界内のQRを連続検出し続けるため、
+    // 　1回目の記録処理が完了する前に2回目の検出が発生し、
+    // 　「既に記録済み」判定になってビープ音が鳴らないケースがあった）
+    if (scanLockRef.current) return;
+
     // 常に最新の state を参照するため、ref から取得
     const currentSession = selectedSessionRef.current;
     const currentRows = rowsRef.current;
@@ -467,7 +475,15 @@ export default function InspectScannerPage() {
     }
 
     // QRスキャン時は常に現在工程を記録する（結果音のみ、読み上げ音声はなし）
-    await completeStep(row, currentStep);
+    // 記録処理中〜完了後しばらくは同一QRの再検出をロックし、ビープ音の再生を妨げないようにする
+    scanLockRef.current = true;
+    try {
+      await completeStep(row, currentStep);
+    } finally {
+      setTimeout(() => {
+        scanLockRef.current = false;
+      }, 1500);
+    }
   }
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
@@ -669,6 +685,7 @@ export default function InspectScannerPage() {
   async function startScanner() {
     if (startingRef.current) return;
     startingRef.current = true;
+    scanLockRef.current = false;
     setCameraError(null);
     try {
       const { Html5Qrcode } = await import("html5-qrcode");
