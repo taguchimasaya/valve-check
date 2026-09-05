@@ -65,6 +65,7 @@ export default function InspectScannerPage() {
   const [rows, setRows] = useState<ValveRow[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [qrNotIssuedEquipment, setQrNotIssuedEquipment] = useState<ValveRow[]>([]);
+  const [displayMode, setDisplayMode] = useState<"current" | "all">("current");
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
@@ -100,6 +101,8 @@ export default function InspectScannerPage() {
   useEffect(() => {
     loadSessions();
     setChecklist(getActiveChecklist());
+    const saved = localStorage.getItem("inspectDisplayMode") as "current" | "all" | null;
+    if (saved) setDisplayMode(saved);
     return () => {
       stopScanner();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -803,9 +806,15 @@ export default function InspectScannerPage() {
             <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
               {selectedSession && selectedSession.current_item_id && (
                 <>
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    {steps.find((s) => s.id === selectedSession.current_item_id)?.name}（{rows.length}台）
-                  </p>
+                  {displayMode === "current" ? (
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      {steps.find((s) => s.id === selectedSession.current_item_id)?.name}（{rows.length}台）
+                    </p>
+                  ) : (
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      作業手順一覧（{rows.length}台）
+                    </p>
+                  )}
                   {loadingGrid ? (
                     <p className="mt-2 text-sm text-zinc-500">読み込み中...</p>
                   ) : rows.length === 0 ? (

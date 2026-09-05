@@ -463,7 +463,7 @@ export default function ControlRoomPage() {
                           バルブ
                         </th>
                         {steps.map((s) => (
-                          <th key={s.id} colSpan={isCheckableStep(s.name) ? 2 : 1} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
+                          <th key={s.id} colSpan={isCheckableStep(s.name) ? 3 : 1} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
                             {s.name}
                           </th>
                         ))}
@@ -475,9 +475,14 @@ export default function ControlRoomPage() {
                               状態
                             </th>
                             {isCheckableStep(s.name) && (
-                              <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                                確認
-                              </th>
+                              <>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  現場
+                                </th>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  確認
+                                </th>
+                              </>
                             )}
                           </Fragment>
                         ))}
@@ -506,26 +511,39 @@ export default function ControlRoomPage() {
                                   </span>
                                 </td>
                                 {isCheckableStep(s.name) && (
-                                  <td className="px-1 py-2 text-center">
-                                    <button
-                                      onClick={() => clickable && toggleConfirm(row, s)}
-                                      disabled={!clickable || confirmingId === cellKey}
-                                      title={
-                                        clickable
-                                          ? cell.confirmed
-                                            ? "確認済み（クリックで取り消し）"
-                                            : "クリックで確認"
-                                          : undefined
-                                      }
-                                      className={`text-base ${
-                                        cell.confirmed
-                                          ? "text-emerald-600 dark:text-emerald-400"
-                                          : "text-zinc-300 dark:text-zinc-700"
-                                      } ${clickable ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
-                                    >
-                                      {cell.confirmed ? "☑" : "☐"}
-                                    </button>
-                                  </td>
+                                  <>
+                                    <td className="px-1 py-2 text-center text-base">
+                                      <span
+                                        className={
+                                          cell.state !== "PENDING" && cell.state !== "NA"
+                                            ? "text-emerald-600 dark:text-emerald-400"
+                                            : "text-zinc-300 dark:text-zinc-700"
+                                        }
+                                      >
+                                        {cell.state !== "PENDING" && cell.state !== "NA" ? "☑" : "☐"}
+                                      </span>
+                                    </td>
+                                    <td className="px-1 py-2 text-center">
+                                      <button
+                                        onClick={() => clickable && toggleConfirm(row, s)}
+                                        disabled={!clickable || confirmingId === cellKey}
+                                        title={
+                                          clickable
+                                            ? cell.confirmed
+                                              ? "確認済み（クリックで取り消し）"
+                                              : "クリックで確認"
+                                            : undefined
+                                        }
+                                        className={`text-base ${
+                                          cell.confirmed
+                                            ? "text-emerald-600 dark:text-emerald-400"
+                                            : "text-zinc-300 dark:text-zinc-700"
+                                        } ${clickable ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
+                                      >
+                                        {cell.confirmed ? "☑" : "☐"}
+                                      </button>
+                                    </td>
+                                  </>
                                 )}
                               </Fragment>
                             );

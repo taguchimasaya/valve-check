@@ -13,10 +13,13 @@ import {
 export default function SettingsPage() {
   const [valveAudio, setValveAudio] = useState(true);
   const [stepAudio, setStepAudio] = useState(true);
+  const [displayMode, setDisplayMode] = useState<"current" | "all">("current");
 
   useEffect(() => {
     setValveAudio(isValveActionAudioEnabled());
     setStepAudio(isStepCompleteAudioEnabled());
+    const saved = localStorage.getItem("inspectDisplayMode") as "current" | "all" | null;
+    if (saved) setDisplayMode(saved);
   }, []);
 
   function toggleValveAudio() {
@@ -31,6 +34,12 @@ export default function SettingsPage() {
     setStepAudio(next);
     setStepCompleteAudioEnabled(next);
     if (next) speak("作業工程１ ラインナップ完了しました");
+  }
+
+  function toggleDisplayMode() {
+    const next = displayMode === "current" ? "all" : "current";
+    setDisplayMode(next);
+    localStorage.setItem("inspectDisplayMode", next);
   }
 
   return (
@@ -82,6 +91,29 @@ export default function SettingsPage() {
               <span
                 className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${
                   stepAudio ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <div>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">作業手順の表示モード</p>
+              <p className="text-sm text-zinc-500">
+                {displayMode === "current"
+                  ? "現在の工程のみを表示"
+                  : "すべての工程を同時に表示"}
+              </p>
+            </div>
+            <button
+              onClick={toggleDisplayMode}
+              className={`relative h-7 w-12 flex-none rounded-full transition-colors ${
+                displayMode === "all" ? "bg-emerald-600" : "bg-zinc-300 dark:bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${
+                  displayMode === "all" ? "translate-x-6" : "translate-x-1"
                 }`}
               />
             </button>
