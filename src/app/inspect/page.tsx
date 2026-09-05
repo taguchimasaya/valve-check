@@ -360,12 +360,15 @@ export default function InspectScannerPage() {
 
   // グリッドのマスをタップ：そのバルブの次の未完了工程を確認ポップアップで表示する
   function openTapConfirm(row: ValveRow) {
-    const nextStep = findNextStep(row);
-    if (!nextStep) {
-      showFlash({ type: "info", text: `${row.code}（${row.name}）はすべて操作済みです。` });
+    if (!selectedSession || !selectedSession.current_item_id) return;
+    const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+    if (!currentStep) return;
+    const cell = row.cells[currentStep.id];
+    if (!cell || cell.state !== "PENDING") {
+      showFlash({ type: "info", text: `${row.code}（${row.name}）は既に操作済みです。` });
       return;
     }
-    setTapConfirm({ row, step: nextStep });
+    setTapConfirm({ row, step: currentStep });
   }
 
   async function confirmTap() {
