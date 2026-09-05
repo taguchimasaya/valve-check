@@ -67,11 +67,14 @@ export async function setCurrentStep(
   return !error;
 }
 
-// 進行中のセッションをすべて完了扱いにし、新しいセッションを開始する。
+// 新しいセッションを開始する（既存セッションは独立）
 export async function startNewSession(): Promise<InspectionSession | null> {
-  await supabase
+  const { data, error } = await supabase
     .from("inspection_sessions")
-    .update({ status: "completed" })
-    .eq("status", "in_progress");
-  return ensureActiveSession();
+    .insert({ title: `${todayLabel()} の点検`, status: "in_progress" })
+    .select("id, title, session_date, status, current_item_id, current_checklist_template_id")
+    .single();
+
+  if (error || !data) return null;
+  return data;
 }
