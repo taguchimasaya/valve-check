@@ -29,7 +29,6 @@ type Notification = {
   notified_at: string;
 };
 
-// フィールド側（/inspect）と合わせ、「作業前」は進捗・確認の対象から除外する
 const UNCHECKED_STEP_NAMES = new Set(["作業前"]);
 function isCheckableStep(name: string) {
   return !UNCHECKED_STEP_NAMES.has(name);
@@ -59,7 +58,6 @@ export default function ControlRoomPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const playedEventsRef = useRef<Set<string>>(new Set());
-  const playedStartEventsRef = useRef<Set<string>>(new Set());
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
@@ -67,11 +65,8 @@ export default function ControlRoomPage() {
     setLoadingSessions(true);
     const data = await getActiveSessions();
     setSessions(data);
-    if (data.length > 0 && !selectedSessionId) {
-      setSelectedSessionId(data[0].id);
-    }
     setLoadingSessions(false);
-  }, [selectedSessionId]);
+  }, []);
 
   useEffect(() => {
     if (selectedSession?.current_checklist_template_id) {
@@ -101,8 +96,7 @@ export default function ControlRoomPage() {
       }
     };
     loadTemplates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadSessions]);
 
   const loadGrid = useCallback(async () => {
     if (!checklistId || !selectedSession) return;
@@ -182,7 +176,16 @@ export default function ControlRoomPage() {
     loadNotifications();
   }, [loadGrid, loadNotifications]);
 
-  // リアルタイム購読: セッションのチェックリスト変更を監視
+  useEffect(() => {
+    if (selectedSession?.current_checklist_template_id) {
+      setChecklistId(selectedSession.current_checklist_template_id);
+      const template = templates.find((t) => t.id === selectedSession.current_checklist_template_id);
+      if (template) {
+        setChecklistName(template.name);
+      }
+    }
+  }, [selectedSession, templates]);
+
   useEffect(() => {
     if (!selectedSession) return;
 
@@ -202,21 +205,6 @@ export default function ControlRoomPage() {
           }
         }
       )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "inspection_start_notifications", filter: `session_id=eq.${selectedSession.id}` },
-        (payload) => {
-          const created = payload.new as { id?: string; template_name?: string };
-          const eventId = `start-${created.id}`;
-          if (
-            created.template_name &&
-            !playedStartEventsRef.current.has(eventId)
-          ) {
-            playedStartEventsRef.current.add(eventId);
-            speak(`${created.template_name} 点検開始しました`);
-          }
-        }
-      )
       .subscribe();
 
     return () => {
@@ -224,7 +212,6 @@ export default function ControlRoomPage() {
     };
   }, [selectedSession, templates]);
 
-  // リアルタイム購読: 現場側のチェックと工程完了通知を即座に反映する
   useEffect(() => {
     if (!checklistId || !selectedSession) return;
 
@@ -245,7 +232,7 @@ export default function ControlRoomPage() {
             changed.item_id &&
             isValveActionAudioEnabled()
           ) {
-            const eventId = `valve-${changed.equipment_id}-${changed.item_id}`;
+            const eventId = `valve-${selectedSession.id}-${changed.equipment_id}-${changed.item_id}`;
             const row = rowsRef.current.find((r) => r.equipmentId === changed.equipment_id);
             const step = stepsRef.current.find((s) => s.id === changed.item_id);
             if (row && step && !playedEventsRef.current.has(eventId)) {
@@ -264,8 +251,8 @@ export default function ControlRoomPage() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "step_notifications", filter: `session_id=eq.${selectedSession.id}` },
         (payload) => {
-          const created = payload.new as { id?: string; item_name?: string; template_name?: string };
-          const eventId = `complete-${created.id}`;
+          const created = payload.new as { id?: string; item_name?: string; template_name?: string; session_id?: string };
+          const eventId = `complete-${created.session_id}-${created.id}`;
           if (
             created.item_name &&
             created.template_name &&
@@ -282,8 +269,8 @@ export default function ControlRoomPage() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "step_start_notifications", filter: `session_id=eq.${selectedSession.id}` },
         (payload) => {
-          const created = payload.new as { id?: string; item_name?: string; template_name?: string };
-          const eventId = `start-${created.id}`;
+          const created = payload.new as { id?: string; item_name?: string; template_name?: string; session_id?: string };
+          const eventId = `start-${created.session_id}-${created.id}`;
           if (
             created.item_name &&
             created.template_name &&
@@ -303,8 +290,68 @@ export default function ControlRoomPage() {
     };
   }, [checklistId, selectedSession, loadGrid, loadNotifications]);
 
-  // 工程（セル）単位で確認する。実際のExcelでも工程ごとに確認欄が分かれているため、
-  // バルブ全体ではなく1つの工程・1台のバルブごとに確認/取り消しをトグルする。
+  useEffect(() => {
+    const globalStartChannel = supabase
+      .channel("inspection-start-notifications-global")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "inspection_start_notifications" },
+        (payload) => {
+          const created = payload.new as {
+            id?: string;
+            session_id?: string;
+            template_name?: string;
+            template_id?: string;
+          };
+          if (!created.session_id) return;
+
+          setSessions((prev) => {
+            const exists = prev.some((s) => s.id === created.session_id);
+            if (exists) return prev;
+
+            return prev;
+          });
+
+          if (selectedSessionId === created.session_id && isValveActionAudioEnabled()) {
+            const eventId = `inspection_start-${created.session_id}-${created.template_id}`;
+            if (!playedEventsRef.current.has(eventId)) {
+              playedEventsRef.current.add(eventId);
+              if (created.template_name) {
+                speak(`${created.template_name} 点検開始しました`);
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(globalStartChannel);
+    };
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const newSessionChannel = supabase
+      .channel("inspection-sessions-new")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "inspection_sessions" },
+        (payload) => {
+          const newSession = payload.new as InspectionSession;
+          setSessions((prev) => {
+            const exists = prev.some((s) => s.id === newSession.id);
+            if (exists) return prev;
+            return [newSession, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(newSessionChannel);
+    };
+  }, []);
+
   async function toggleConfirm(row: ValveRow, step: StepInfo) {
     if (!selectedSession) return;
     const cell = row.cells[step.id];
@@ -327,13 +374,12 @@ export default function ControlRoomPage() {
     loadGrid();
   }
 
-  // 行の必須工程を工程順に並べたもの（作業前を含む＝状態比較の起点になる）
   function requiredSequence(row: ValveRow) {
     return steps
       .filter((s) => row.cells[s.id]?.target)
       .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
   }
-  // 直前の必須工程から開閉状態が変わる工程＝「操作する」工程かどうか
+
   function isOperateStep(row: ValveRow, step: StepInfo): boolean {
     const action = classifyAction(requiredSequence(row), step.id);
     return action ? action.endsWith("-operate") : true;
@@ -342,17 +388,15 @@ export default function ControlRoomPage() {
   function cellLabel(cell: Cell): string {
     if (cell.state === "NA") return "／";
     if (cell.state === "NG") return "✕";
-    return cell.target === "close" ? "☓" : "◯"; // PENDING or OK
+    return cell.target === "close" ? "☓" : "◯";
   }
-  // 色を付けるのは「前の工程から開閉状態が変わる＝実際に操作するバルブ」の工程だけ。
-  // 状態が変わらない（確認だけでよい）工程はグレーのまま。現場と同じ配色。
+
   function cellClass(row: ValveRow, step: StepInfo): string {
     const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null, confirmed: false };
     if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
     if (cell.state === "NG") {
       return "bg-red-600 text-white ring-2 ring-red-900 dark:ring-red-400";
     }
-    // 「作業前」は初期状態の記録であり操作対象ではないため、常に色をつけない
     if (!isCheckableStep(step.name) || !isOperateStep(row, step)) {
       return "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400";
     }
@@ -401,22 +445,42 @@ export default function ControlRoomPage() {
             ) : sessions.length === 0 ? (
               <p className="mt-3 text-sm text-zinc-500">実行中の点検セッションがありません。</p>
             ) : (
-              <div className="mt-3 flex flex-col gap-2">
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => {
-                      setSelectedSessionId(s.id);
-                      setChecklistId(null);
-                    }}
-                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
-                  >
-                    <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
-                    <p className="text-xs text-zinc-500">
-                      {new Date(s.session_date).toLocaleDateString("ja-JP")} 開始
-                    </p>
-                  </button>
-                ))}
+              <div className="mt-3 flex flex-col gap-3">
+                {sessions.map((s) => {
+                  const fieldProgress = s.current_item_id ? "確認中" : "準備中";
+                  return (
+                    <div
+                      key={s.id}
+                      className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
+                          <p className="text-xs text-zinc-500">
+                            開始: {new Date(s.session_date).toLocaleTimeString("ja-JP")}
+                          </p>
+                          {s.current_checklist_template_id && (
+                            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                              現在工程: 準備中
+                            </p>
+                          )}
+                          <p className="mt-1 text-xs text-zinc-500">
+                            ステータス: <span className="font-medium">{fieldProgress}</span>
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectedSessionId(s.id);
+                            setChecklistId(null);
+                          }}
+                          className="whitespace-nowrap rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
+                        >
+                          この点検を監視する
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -430,146 +494,155 @@ export default function ControlRoomPage() {
                 <p className="mt-3 text-xs text-zinc-500">
                   現在監視中: {selectedSession?.title}
                 </p>
-              </div>
-            ) : (
-              <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
-                <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs text-zinc-500">監視中のセッション</p>
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    {selectedSession.title}
-                  </p>
-                  {checklistName && (
-                    <>
-                      <p className="mt-1 text-xs text-zinc-500">監視中の作業</p>
-                      <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                        {checklistName}
-                      </p>
-                      <p className="text-sm text-zinc-500">
-                        進捗 {totalDone}/{totalRequired}
-                      </p>
-                    </>
-                  )}
-                </div>
                 <button
                   onClick={() => {
                     setSelectedSessionId(null);
                     setChecklistId(null);
                   }}
-                  className="text-xs text-zinc-500 hover:underline"
+                  className="mt-4 text-sm text-zinc-500 hover:underline"
                 >
                   セッションを変更
                 </button>
               </div>
+            ) : (
+              <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
+                <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-zinc-500">監視中のセッション</p>
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        {selectedSession.title}
+                      </p>
+                      {checklistName && (
+                        <>
+                          <p className="mt-1 text-xs text-zinc-500">監視中の作業</p>
+                          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                            {checklistName}
+                          </p>
+                          <p className="text-sm text-zinc-500">
+                            進捗 {totalDone}/{totalRequired}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedSessionId(null);
+                        setChecklistId(null);
+                      }}
+                      className="text-xs text-zinc-500 hover:underline"
+                    >
+                      セッションを変更
+                    </button>
+                  </div>
 
-              {loadingGrid ? (
-                <p className="mt-4 text-sm text-zinc-500">読み込み中...</p>
-              ) : rows.length === 0 ? (
-                <p className="mt-4 text-sm text-zinc-500">対象バルブがありません。</p>
-              ) : (
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full min-w-[560px] border-collapse text-sm">
-                    <thead>
-                      <tr>
-                        <th rowSpan={2} className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950">
-                          バルブ
-                        </th>
-                        {steps.map((s) => (
-                          <th key={s.id} colSpan={isCheckableStep(s.name) ? 3 : 1} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
-                            {s.name}
-                          </th>
-                        ))}
-                      </tr>
-                      <tr>
-                        {steps.map((s) => (
-                          <Fragment key={s.id}>
-                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                              状態
+                  {loadingGrid ? (
+                    <p className="mt-4 text-sm text-zinc-500">読み込み中...</p>
+                  ) : rows.length === 0 ? (
+                    <p className="mt-4 text-sm text-zinc-500">対象バルブがありません。</p>
+                  ) : (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full min-w-[560px] border-collapse text-sm">
+                        <thead>
+                          <tr>
+                            <th rowSpan={2} className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950">
+                              バルブ
                             </th>
-                            {isCheckableStep(s.name) && (
-                              <>
-                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                                  現場
-                                </th>
-                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                                  確認
-                                </th>
-                              </>
-                            )}
-                          </Fragment>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => (
-                        <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
-                          <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                            <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.code}</span>
-                            <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
-                          </td>
-                          {steps.map((s) => {
-                            const cell: Cell = row.cells[s.id] ?? {
-                              state: "NA",
-                              target: null,
-                              confirmed: false,
-                            };
-                            const clickable = cell.state === "OK" || cell.state === "NG";
-                            const cellKey = `${row.equipmentId}:${s.id}`;
-                            return (
+                            {steps.map((s) => (
+                              <th key={s.id} colSpan={isCheckableStep(s.name) ? 3 : 1} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
+                                {s.name}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr>
+                            {steps.map((s) => (
                               <Fragment key={s.id}>
-                                <td className="px-1 py-2 text-center">
-                                  <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(row, s)}`}>
-                                    {cellLabel(cell)}
-                                  </span>
-                                </td>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  状態
+                                </th>
                                 {isCheckableStep(s.name) && (
                                   <>
-                                    <td className="px-1 py-2 text-center text-base">
-                                      <span
-                                        className={
-                                          cell.state !== "PENDING" && cell.state !== "NA"
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-zinc-300 dark:text-zinc-700"
-                                        }
-                                      >
-                                        {cell.state !== "PENDING" && cell.state !== "NA" ? "☑" : "☐"}
-                                      </span>
-                                    </td>
-                                    <td className="px-1 py-2 text-center">
-                                      <button
-                                        onClick={() => clickable && toggleConfirm(row, s)}
-                                        disabled={!clickable || confirmingId === cellKey}
-                                        title={
-                                          clickable
-                                            ? cell.confirmed
-                                              ? "確認済み（クリックで取り消し）"
-                                              : "クリックで確認"
-                                            : undefined
-                                        }
-                                        className={`text-base ${
-                                          cell.confirmed
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-zinc-300 dark:text-zinc-700"
-                                        } ${clickable ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
-                                      >
-                                        {cell.confirmed ? "☑" : "☐"}
-                                      </button>
-                                    </td>
+                                    <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                      現場
+                                    </th>
+                                    <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                      確認
+                                    </th>
                                   </>
                                 )}
                               </Fragment>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="mt-3 text-xs text-zinc-400">
-緑◯/赤☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外。操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
-              </p>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row) => (
+                            <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                              <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
+                                <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.code}</span>
+                                <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
+                              </td>
+                              {steps.map((s) => {
+                                const cell: Cell = row.cells[s.id] ?? {
+                                  state: "NA",
+                                  target: null,
+                                  confirmed: false,
+                                };
+                                const clickable = cell.state === "OK" || cell.state === "NG";
+                                const cellKey = `${row.equipmentId}:${s.id}`;
+                                return (
+                                  <Fragment key={s.id}>
+                                    <td className="px-1 py-2 text-center">
+                                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${cellClass(row, s)}`}>
+                                        {cellLabel(cell)}
+                                      </span>
+                                    </td>
+                                    {isCheckableStep(s.name) && (
+                                      <>
+                                        <td className="px-1 py-2 text-center text-base">
+                                          <span
+                                            className={
+                                              cell.state !== "PENDING" && cell.state !== "NA"
+                                                ? "text-emerald-600 dark:text-emerald-400"
+                                                : "text-zinc-300 dark:text-zinc-700"
+                                            }
+                                          >
+                                            {cell.state !== "PENDING" && cell.state !== "NA" ? "☑" : "☐"}
+                                          </span>
+                                        </td>
+                                        <td className="px-1 py-2 text-center">
+                                          <button
+                                            onClick={() => clickable && toggleConfirm(row, s)}
+                                            disabled={!clickable || confirmingId === cellKey}
+                                            title={
+                                              clickable
+                                                ? cell.confirmed
+                                                  ? "確認済み（クリックで取り消し）"
+                                                  : "クリックで確認"
+                                                : undefined
+                                            }
+                                            className={`text-base ${
+                                              cell.confirmed
+                                                ? "text-emerald-600 dark:text-emerald-400"
+                                                : "text-zinc-300 dark:text-zinc-700"
+                                            } ${clickable ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
+                                          >
+                                            {cell.confirmed ? "☑" : "☐"}
+                                          </button>
+                                        </td>
+                                      </>
+                                    )}
+                                  </Fragment>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <p className="mt-3 text-xs text-zinc-400">
+                    緑◯/赤☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外。操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
+                  </p>
                 </div>
 
                 <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
