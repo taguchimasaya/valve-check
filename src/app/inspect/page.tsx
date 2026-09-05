@@ -645,14 +645,23 @@ export default function InspectScannerPage() {
   useEffect(() => {
     if (!selectedSession) return;
 
-    if (selectedSession.current_checklist_template_id) {
-      const template = templates.find((t) => t.id === selectedSession.current_checklist_template_id);
+    const restoreFromSession = async () => {
+      if (!selectedSession.current_checklist_template_id) return;
+
+      const { data: template } = await supabase
+        .from("checklist_templates")
+        .select("id, name")
+        .eq("id", selectedSession.current_checklist_template_id)
+        .single();
+
       if (template) {
         setChecklist({ id: template.id, name: template.name });
         setActiveChecklist({ id: template.id, name: template.name });
       }
-    }
-  }, [selectedSession, templates]);
+    };
+
+    restoreFromSession();
+  }, [selectedSession?.id]);
 
   const filteredTemplates = templates.filter((t) =>
     t.name.toLowerCase().includes(searchText.trim().toLowerCase())
