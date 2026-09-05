@@ -95,7 +95,6 @@ export default function InspectScannerPage() {
 
   useEffect(() => {
     loadSessions();
-    setChecklist(getActiveChecklist());
     const saved = localStorage.getItem("inspectDisplayMode") as "current" | "all" | null;
     if (saved) setDisplayMode(saved);
 
@@ -588,13 +587,13 @@ export default function InspectScannerPage() {
     const next = await startNewSession();
     if (next) {
       setSessionCompleted(false);
-      setSelectedSessionId(null);
+      setSelectedSessionId(next.id);
       setChecklist(null);
       clearActiveChecklist();
       setSteps([]);
       setRows([]);
       setQrNotIssuedEquipment([]);
-      setSessions([next, ...sessions]);
+      setSessions((prev) => [next, ...prev]);
     }
   }
 
@@ -664,6 +663,18 @@ export default function InspectScannerPage() {
 
     loadAllProgress();
   }, [sessions]);
+
+  useEffect(() => {
+    if (!selectedSession) return;
+
+    if (selectedSession.current_checklist_template_id) {
+      const template = templates.find((t) => t.id === selectedSession.current_checklist_template_id);
+      if (template) {
+        setChecklist({ id: template.id, name: template.name });
+        setActiveChecklist({ id: template.id, name: template.name });
+      }
+    }
+  }, [selectedSession, templates]);
 
   const filteredTemplates = templates.filter((t) =>
     t.name.toLowerCase().includes(searchText.trim().toLowerCase())
@@ -994,27 +1005,32 @@ export default function InspectScannerPage() {
                         const isCurrent = step.id === selectedSession.current_item_id;
                         const isCheckable = isCheckableStep(step.name);
                         const isPast = idx < getCurrentStepIndex();
+                        const isFuture = idx > getCurrentStepIndex();
 
                         return (
                           <button
                             key={step.id}
-                            onClick={() => setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
-                              setSessions((prev) =>
-                                prev.map((s) =>
-                                  s.id === selectedSession.id
-                                    ? { ...s, current_item_id: step.id, current_checklist_template_id: checklist.id }
-                                    : s
-                                )
-                              );
-                            })}
-                            className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border cursor-pointer ${
+                            onClick={() => {
+                              if (isPast || isCurrent) return;
+                              setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
+                                setSessions((prev) =>
+                                  prev.map((s) =>
+                                    s.id === selectedSession.id
+                                      ? { ...s, current_item_id: step.id, current_checklist_template_id: checklist.id }
+                                      : s
+                                  )
+                                );
+                              });
+                            }}
+                            disabled={isFuture}
+                            className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border ${
                               isCurrent
-                                ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200"
+                                ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200 cursor-default"
                                 : isPast
-                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                : isCheckable
-                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 cursor-default"
+                                : isFuture
+                                ? "bg-zinc-50 border-zinc-200 text-zinc-400 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-600 cursor-not-allowed"
+                                : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer"
                             }`}
                           >
                             {isCurrent ? "●" : isPast ? "✓" : isCheckable ? "○" : "‐"} {step.name}
