@@ -1049,8 +1049,8 @@ export default function InspectScannerPage() {
                       このチェックリストに紐づくバルブがありません。
                     </p>
                   ) : displayMode === "current" ? (
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full min-w-[560px] border-collapse text-sm">
+                    <div className="mt-3 overflow-x-auto border border-zinc-200 dark:border-zinc-800">
+                      <table className="w-full border-collapse text-sm">
                         <thead>
                           <tr>
                             <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
@@ -1160,8 +1160,8 @@ export default function InspectScannerPage() {
                       </table>
                     </div>
                   ) : (
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full min-w-[560px] border-collapse text-sm">
+                    <div className="mt-3 overflow-x-auto border border-zinc-200 dark:border-zinc-800">
+                      <table className="w-full border-collapse text-sm">
                         <thead>
                           <tr>
                             <th rowSpan={2} className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950">
