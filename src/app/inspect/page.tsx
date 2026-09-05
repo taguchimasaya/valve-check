@@ -721,42 +721,113 @@ export default function InspectScannerPage() {
               )}
             </div>
 
-            <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                作業手順（{rows.length}台）
-              </p>
-              {loadingGrid ? (
-                <p className="mt-2 text-sm text-zinc-500">読み込み中...</p>
-              ) : rows.length === 0 ? (
-                <p className="mt-2 text-sm text-zinc-500">
-                  このチェックリストに紐づくバルブがありません。
-                </p>
-              ) : (
-                <div className="mt-3 overflow-x-auto">
-                  <table className="w-full min-w-[560px] border-collapse text-sm">
-                    <thead>
-                      <tr>
-                        <th
-                          rowSpan={2}
-                          className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-950"
-                        >
-                          バルブ
-                        </th>
-                        {steps.map((s) => (
-                          <th
-                            key={s.id}
-                            colSpan={3}
-                            className="px-2 py-1 text-center text-xs font-medium text-zinc-500"
+            {selectedSession && checklist && steps.length > 0 && (
+              <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    {selectedSession.current_item_id && (
+                      <>
+                        <p className="text-xs text-zinc-500">現在工程</p>
+                        <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                          {steps.find((s) => s.id === selectedSession.current_item_id)?.name}
+                        </p>
+                        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                          現場進捗：
+                          {(() => {
+                            const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+                            if (!currentStep) return "N/A";
+                            const requiredRows = rows.filter((r) => currentStep.id in r.cells && r.cells[currentStep.id]?.state !== "NA");
+                            const completedRows = requiredRows.filter((r) => r.cells[currentStep.id]?.state !== "PENDING");
+                            return `${completedRows.length} / ${requiredRows.length}`;
+                          })()}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={startNextStep}
+                    disabled={!isCurrentStepComplete()}
+                    className={`whitespace-nowrap rounded-lg py-2.5 px-4 text-sm font-semibold text-white ${
+                      isCurrentStepComplete()
+                        ? "bg-emerald-700 hover:bg-emerald-600 dark:bg-emerald-600"
+                        : "bg-zinc-400 cursor-not-allowed dark:bg-zinc-700"
+                    }`}
+                  >
+                    ▶ 次工程を開始
+                  </button>
+                </div>
+
+                {steps.length > 0 && (
+                  <div className="overflow-x-auto -mx-4 px-4">
+                    <div className="flex gap-2 pb-2">
+                      {steps.map((step, idx) => {
+                        const isCurrent = step.id === selectedSession.current_item_id;
+                        const isCheckable = isCheckableStep(step.name);
+                        const isPast = idx < getCurrentStepIndex();
+                        const isFuture = idx > getCurrentStepIndex();
+                        const canClick = isPast || isCurrent || !isFuture;
+
+                        return (
+                          <button
+                            key={step.id}
+                            onClick={() => canClick && setCurrentStep(selectedSession.id, checklist.id, step.id).then(() => {
+                              setSessions((prev) =>
+                                prev.map((s) =>
+                                  s.id === selectedSession.id
+                                    ? { ...s, current_item_id: step.id, current_checklist_template_id: checklist.id }
+                                    : s
+                                )
+                              );
+                            })}
+                            disabled={!canClick}
+                            className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border ${
+                              isCurrent
+                                ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200"
+                                : isPast
+                                ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                : isFuture && isCheckable
+                                ? "bg-zinc-200 border-zinc-400 text-zinc-500 dark:bg-zinc-700 dark:border-zinc-600 dark:text-zinc-500 opacity-60 cursor-not-allowed"
+                                : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300 cursor-not-allowed"
+                            }`}
                           >
-                            {s.name}
-                          </th>
-                        ))}
-                      </tr>
-                      <tr>
-                        {steps.map((s) => (
-                          <Fragment key={s.id}>
-                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                            {isCurrent ? "●" : isPast ? "✓" : isCheckable ? "○" : "‐"} {step.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+              {selectedSession && selectedSession.current_item_id && (
+                <>
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    {steps.find((s) => s.id === selectedSession.current_item_id)?.name}（{rows.length}台）
+                  </p>
+                  {loadingGrid ? (
+                    <p className="mt-2 text-sm text-zinc-500">読み込み中...</p>
+                  ) : rows.length === 0 ? (
+                    <p className="mt-2 text-sm text-zinc-500">
+                      このチェックリストに紐づくバルブがありません。
+                    </p>
+                  ) : (
+                    <div className="mt-3 overflow-x-auto">
+                      <table className="w-full min-w-[560px] border-collapse text-sm">
+                        <thead>
+                          <tr>
+                            <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
+                              バルブ
+                            </th>
+                            <th colSpan={3} className="px-2 py-2 text-center text-xs font-medium text-zinc-500">
                               状態
+                            </th>
+                          </tr>
+                          <tr>
+                            <th></th>
+                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                              操作
                             </th>
                             <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
                               現場
@@ -764,43 +835,39 @@ export default function InspectScannerPage() {
                             <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
                               制御室
                             </th>
-                          </Fragment>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => (
-                        <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
-                          <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
-                            <Link
-                              href={`/inspect/${encodeURIComponent(row.code)}`}
-                              className="hover:underline"
-                            >
-                              <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                                {row.code}
-                              </span>
-                              <span className="ml-1 block text-xs text-zinc-500">
-                                {row.name}
-                                {row.qrIssuedAt ? (
-                                  <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
-                                ) : (
-                                  <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
-                                )}
-                              </span>
-                            </Link>
-                          </td>
-                          {steps.map((s) => {
-                            const cell: Cell = row.cells[s.id] ?? { state: "NA", target: null, confirmed: false };
-                            const clickable = cell.state === "PENDING" && isCheckableStep(s.name);
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row) => {
+                            const cell: Cell = row.cells[selectedSession.current_item_id] ?? { state: "NA", target: null, confirmed: false };
+                            const clickable = cell.state === "PENDING" && isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "");
                             return (
-                              <Fragment key={s.id}>
+                              <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                                <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
+                                  <Link
+                                    href={`/inspect/${encodeURIComponent(row.code)}`}
+                                    className="hover:underline"
+                                  >
+                                    <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                                      {row.code}
+                                    </span>
+                                    <span className="ml-1 block text-xs text-zinc-500">
+                                      {row.name}
+                                      {row.qrIssuedAt ? (
+                                        <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                      ) : (
+                                        <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                      )}
+                                    </span>
+                                  </Link>
+                                </td>
                                 <td className="px-1 py-2 text-center">
                                   <button
                                     onClick={() => clickable && openTapConfirm(row)}
                                     disabled={!clickable}
                                     className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(
                                       row,
-                                      s
+                                      steps.find((s) => s.id === selectedSession.current_item_id)!
                                     )} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
                                   >
                                     {cellLabel(cell)}
@@ -817,7 +884,7 @@ export default function InspectScannerPage() {
                                         : "text-emerald-600 dark:text-emerald-400"
                                     }
                                   >
-                                    {checkGlyph(cell, s)}
+                                    {checkGlyph(cell, steps.find((s) => s.id === selectedSession.current_item_id)!)}
                                   </span>
                                 </td>
                                 <td className="px-1 py-2 text-center text-base">
@@ -831,86 +898,18 @@ export default function InspectScannerPage() {
                                     {cell.confirmed ? "☑" : "☐"}
                                   </span>
                                 </td>
-                              </Fragment>
+                              </tr>
                             );
                           })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
               <p className="mt-3 text-xs text-zinc-400">
                 色つき◯/☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外 ・ ☑ 記録済み。◯/☓か☐をタップすると記録できます。バルブ名をタップすると詳細を確認できます。
               </p>
-
-              {selectedSession && checklist && steps.length > 0 && (
-                <div className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="flex items-start justify-between gap-3 mb-4">
-                    <div>
-                      {selectedSession.current_item_id && (
-                        <>
-                          <p className="text-xs text-zinc-500">現在工程</p>
-                          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                            {steps.find((s) => s.id === selectedSession.current_item_id)?.name}
-                          </p>
-                          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                            現場進捗：
-                            {(() => {
-                              const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
-                              if (!currentStep) return "N/A";
-                              const requiredRows = rows.filter((r) => currentStep.id in r.cells && r.cells[currentStep.id]?.state !== "NA");
-                              const completedRows = requiredRows.filter((r) => r.cells[currentStep.id]?.state !== "PENDING");
-                              return `${completedRows.length} / ${requiredRows.length}`;
-                            })()}
-                          </p>
-                        </>
-                      )}
-                    </div>
-                    <button
-                      onClick={startNextStep}
-                      disabled={!isCurrentStepComplete()}
-                      className={`whitespace-nowrap rounded-lg py-2.5 px-4 text-sm font-semibold text-white ${
-                        isCurrentStepComplete()
-                          ? "bg-emerald-700 hover:bg-emerald-600 dark:bg-emerald-600"
-                          : "bg-zinc-400 cursor-not-allowed dark:bg-zinc-700"
-                      }`}
-                    >
-                      ▶ 次工程を開始
-                    </button>
-                  </div>
-
-                  {steps.length > 0 && (
-                    <div className="overflow-x-auto -mx-4 px-4">
-                      <div className="flex gap-2 pb-2">
-                        {steps.map((step, idx) => {
-                          const isCurrent = step.id === selectedSession.current_item_id;
-                          const isCheckable = isCheckableStep(step.name);
-                          const isPast = idx < getCurrentStepIndex();
-                          const isFuture = idx > getCurrentStepIndex();
-
-                          return (
-                            <div
-                              key={step.id}
-                              className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border ${
-                                isCurrent
-                                  ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200"
-                                  : isPast
-                                  ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300"
-                                  : isFuture && isCheckable
-                                  ? "bg-zinc-200 border-zinc-400 text-zinc-500 dark:bg-zinc-700 dark:border-zinc-600 dark:text-zinc-500 opacity-60 cursor-not-allowed"
-                                  : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300"
-                              }`}
-                            >
-                              {isCurrent ? "●" : isPast ? "✓" : isCheckable ? "○" : "‐"} {step.name}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </>
         ) : null}
