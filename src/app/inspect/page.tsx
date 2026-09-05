@@ -813,6 +813,7 @@ export default function InspectScannerPage() {
                           {(() => {
                             const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
                             if (!currentStep) return "N/A";
+                            if (!isCheckableStep(currentStep.name)) return "対象外";
                             const requiredRows = rows.filter((r) => currentStep.id in r.cells && r.cells[currentStep.id]?.state !== "NA");
                             const completedRows = requiredRows.filter((r) => r.cells[currentStep.id]?.state !== "PENDING");
                             return `${completedRows.length} / ${requiredRows.length}`;
