@@ -127,8 +127,6 @@ export default function InspectScannerPage() {
           const allComplete = requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
 
           if (allComplete) {
-            setSessionCompleted(true);
-
             // セッションを完了状態に更新
             const { error: updateError } = await supabase
               .from("inspection_sessions")
@@ -141,19 +139,7 @@ export default function InspectScannerPage() {
               return;
             }
 
-            // 新しいセッションを作成
-            const newSession = await ensureActiveSession();
-            if (newSession) {
-              setSessionCompleted(false);
-              setSelectedSessionId(null);
-              setChecklist(null);
-              clearActiveChecklist();
-              setSteps([]);
-              setRows([]);
-              setQrNotIssuedEquipment([]);
-              setSessions([newSession]);
-            }
-
+            setSessionCompleted(true);
             clearInterval(completionCheckInterval);
           }
         }
@@ -602,28 +588,20 @@ export default function InspectScannerPage() {
       return { currentStepName: "準備中", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
     }
 
-    const { data: currentItem } = await supabase
-      .from("checklist_items")
-      .select("item_name")
-      .eq("id", session.current_item_id)
-      .single();
-
     const { data: items } = await supabase
       .from("checklist_items")
-      .select("id")
+      .select("id, item_name")
       .eq("template_id", session.current_checklist_template_id);
 
     if (!items || items.length === 0) {
-      return { currentStepName: currentItem?.item_name ?? "?", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+      return { currentStepName: "?", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
     }
 
-    const itemIds = items.map((i) => i.id);
-    const checkableItemIds = await Promise.all(
-      itemIds.map(async (id) => {
-        const { data } = await supabase.from("checklist_items").select("item_name").eq("id", id).single();
-        return !UNCHECKED_STEP_NAMES.has(data?.item_name ?? "") ? id : null;
-      })
-    ).then((ids) => ids.filter((id): id is string => id !== null));
+    const currentItem = items.find((i) => i.id === session.current_item_id);
+    const currentStepName = currentItem?.item_name ?? "?";
+    const checkableItemIds = items
+      .filter((i) => !UNCHECKED_STEP_NAMES.has(i.item_name))
+      .map((i) => i.id);
 
     const { data: mappings } = await supabase
       .from("checklist_item_equipment")
@@ -631,7 +609,7 @@ export default function InspectScannerPage() {
       .in("item_id", checkableItemIds);
 
     if (!mappings || mappings.length === 0) {
-      return { currentStepName: currentItem?.item_name ?? "?", fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
+      return { currentStepName, fieldDone: 0, fieldTotal: 0, confirmedDone: 0 };
     }
 
     const { data: results } = await supabase
@@ -644,7 +622,7 @@ export default function InspectScannerPage() {
     const confirmedDone = (results ?? []).filter((r) => r.confirmed_at).length;
     const fieldTotal = mappings.filter((m) => m.item_id === session.current_item_id).length;
 
-    return { currentStepName: currentItem?.item_name ?? "?", fieldDone, fieldTotal, confirmedDone };
+    return { currentStepName, fieldDone, fieldTotal, confirmedDone };
   }
 
   useEffect(() => {
