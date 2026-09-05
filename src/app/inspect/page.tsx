@@ -19,10 +19,21 @@ import {
 import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessage } from "@/lib/valveAction";
 import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
-// OK/NG時の音を再生
+// OK/NG時の音を再生（Web Audio API）
 function playResultBeep(type: "OK" | "NG") {
   try {
+    if (typeof window === "undefined" || !("AudioContext" in window && "webkitAudioContext" in window)) {
+      console.warn("AudioContext not available");
+      return;
+    }
+
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+    // iOS対策：ユーザーインタラクション後のみ再生可能なため、リジューム処理を追加
+    if (audioContext.state === "suspended") {
+      audioContext.resume();
+    }
+
     const now = audioContext.currentTime;
 
     if (type === "OK") {
@@ -31,11 +42,12 @@ function playResultBeep(type: "OK" | "NG") {
       const gain = audioContext.createGain();
       osc.connect(gain);
       gain.connect(audioContext.destination);
-      osc.frequency.value = 1000; // 高い音
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.frequency.value = 1200; // 高い音
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
       osc.start(now);
-      osc.stop(now + 0.1);
+      osc.stop(now + 0.15);
     } else {
       // NG: ブブー（低音、複数回）
       const playTone = (startTime: number, duration: number) => {
@@ -43,14 +55,15 @@ function playResultBeep(type: "OK" | "NG") {
         const gain = audioContext.createGain();
         osc.connect(gain);
         gain.connect(audioContext.destination);
-        osc.frequency.value = 400; // 低い音
-        gain.gain.setValueAtTime(0.3, startTime);
+        osc.frequency.value = 500; // 低い音
+        osc.type = "sine";
+        gain.gain.setValueAtTime(0.2, startTime);
         gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
         osc.start(startTime);
         osc.stop(startTime + duration);
       };
       playTone(now, 0.15);
-      playTone(now + 0.2, 0.15);
+      playTone(now + 0.25, 0.15);
     }
   } catch (err) {
     console.warn("Beep could not be played:", err);
@@ -1386,7 +1399,11 @@ export default function InspectScannerPage() {
               <button
                 onClick={confirmTap}
                 disabled={tapSaving}
-                className="flex-1 rounded-lg bg-zinc-900 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                className={`flex-1 rounded-lg border-2 py-2.5 text-sm font-semibold disabled:opacity-50 ${
+                  tapConfirm.row.cells[tapConfirm.step.id]?.target === "close"
+                    ? "border-red-600 bg-red-600 text-white dark:border-red-500 dark:bg-red-500"
+                    : "border-emerald-600 bg-emerald-600 text-white dark:border-emerald-500 dark:bg-emerald-500"
+                }`}
               >
                 {tapSaving ? "記録中..." : "記録する"}
               </button>
