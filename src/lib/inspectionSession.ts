@@ -34,9 +34,11 @@ export async function getActiveSession(): Promise<InspectionSession | null> {
 }
 
 export async function ensureActiveSession(): Promise<InspectionSession | null> {
-  const existing = await getActiveSession();
+  // 既存の進行中セッションを確認
+  let existing = await getActiveSession();
   if (existing) return existing;
 
+  // 進行中セッションがない場合は新規作成
   const { data, error } = await supabase
     .from("inspection_sessions")
     .insert({ title: `${todayLabel()} の点検`, status: "in_progress" })
@@ -44,6 +46,8 @@ export async function ensureActiveSession(): Promise<InspectionSession | null> {
     .single();
 
   if (error || !data) return null;
+
+  // 新規作成したセッションを返す
   return data;
 }
 

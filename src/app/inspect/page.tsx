@@ -111,22 +111,37 @@ export default function InspectScannerPage() {
       loadGrid();
     }, 1000); // 1秒ごと
 
-    // 最後の工程完了を定期的に検出してセッション終了
-    const completionCheckInterval = setInterval(async () => {
-      if (selectedSession && !sessionCompleted && steps.length > 0 && rows.length > 0) {
-        const lastStep = steps[steps.length - 1];
-        const requiredRows = rows.filter((r) => lastStep.id in r.cells && r.cells[lastStep.id]?.state !== "NA");
-        const allComplete = requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
+    return () => {
+      stopScanner();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-        if (allComplete) {
-          setSessionCompleted(true);
-          await supabase
-            .from("inspection_sessions")
-            .update({ status: "completed" })
-            .eq("id", selectedSession.id);
+  // 最後の工程完了を定期的に検出してセッション終了
+  useEffect(() => {
+    if (sessionCompleted) return; // 既に完了している場合はスキップ
 
-          // 新しいセッションを作成
-          setTimeout(async () => {
+    let completionCheckInterval: ReturnType<typeof setInterval>;
+
+    const startCompletionCheck = async () => {
+      completionCheckInterval = setInterval(async () => {
+        if (selectedSession && steps.length > 0 && rows.length > 0) {
+          const lastStep = steps[steps.length - 1];
+          const requiredRows = rows.filter((r) => lastStep.id in r.cells && r.cells[lastStep.id]?.state !== "NA");
+          const allComplete = requiredRows.length > 0 && requiredRows.every((r) => r.cells[lastStep.id]?.state !== "PENDING");
+
+          if (allComplete) {
+            setSessionCompleted(true);
+            await supabase
+              .from("inspection_sessions")
+              .update({ status: "completed" })
+              .eq("id", selectedSession.id);
+
+            // セッションの更新完了を待ってから新しいセッションを作成
+            await new Promise(resolve => setTimeout(resolve, 500));
+
             const newSession = await ensureActiveSession();
             if (newSession) {
               setSelectedSessionId(newSession.id);
@@ -134,19 +149,19 @@ export default function InspectScannerPage() {
               clearActiveChecklist();
               setSessions([newSession]);
             }
-          }, 1000);
+
+            clearInterval(completionCheckInterval);
+          }
         }
-      }
-    }, 2000); // 2秒ごと
+      }, 2000);
+    };
+
+    startCompletionCheck();
 
     return () => {
-      stopScanner();
-      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      clearInterval(interval);
       clearInterval(completionCheckInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedSession, steps, rows, sessionCompleted]);
 
   const loadTemplates = useCallback(async () => {
     setLoadingTemplates(true);
