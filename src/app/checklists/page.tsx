@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -19,11 +19,16 @@ type TemplateRecord = {
   itemCount: number;
 };
 
-type ItemRecord = {
-  id: string;
-  item_no: number;
-  item_name: string;
+type CellState = "NA" | "PENDING" | "OK" | "NG";
+type TargetState = "open" | "close";
+type Cell = { state: CellState; target: TargetState | null; confirmed: boolean };
+type ValveRow = {
+  equipmentId: string;
+  code: string;
+  name: string;
+  cells: Record<string, Cell>;
 };
+type StepInfo = { id: string; itemNo: number; name: string };
 
 type FileEntry = {
   id: string;
@@ -39,6 +44,23 @@ type BatchResultLine = {
   detail: string;
 };
 
+function getCellLabel(cell: Cell): string {
+  if (cell.state === "NA") return "／";
+  if (cell.state === "NG") return "✕";
+  return cell.target === "close" ? "☓" : "◯";
+}
+
+function getCellClass(cell: Cell): string {
+  if (cell.state === "NA") return "text-zinc-300 dark:text-zinc-700";
+  if (cell.state === "NG") {
+    return "bg-red-600 text-white ring-2 ring-red-900 dark:ring-red-400";
+  }
+  const isOpen = cell.target !== "close";
+  return isOpen
+    ? "bg-emerald-500 text-white dark:bg-emerald-600"
+    : "bg-red-500 text-white dark:bg-red-600";
+}
+
 export default function ChecklistsPage() {
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -48,10 +70,13 @@ export default function ChecklistsPage() {
   const [importing, setImporting] = useState(false);
   const [batchSummary, setBatchSummary] = useState<BatchResultLine[] | null>(null);
 
-  const [openTemplate, setOpenTemplate] = useState<TemplateRecord | null>(null);
-  const [openItems, setOpenItems] = useState<ItemRecord[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [exportingId, setExportingId] = useState<string | null>(null);
+
+  const [previewTemplate, setPreviewTemplate] = useState<TemplateRecord | null>(null);
+  const [previewSteps, setPreviewSteps] = useState<StepInfo[]>([]);
+  const [previewRows, setPreviewRows] = useState<ValveRow[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   const loadTemplates = useCallback(async () => {
     setLoadingList(true);
@@ -232,14 +257,76 @@ export default function ChecklistsPage() {
     loadTemplates();
   }
 
-  async function openTemplateItems(t: TemplateRecord) {
-    setOpenTemplate(t);
-    const { data } = await supabase
+  async function openPreview(t: TemplateRecord) {
+    setPreviewTemplate(t);
+    setLoadingPreview(true);
+
+    const { data: items } = await supabase
       .from("checklist_items")
       .select("id, item_no, item_name")
       .eq("template_id", t.id)
       .order("item_no", { ascending: true });
-    setOpenItems(data ?? []);
+
+    const stepList: StepInfo[] = (items ?? []).map((i) => ({
+      id: i.id,
+      itemNo: i.item_no,
+      name: i.item_name,
+    }));
+    setPreviewSteps(stepList);
+    const itemIds = stepList.map((s) => s.id);
+
+    if (itemIds.length === 0) {
+      setPreviewRows([]);
+      setLoadingPreview(false);
+      return;
+    }
+
+    const { data: mappings } = await supabase
+      .from("checklist_item_equipment")
+      .select("item_id, equipment_id, target_state, equipment(code, name)")
+      .in("item_id", itemIds);
+
+    const { data: sessions } = await supabase
+      .from("inspection_sessions")
+      .select("id")
+      .eq("status", "in_progress")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    let resultMap = new Map<string, { state: CellState; confirmed: boolean }>();
+    if (sessions && sessions.length > 0) {
+      const { data: results } = await supabase
+        .from("inspection_results")
+        .select("equipment_id, item_id, result, confirmed_at")
+        .eq("session_id", sessions[0].id)
+        .in("item_id", itemIds);
+
+      resultMap = new Map(
+        (results ?? []).map((r) => [
+          `${r.equipment_id}:${r.item_id}`,
+          { state: r.result as CellState, confirmed: !!r.confirmed_at },
+        ])
+      );
+    }
+
+    const rowMap = new Map<string, ValveRow>();
+    (mappings ?? []).forEach((m) => {
+      const eq = m.equipment as unknown as { code: string; name: string } | null;
+      if (!eq) return;
+      const row =
+        rowMap.get(m.equipment_id) ??
+        ({ equipmentId: m.equipment_id, code: eq.code, name: eq.name, cells: {} } as ValveRow);
+      const existing = resultMap.get(`${m.equipment_id}:${m.item_id}`);
+      row.cells[m.item_id] = {
+        state: existing?.state ?? "PENDING",
+        confirmed: existing?.confirmed ?? false,
+        target: m.target_state === "close" ? "close" : m.target_state === "open" ? "open" : null,
+      };
+      rowMap.set(m.equipment_id, row);
+    });
+
+    setPreviewRows(Array.from(rowMap.values()).sort((a, b) => a.code.localeCompare(b.code)));
+    setLoadingPreview(false);
   }
 
   async function exportTemplate(t: TemplateRecord) {
@@ -304,7 +391,6 @@ export default function ChecklistsPage() {
       );
       return;
     }
-    if (openTemplate?.id === t.id) setOpenTemplate(null);
     loadTemplates();
   }
 
@@ -457,10 +543,10 @@ export default function ChecklistsPage() {
                   </div>
                   <div className="flex gap-3 text-sm">
                     <button
-                      onClick={() => openTemplateItems(t)}
-                      className="text-zinc-600 hover:underline dark:text-zinc-300"
+                      onClick={() => openPreview(t)}
+                      className="text-emerald-700 hover:underline dark:text-emerald-400"
                     >
-                      工程を見る
+                      プレビュー
                     </button>
                     <button
                       onClick={() => exportTemplate(t)}
@@ -483,41 +569,117 @@ export default function ChecklistsPage() {
         </section>
       </div>
 
-      {/* 工程プレビューモーダル */}
-      {openTemplate && (
+      {/* プレビューモーダル（制御室形式） */}
+      {previewTemplate && (
         <div
-          className="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setOpenTemplate(null)}
+          className="fixed inset-0 flex items-center justify-center bg-black/40 p-4 z-50"
+          onClick={() => setPreviewTemplate(null)}
         >
           <div
-            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 dark:bg-zinc-900"
+            className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-6 dark:bg-zinc-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">{openTemplate.name}</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">{previewTemplate.name}</h3>
+                <p className="text-xs text-zinc-500 mt-1">最新セッション状態</p>
+              </div>
               <button
-                onClick={() => setOpenTemplate(null)}
+                onClick={() => setPreviewTemplate(null)}
                 className="text-sm text-zinc-500 hover:underline"
               >
                 閉じる
               </button>
             </div>
-            <table className="mt-4 w-full text-left text-sm">
-              <thead>
-                <tr className="text-zinc-500">
-                  <th className="w-10 py-1">No</th>
-                  <th className="py-1">工程</th>
-                </tr>
-              </thead>
-              <tbody>
-                {openItems.map((item) => (
-                  <tr key={item.id} className="border-t border-zinc-100 dark:border-zinc-800">
-                    <td className="py-2 text-zinc-400">{item.item_no}</td>
-                    <td className="py-2 text-zinc-800 dark:text-zinc-200">{item.item_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+            {loadingPreview ? (
+              <p className="text-sm text-zinc-500">読み込み中...</p>
+            ) : previewRows.length === 0 ? (
+              <p className="text-sm text-zinc-500">対象バルブがありません。</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-sm">
+                  <thead>
+                    <tr>
+                      <th rowSpan={2} className="sticky left-0 bg-white py-2 pr-3 text-left align-bottom dark:bg-zinc-900">
+                        バルブ
+                      </th>
+                      {previewSteps.map((s) => (
+                        <th key={s.id} colSpan={3} className="px-2 py-1 text-center text-xs font-medium text-zinc-500">
+                          {s.name}
+                        </th>
+                      ))}
+                    </tr>
+                    <tr>
+                      {previewSteps.map((s) => (
+                        <Fragment key={s.id}>
+                          <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                            状態
+                          </th>
+                          <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                            現場
+                          </th>
+                          <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                            確認
+                          </th>
+                        </Fragment>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row) => (
+                      <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                        <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-900">
+                          <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.code}</span>
+                          <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
+                        </td>
+                        {previewSteps.map((s) => {
+                          const cell: Cell = row.cells[s.id] ?? {
+                            state: "NA",
+                            target: null,
+                            confirmed: false,
+                          };
+                          return (
+                            <Fragment key={s.id}>
+                              <td className="px-1 py-2 text-center">
+                                <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${getCellClass(cell)}`}>
+                                  {getCellLabel(cell)}
+                                </span>
+                              </td>
+                              <td className="px-1 py-2 text-center text-base">
+                                <span
+                                  className={
+                                    cell.state !== "PENDING" && cell.state !== "NA"
+                                      ? "text-emerald-600 dark:text-emerald-400"
+                                      : "text-zinc-300 dark:text-zinc-700"
+                                  }
+                                >
+                                  {cell.state !== "PENDING" && cell.state !== "NA" ? "☑" : "☐"}
+                                </span>
+                              </td>
+                              <td className="px-1 py-2 text-center">
+                                <span
+                                  className={
+                                    cell.confirmed
+                                      ? "text-emerald-600 dark:text-emerald-400"
+                                      : "text-zinc-300 dark:text-zinc-700"
+                                  }
+                                >
+                                  {cell.confirmed ? "☑" : "☐"}
+                                </span>
+                              </td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-3 text-xs text-zinc-400">
+              緑◯/赤☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 操作対象外 ・ ✕ NG ・ ／ 対象外
+            </p>
           </div>
         </div>
       )}

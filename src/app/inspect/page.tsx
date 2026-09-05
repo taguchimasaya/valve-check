@@ -124,6 +124,17 @@ export default function InspectScannerPage() {
             .from("inspection_sessions")
             .update({ status: "completed" })
             .eq("id", selectedSession.id);
+
+          // 新しいセッションを作成
+          setTimeout(async () => {
+            const newSession = await ensureActiveSession();
+            if (newSession) {
+              setSelectedSessionId(newSession.id);
+              setChecklist(null);
+              clearActiveChecklist();
+              setSessions([newSession]);
+            }
+          }, 1000);
         }
       }
     }, 2000); // 2秒ごと
@@ -277,6 +288,11 @@ export default function InspectScannerPage() {
             : s
         )
       );
+
+      // 制御室に通知を送信
+      await supabase
+        .from("inspection_start_notifications")
+        .insert({ session_id: selectedSession.id, template_id: t.id, template_name: t.name });
     }
   }
 
@@ -684,14 +700,19 @@ export default function InspectScannerPage() {
                 </p>
               ) : (
                 filteredTemplates.map((t) => (
-                  <button
+                  <div
                     key={t.id}
-                    onClick={() => selectChecklist(t)}
-                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
+                    className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
                   >
                     <p className="font-medium text-zinc-900 dark:text-zinc-100">{t.name}</p>
                     <p className="text-xs text-zinc-500">{t.itemCount}工程</p>
-                  </button>
+                    <button
+                      onClick={() => selectChecklist(t)}
+                      className="mt-2 w-full rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                    >
+                      点検開始
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -924,8 +945,8 @@ export default function InspectScannerPage() {
                         </thead>
                         <tbody>
                           {rows.map((row) => {
-                            const cell: Cell = row.cells[selectedSession.current_item_id] ?? { state: "NA", target: null, confirmed: false };
-                            const clickable = cell.state === "PENDING" && isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "");
+                            const cell: Cell = selectedSession.current_item_id ? (row.cells[selectedSession.current_item_id] ?? { state: "NA", target: null, confirmed: false }) : { state: "NA", target: null, confirmed: false };
+                            const clickable = selectedSession.current_item_id && cell.state === "PENDING" && isCheckableStep(steps.find((s) => s.id === selectedSession.current_item_id)?.name ?? "");
                             return (
                               <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
                                 <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">

@@ -41,8 +41,6 @@ export default function ControlRoomPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
 
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
-  const [loadingTemplates, setLoadingTemplates] = useState(true);
-  const [searchText, setSearchText] = useState("");
   const [checklistId, setChecklistId] = useState<string | null>(null);
   const [checklistName, setChecklistName] = useState<string>("");
 
@@ -61,6 +59,7 @@ export default function ControlRoomPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const playedEventsRef = useRef<Set<string>>(new Set());
+  const playedStartEventsRef = useRef<Set<string>>(new Set());
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
@@ -75,28 +74,35 @@ export default function ControlRoomPage() {
   }, [selectedSessionId]);
 
   useEffect(() => {
+    if (selectedSession?.current_checklist_template_id) {
+      setChecklistId(selectedSession.current_checklist_template_id);
+      const template = templates.find((t) => t.id === selectedSession.current_checklist_template_id);
+      if (template) {
+        setChecklistName(template.name);
+      }
+    }
+  }, [selectedSession, templates]);
+
+  useEffect(() => {
     loadSessions();
+    const loadTemplates = async () => {
+      const { data } = await supabase
+        .from("checklist_templates")
+        .select("id, name, checklist_items(count)")
+        .order("created_at", { ascending: false });
+      if (data) {
+        setTemplates(
+          data.map((t) => ({
+            id: t.id,
+            name: t.name,
+            itemCount: (t.checklist_items as { count: number }[])[0]?.count ?? 0,
+          }))
+        );
+      }
+    };
     loadTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function loadTemplates() {
-    setLoadingTemplates(true);
-    const { data } = await supabase
-      .from("checklist_templates")
-      .select("id, name, checklist_items(count)")
-      .order("created_at", { ascending: false });
-    if (data) {
-      setTemplates(
-        data.map((t) => ({
-          id: t.id,
-          name: t.name,
-          itemCount: (t.checklist_items as { count: number }[])[0]?.count ?? 0,
-        }))
-      );
-    }
-    setLoadingTemplates(false);
-  }
 
   const loadGrid = useCallback(async () => {
     if (!checklistId || !selectedSession) return;
@@ -176,6 +182,48 @@ export default function ControlRoomPage() {
     loadNotifications();
   }, [loadGrid, loadNotifications]);
 
+  // リアルタイム購読: セッションのチェックリスト変更を監視
+  useEffect(() => {
+    if (!selectedSession) return;
+
+    const sessionChannel = supabase
+      .channel(`session-${selectedSession.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "inspection_sessions", filter: `id=eq.${selectedSession.id}` },
+        (payload) => {
+          const updated = payload.new as { current_checklist_template_id?: string | null };
+          if (updated.current_checklist_template_id) {
+            setChecklistId(updated.current_checklist_template_id);
+            const template = templates.find((t) => t.id === updated.current_checklist_template_id);
+            if (template) {
+              setChecklistName(template.name);
+            }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "inspection_start_notifications", filter: `session_id=eq.${selectedSession.id}` },
+        (payload) => {
+          const created = payload.new as { id?: string; template_name?: string };
+          const eventId = `start-${created.id}`;
+          if (
+            created.template_name &&
+            !playedStartEventsRef.current.has(eventId)
+          ) {
+            playedStartEventsRef.current.add(eventId);
+            speak(`${created.template_name} 点検開始しました`);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(sessionChannel);
+    };
+  }, [selectedSession, templates]);
+
   // リアルタイム購読: 現場側のチェックと工程完了通知を即座に反映する
   useEffect(() => {
     if (!checklistId || !selectedSession) return;
@@ -197,9 +245,11 @@ export default function ControlRoomPage() {
             changed.item_id &&
             isValveActionAudioEnabled()
           ) {
+            const eventId = `valve-${changed.equipment_id}-${changed.item_id}`;
             const row = rowsRef.current.find((r) => r.equipmentId === changed.equipment_id);
             const step = stepsRef.current.find((s) => s.id === changed.item_id);
-            if (row && step) {
+            if (row && step && !playedEventsRef.current.has(eventId)) {
+              playedEventsRef.current.add(eventId);
               const requiredSequence = stepsRef.current
                 .filter((s) => row.cells[s.id]?.target)
                 .map((s) => ({ itemId: s.id, itemNo: s.itemNo, target: row.cells[s.id]!.target! }));
@@ -276,10 +326,6 @@ export default function ControlRoomPage() {
     setConfirmingId(null);
     loadGrid();
   }
-
-  const filteredTemplates = templates.filter((t) =>
-    t.name.toLowerCase().includes(searchText.trim().toLowerCase())
-  );
 
   // 行の必須工程を工程順に並べたもの（作業前を含む＝状態比較の起点になる）
   function requiredSequence(row: ValveRow) {
@@ -374,43 +420,20 @@ export default function ControlRoomPage() {
               </div>
             )}
           </div>
-        ) : !checklistId ? (
-          <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              監視する作業（チェックリスト）を選択してください
-            </p>
-            <input
-              type="text"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="作業名で検索（例: 第1系統）"
-              className="mt-2 w-full max-w-sm rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            />
-            <div className="mt-3 flex flex-col gap-2 sm:max-w-sm">
-              {loadingTemplates ? (
-                <p className="text-sm text-zinc-500">読み込み中...</p>
-              ) : filteredTemplates.length === 0 ? (
-                <p className="text-sm text-zinc-500">該当する作業が見つかりません。</p>
-              ) : (
-                filteredTemplates.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setChecklistId(t.id);
-                      setChecklistName(t.name);
-                    }}
-                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
-                  >
-                    <p className="font-medium text-zinc-900 dark:text-zinc-100">{t.name}</p>
-                    <p className="text-xs text-zinc-500">{t.itemCount}工程</p>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
         ) : (
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
-            <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+          <>
+            {!checklistId ? (
+              <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+                <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                  現場側でチェックリストを選択するまでお待ちください...
+                </p>
+                <p className="mt-3 text-xs text-zinc-500">
+                  現在監視中: {selectedSession?.title}
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
+                <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-xs text-zinc-500">監視中のセッション</p>
@@ -429,25 +452,15 @@ export default function ControlRoomPage() {
                     </>
                   )}
                 </div>
-                <div className="flex flex-col gap-1">
-                  {checklistId && (
-                    <button
-                      onClick={() => setChecklistId(null)}
-                      className="text-xs text-zinc-500 hover:underline"
-                    >
-                      作業を変更
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      setSelectedSessionId(null);
-                      setChecklistId(null);
-                    }}
-                    className="text-xs text-zinc-500 hover:underline"
-                  >
-                    セッションを変更
-                  </button>
-                </div>
+                <button
+                  onClick={() => {
+                    setSelectedSessionId(null);
+                    setChecklistId(null);
+                  }}
+                  className="text-xs text-zinc-500 hover:underline"
+                >
+                  セッションを変更
+                </button>
               </div>
 
               {loadingGrid ? (
@@ -557,33 +570,35 @@ export default function ControlRoomPage() {
               <p className="mt-3 text-xs text-zinc-400">
 緑◯/赤☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外。操作済みのマスをクリックすると確認済みになります（枠線がつきます）。もう一度クリックすると取り消せます。
               </p>
-            </div>
+                </div>
 
-            <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">工程完了通知</p>
-              {notifications.length === 0 ? (
-                <p className="mt-3 text-sm text-zinc-500">まだ通知はありません。</p>
-              ) : (
-                <ul className="mt-3 flex flex-col gap-2">
-                  {notifications.map((n, i) => (
-                    <li
-                      key={n.id}
-                      className={`rounded-lg p-3 text-sm ${
-                        i === 0
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
-                          : "bg-zinc-50 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
-                      }`}
-                    >
-                      <p className="font-medium">「{n.item_name}」が完了しました</p>
-                      <p className="mt-0.5 text-xs opacity-70">
-                        {new Date(n.notified_at).toLocaleTimeString("ja-JP")}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+                <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">工程完了通知</p>
+                  {notifications.length === 0 ? (
+                    <p className="mt-3 text-sm text-zinc-500">まだ通知はありません。</p>
+                  ) : (
+                    <ul className="mt-3 flex flex-col gap-2">
+                      {notifications.map((n, i) => (
+                        <li
+                          key={n.id}
+                          className={`rounded-lg p-3 text-sm ${
+                            i === 0
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
+                              : "bg-zinc-50 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
+                          }`}
+                        >
+                          <p className="font-medium">「{n.item_name}」が完了しました</p>
+                          <p className="mt-0.5 text-xs opacity-70">
+                            {new Date(n.notified_at).toLocaleTimeString("ja-JP")}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </main>
