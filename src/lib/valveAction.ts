@@ -29,6 +29,10 @@ export function valveActionMessage(code: string, action: ValveAction): string {
   return `${code}を${stateLabel}${verb}しました`;
 }
 
-export function stepCompleteMessage(stepName: string): string {
-  return `${stepName} ラインナップ完了しました`;
+export function stepCompleteMessage(templateName: string, stepName: string): string {
+  return `${templateName}、${stepName}が完了しました`;
+}
+
+export function stepStartMessage(templateName: string, stepName: string): string {
+  return `${templateName}、${stepName}を開始しました`;
 }

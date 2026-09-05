@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { ensureActiveSession, type InspectionSession } from "@/lib/inspectionSession";
+import { getActiveSessions, type InspectionSession } from "@/lib/inspectionSession";
 import {
   isStepCompleteAudioEnabled,
   isValveActionAudioEnabled,
   speak,
 } from "@/lib/audioSettings";
-import { classifyAction, stepCompleteMessage, valveActionMessage } from "@/lib/valveAction";
+import { classifyAction, stepCompleteMessage, stepStartMessage, valveActionMessage } from "@/lib/valveAction";
 
 type TemplateOption = { id: string; name: string; itemCount: number };
 type StepInfo = { id: string; itemNo: number; name: string };
@@ -36,7 +36,9 @@ function isCheckableStep(name: string) {
 }
 
 export default function ControlRoomPage() {
-  const [session, setSession] = useState<InspectionSession | null>(null);
+  const [sessions, setSessions] = useState<InspectionSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loadingSessions, setLoadingSessions] = useState(true);
 
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
@@ -58,9 +60,22 @@ export default function ControlRoomPage() {
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const playedEventsRef = useRef<Set<string>>(new Set());
+
+  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+
+  const loadSessions = useCallback(async () => {
+    setLoadingSessions(true);
+    const data = await getActiveSessions();
+    setSessions(data);
+    if (data.length > 0 && !selectedSessionId) {
+      setSelectedSessionId(data[0].id);
+    }
+    setLoadingSessions(false);
+  }, [selectedSessionId]);
 
   useEffect(() => {
-    ensureActiveSession().then(setSession);
+    loadSessions();
     loadTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -84,7 +99,7 @@ export default function ControlRoomPage() {
   }
 
   const loadGrid = useCallback(async () => {
-    if (!checklistId || !session) return;
+    if (!checklistId || !selectedSession) return;
     setLoadingGrid(true);
 
     const { data: items } = await supabase
@@ -115,7 +130,7 @@ export default function ControlRoomPage() {
     const { data: results } = await supabase
       .from("inspection_results")
       .select("equipment_id, item_id, result, confirmed_at")
-      .eq("session_id", session.id)
+      .eq("session_id", selectedSession.id)
       .in("item_id", itemIds);
 
     const resultMap = new Map(
@@ -143,18 +158,18 @@ export default function ControlRoomPage() {
 
     setRows(Array.from(rowMap.values()).sort((a, b) => a.code.localeCompare(b.code)));
     setLoadingGrid(false);
-  }, [checklistId, session]);
+  }, [checklistId, selectedSession]);
 
   const loadNotifications = useCallback(async () => {
-    if (!checklistId || !session) return;
+    if (!checklistId || !selectedSession) return;
     const { data } = await supabase
       .from("step_notifications")
       .select("id, item_id, item_name, notified_at")
-      .eq("session_id", session.id)
+      .eq("session_id", selectedSession.id)
       .eq("template_id", checklistId)
       .order("notified_at", { ascending: false });
     setNotifications(data ?? []);
-  }, [checklistId, session]);
+  }, [checklistId, selectedSession]);
 
   useEffect(() => {
     loadGrid();
@@ -163,13 +178,13 @@ export default function ControlRoomPage() {
 
   // リアルタイム購読: 現場側のチェックと工程完了通知を即座に反映する
   useEffect(() => {
-    if (!checklistId || !session) return;
+    if (!checklistId || !selectedSession) return;
 
     const channel = supabase
-      .channel(`control-room-${session.id}-${checklistId}`)
+      .channel(`control-room-${selectedSession.id}-${checklistId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "inspection_results", filter: `session_id=eq.${session.id}` },
+        { event: "*", schema: "public", table: "inspection_results", filter: `session_id=eq.${selectedSession.id}` },
         (payload) => {
           const changed = payload.new as {
             equipment_id?: string;
@@ -197,11 +212,36 @@ export default function ControlRoomPage() {
       )
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "step_notifications", filter: `session_id=eq.${session.id}` },
+        { event: "INSERT", schema: "public", table: "step_notifications", filter: `session_id=eq.${selectedSession.id}` },
         (payload) => {
-          const created = payload.new as { item_name?: string };
-          if (created.item_name && isStepCompleteAudioEnabled()) {
-            speak(stepCompleteMessage(created.item_name));
+          const created = payload.new as { id?: string; item_name?: string; template_name?: string };
+          const eventId = `complete-${created.id}`;
+          if (
+            created.item_name &&
+            created.template_name &&
+            isStepCompleteAudioEnabled() &&
+            !playedEventsRef.current.has(eventId)
+          ) {
+            playedEventsRef.current.add(eventId);
+            speak(stepCompleteMessage(created.template_name, created.item_name));
+          }
+          loadNotifications();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "step_start_notifications", filter: `session_id=eq.${selectedSession.id}` },
+        (payload) => {
+          const created = payload.new as { id?: string; item_name?: string; template_name?: string };
+          const eventId = `start-${created.id}`;
+          if (
+            created.item_name &&
+            created.template_name &&
+            isStepCompleteAudioEnabled() &&
+            !playedEventsRef.current.has(eventId)
+          ) {
+            playedEventsRef.current.add(eventId);
+            speak(stepStartMessage(created.template_name, created.item_name));
           }
           loadNotifications();
         }
@@ -211,12 +251,12 @@ export default function ControlRoomPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [checklistId, session, loadGrid, loadNotifications]);
+  }, [checklistId, selectedSession, loadGrid, loadNotifications]);
 
   // 工程（セル）単位で確認する。実際のExcelでも工程ごとに確認欄が分かれているため、
   // バルブ全体ではなく1つの工程・1台のバルブごとに確認/取り消しをトグルする。
   async function toggleConfirm(row: ValveRow, step: StepInfo) {
-    if (!session) return;
+    if (!selectedSession) return;
     const cell = row.cells[step.id];
     if (!cell || (cell.state !== "OK" && cell.state !== "NG")) return;
 
@@ -229,7 +269,7 @@ export default function ControlRoomPage() {
         confirmed_at: cell.confirmed ? null : new Date().toISOString(),
         confirmed_by: cell.confirmed ? null : "制御室",
       })
-      .eq("session_id", session.id)
+      .eq("session_id", selectedSession.id)
       .eq("equipment_id", row.equipmentId)
       .eq("item_id", step.id);
 
@@ -304,11 +344,37 @@ export default function ControlRoomPage() {
         <h1 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
           点検ダッシュボード（制御室）
         </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          セッション: {session?.title ?? "読み込み中..."}
-        </p>
 
-        {!checklistId ? (
+        {!selectedSession ? (
+          <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              監視する点検セッションを選択してください
+            </p>
+            {loadingSessions ? (
+              <p className="mt-3 text-sm text-zinc-500">読み込み中...</p>
+            ) : sessions.length === 0 ? (
+              <p className="mt-3 text-sm text-zinc-500">実行中の点検セッションがありません。</p>
+            ) : (
+              <div className="mt-3 flex flex-col gap-2">
+                {sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      setSelectedSessionId(s.id);
+                      setChecklistId(null);
+                    }}
+                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
+                  >
+                    <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
+                    <p className="text-xs text-zinc-500">
+                      {new Date(s.session_date).toLocaleDateString("ja-JP")} 開始
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : !checklistId ? (
           <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               監視する作業（チェックリスト）を選択してください
@@ -347,20 +413,41 @@ export default function ControlRoomPage() {
             <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-xs text-zinc-500">監視中の作業</p>
-                  <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    {checklistName}
+                  <p className="text-xs text-zinc-500">監視中のセッション</p>
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    {selectedSession.title}
                   </p>
-                  <p className="text-sm text-zinc-500">
-                    進捗 {totalDone}/{totalRequired}
-                  </p>
+                  {checklistName && (
+                    <>
+                      <p className="mt-1 text-xs text-zinc-500">監視中の作業</p>
+                      <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                        {checklistName}
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        進捗 {totalDone}/{totalRequired}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <button
-                  onClick={() => setChecklistId(null)}
-                  className="text-sm text-zinc-500 hover:underline"
-                >
-                  作業を変更
-                </button>
+                <div className="flex flex-col gap-1">
+                  {checklistId && (
+                    <button
+                      onClick={() => setChecklistId(null)}
+                      className="text-xs text-zinc-500 hover:underline"
+                    >
+                      作業を変更
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setSelectedSessionId(null);
+                      setChecklistId(null);
+                    }}
+                    className="text-xs text-zinc-500 hover:underline"
+                  >
+                    セッションを変更
+                  </button>
+                </div>
               </div>
 
               {loadingGrid ? (

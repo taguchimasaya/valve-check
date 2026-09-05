@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import {
   ensureActiveSession,
   startNewSession,
+  getActiveSessions,
+  setCurrentStep,
   type InspectionSession,
 } from "@/lib/inspectionSession";
 import {
@@ -14,7 +16,8 @@ import {
   setActiveChecklist,
   type ActiveChecklist,
 } from "@/lib/activeChecklist";
-import { classifyAction, valveActionMessage } from "@/lib/valveAction";
+import { classifyAction, valveActionMessage, stepCompleteMessage, stepStartMessage } from "@/lib/valveAction";
+import { speak, isStepCompleteAudioEnabled } from "@/lib/audioSettings";
 
 type TemplateOption = {
   id: string;
@@ -27,12 +30,13 @@ type StepInfo = { id: string; itemNo: number; name: string };
 type CellState = "NA" | "PENDING" | "OK" | "NG";
 type TargetState = "open" | "close";
 
-type Cell = { state: CellState; target: TargetState | null };
+type Cell = { state: CellState; target: TargetState | null; confirmed: boolean };
 
 type ValveRow = {
   equipmentId: string;
   code: string;
   name: string;
+  qrIssuedAt: string | null;
   cells: Record<string, Cell>; // itemId -> cell
 };
 
@@ -46,7 +50,9 @@ function isCheckableStep(name: string) {
 }
 
 export default function InspectScannerPage() {
-  const [session, setSession] = useState<InspectionSession | null>(null);
+  const [sessions, setSessions] = useState<InspectionSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loadingSessions, setLoadingSessions] = useState(true);
   const [checklist, setChecklist] = useState<ActiveChecklist | null>(null);
 
   // 作業選択
@@ -58,6 +64,9 @@ export default function InspectScannerPage() {
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [rows, setRows] = useState<ValveRow[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(false);
+  const [qrNotIssuedEquipment, setQrNotIssuedEquipment] = useState<ValveRow[]>([]);
+
+  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
   // スキャナー
   const [scanning, setScanning] = useState(false);
@@ -71,8 +80,25 @@ export default function InspectScannerPage() {
   const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
   const [tapSaving, setTapSaving] = useState(false);
 
+  const loadSessions = useCallback(async () => {
+    setLoadingSessions(true);
+    let data = await getActiveSessions();
+
+    // アクティブセッションがなければ新規作成
+    if (data.length === 0) {
+      const newSession = await ensureActiveSession();
+      if (newSession) data = [newSession];
+    }
+
+    setSessions(data);
+    if (data.length > 0 && !selectedSessionId) {
+      setSelectedSessionId(data[0].id);
+    }
+    setLoadingSessions(false);
+  }, [selectedSessionId]);
+
   useEffect(() => {
-    ensureActiveSession().then(setSession);
+    loadSessions();
     setChecklist(getActiveChecklist());
     return () => {
       stopScanner();
@@ -104,7 +130,7 @@ export default function InspectScannerPage() {
   }, [checklist, loadTemplates]);
 
   const loadGrid = useCallback(async () => {
-    if (!checklist || !session) return;
+    if (!checklist || !selectedSession) return;
     setLoadingGrid(true);
 
     const { data: items } = await supabase
@@ -129,36 +155,57 @@ export default function InspectScannerPage() {
 
     const { data: mappings } = await supabase
       .from("checklist_item_equipment")
-      .select("item_id, equipment_id, target_state, equipment(code, name)")
+      .select("item_id, equipment_id, target_state")
       .in("item_id", itemIds);
+
+    // equipment の code, name, qr_issued_at を別途取得
+    const equipmentIds = (mappings ?? []).map((m) => m.equipment_id);
+    const { data: equipmentData } = await supabase
+      .from("equipment")
+      .select("id, code, name, qr_issued_at")
+      .in("id", equipmentIds);
+    const equipmentMap = new Map(
+      (equipmentData ?? []).map((e) => [e.id, { code: e.code, name: e.name, qrIssuedAt: e.qr_issued_at }])
+    );
 
     const { data: results } = await supabase
       .from("inspection_results")
-      .select("equipment_id, item_id, result")
-      .eq("session_id", session.id)
+      .select("equipment_id, item_id, result, confirmed_at")
+      .eq("session_id", selectedSession.id)
       .in("item_id", itemIds);
 
     const resultMap = new Map(
-      (results ?? []).map((r) => [`${r.equipment_id}:${r.item_id}`, r.result as CellState])
+      (results ?? []).map((r) => [`${r.equipment_id}:${r.item_id}`, { state: r.result as CellState, confirmed: !!r.confirmed_at }])
     );
 
     const rowMap = new Map<string, ValveRow>();
+    const notIssuedList: ValveRow[] = [];
+
     (mappings ?? []).forEach((m) => {
-      const eq = m.equipment as unknown as { code: string; name: string } | null;
+      const eq = equipmentMap.get(m.equipment_id);
       if (!eq) return;
       const row =
         rowMap.get(m.equipment_id) ??
-        ({ equipmentId: m.equipment_id, code: eq.code, name: eq.name, cells: {} } as ValveRow);
+        ({ equipmentId: m.equipment_id, code: eq.code, name: eq.name, qrIssuedAt: eq.qrIssuedAt, cells: {} } as ValveRow);
+      const resultData = resultMap.get(`${m.equipment_id}:${m.item_id}`);
       row.cells[m.item_id] = {
-        state: resultMap.get(`${m.equipment_id}:${m.item_id}`) ?? "PENDING",
+        state: resultData?.state ?? "PENDING",
         target: m.target_state === "close" ? "close" : m.target_state === "open" ? "open" : null,
+        confirmed: resultData?.confirmed ?? false,
       };
       rowMap.set(m.equipment_id, row);
+
+      // QR未発行を検出
+      if (!eq.qrIssuedAt && !notIssuedList.find((r) => r.equipmentId === m.equipment_id)) {
+        notIssuedList.push(row);
+      }
     });
 
-    setRows(Array.from(rowMap.values()).sort((a, b) => a.code.localeCompare(b.code)));
+    const sortedRows = Array.from(rowMap.values()).sort((a, b) => a.code.localeCompare(b.code));
+    setRows(sortedRows);
+    setQrNotIssuedEquipment(notIssuedList.sort((a, b) => a.code.localeCompare(b.code)));
     setLoadingGrid(false);
-  }, [checklist, session]);
+  }, [checklist, selectedSession]);
 
   useEffect(() => {
     loadGrid();
@@ -170,9 +217,30 @@ export default function InspectScannerPage() {
     flashTimerRef.current = setTimeout(() => setFlash(null), 5000);
   }
 
-  function selectChecklist(t: TemplateOption) {
+  async function selectChecklist(t: TemplateOption) {
+    if (!selectedSession) return;
     setActiveChecklist({ id: t.id, name: t.name });
     setChecklist({ id: t.id, name: t.name });
+
+    // 最初の工程を current_item_id に設定
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("id, item_no, item_name")
+      .eq("template_id", t.id)
+      .order("item_no", { ascending: true })
+      .limit(1);
+
+    if (items && items.length > 0) {
+      const firstItem = items[0];
+      await setCurrentStep(selectedSession.id, t.id, firstItem.id);
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === selectedSession.id
+            ? { ...s, current_item_id: firstItem.id, current_checklist_template_id: t.id }
+            : s
+        )
+      );
+    }
   }
 
   function changeChecklist() {
@@ -194,7 +262,7 @@ export default function InspectScannerPage() {
   // そのバルブが必要とする工程のうち、まだ済んでいない最も早い工程をOKにする。
   // 全て終わっていれば完了済みの旨を伝える。工程が完了したら制御室へ通知する。
   async function handleScan(rawText: string) {
-    if (!session || !checklist) return;
+    if (!selectedSession || !checklist) return;
     const marker = "/inspect/";
     const trimmed = rawText.trim();
     const idx = trimmed.indexOf(marker);
@@ -221,12 +289,12 @@ export default function InspectScannerPage() {
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
   async function completeStep(row: ValveRow, nextStep: StepInfo) {
-    if (!session || !checklist) return;
+    if (!selectedSession || !checklist) return;
     const code = row.code;
 
     const { error } = await supabase.from("inspection_results").upsert(
       {
-        session_id: session.id,
+        session_id: selectedSession.id,
         equipment_id: row.equipmentId,
         item_id: nextStep.id,
         result: "OK",
@@ -270,7 +338,7 @@ export default function InspectScannerPage() {
     if (allDone) {
       const { error: notifyError } = await supabase.from("step_notifications").upsert(
         {
-          session_id: session.id,
+          session_id: selectedSession.id,
           item_id: nextStep.id,
           item_name: nextStep.name,
           template_id: checklist.id,
@@ -306,6 +374,75 @@ export default function InspectScannerPage() {
     await completeStep(tapConfirm.row, tapConfirm.step);
     setTapSaving(false);
     setTapConfirm(null);
+  }
+
+  // 現在工程のインデックスを取得
+  function getCurrentStepIndex(): number {
+    if (!selectedSession || !steps) return -1;
+    return steps.findIndex((s) => isCheckableStep(s.name) && s.id === selectedSession.current_item_id);
+  }
+
+  // 全バルブが完了したかを判定
+  function isCurrentStepComplete(): boolean {
+    if (!selectedSession || !steps) return false;
+    const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+    if (!currentStep) return false;
+    const requiredRows = rows.filter((r) => currentStep.id in r.cells && r.cells[currentStep.id]?.state !== "NA");
+    return requiredRows.length > 0 && requiredRows.every((r) => r.cells[currentStep.id]?.state !== "PENDING");
+  }
+
+  // 次工程を開始
+  async function startNextStep() {
+    if (!selectedSession || !checklist) return;
+    const currentIndex = getCurrentStepIndex();
+    if (currentIndex === -1) {
+      showFlash({ type: "error", text: "現在工程が見つかりません" });
+      return;
+    }
+
+    const nextStep = steps[currentIndex + 1];
+    if (!nextStep) {
+      showFlash({ type: "info", text: "すべての工程が完了しました" });
+      return;
+    }
+
+    // DB 更新
+    const success = await setCurrentStep(selectedSession.id, checklist.id, nextStep.id);
+    if (!success) {
+      showFlash({ type: "error", text: "次工程への遷移に失敗しました" });
+      return;
+    }
+
+    // ローカル state 更新
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === selectedSession.id
+          ? { ...s, current_item_id: nextStep.id, current_checklist_template_id: checklist.id }
+          : s
+      )
+    );
+
+    // 通知を挿入
+    await supabase.from("step_start_notifications").upsert(
+      {
+        session_id: selectedSession.id,
+        item_id: nextStep.id,
+        item_name: nextStep.name,
+        template_id: checklist.id,
+        template_name: checklist.name,
+      },
+      { onConflict: "session_id,item_id", ignoreDuplicates: true }
+    );
+
+    // 音声再生
+    if (isStepCompleteAudioEnabled()) {
+      speak(stepStartMessage(checklist.name, nextStep.name));
+    }
+
+    showFlash({
+      type: "success",
+      text: `${nextStep.name}を開始しました`,
+    });
   }
 
   async function startScanner() {
@@ -349,7 +486,12 @@ export default function InspectScannerPage() {
   async function handleStartNewSession() {
     stopScanner();
     const next = await startNewSession();
-    setSession(next);
+    if (next) {
+      setSessions([next, ...sessions]);
+      setSelectedSessionId(next.id);
+      setChecklist(null);
+      clearActiveChecklist();
+    }
   }
 
   const filteredTemplates = templates.filter((t) =>
@@ -407,22 +549,64 @@ export default function InspectScannerPage() {
           現場チェック
         </h1>
 
-        <div className="mt-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div>
-            <p className="text-zinc-500">実施中のセッション</p>
-            <p className="font-medium text-zinc-900 dark:text-zinc-100">
-              {session?.title ?? "準備中..."}
+        {!selectedSession ? (
+          <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              点検セッションを選択してください
             </p>
+            {loadingSessions ? (
+              <p className="mt-2 text-sm text-zinc-500">読み込み中...</p>
+            ) : sessions.length === 0 ? (
+              <div className="mt-3">
+                <p className="text-sm text-zinc-500">セッションがありません。</p>
+                <button
+                  onClick={handleStartNewSession}
+                  className="mt-3 w-full rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
+                >
+                  新しい点検を開始
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 flex flex-col gap-2">
+                {sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedSessionId(s.id)}
+                    className="rounded-lg border border-zinc-200 p-3 text-left hover:border-emerald-400 hover:bg-emerald-50 dark:border-zinc-800 dark:hover:bg-emerald-950"
+                  >
+                    <p className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</p>
+                    <p className="text-xs text-zinc-500">
+                      {new Date(s.session_date).toLocaleDateString("ja-JP")} 開始
+                    </p>
+                  </button>
+                ))}
+                <button
+                  onClick={handleStartNewSession}
+                  className="mt-2 rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 dark:bg-emerald-600"
+                >
+                  新しい点検を開始
+                </button>
+              </div>
+            )}
           </div>
-          <button
-            onClick={handleStartNewSession}
-            className="text-emerald-700 hover:underline dark:text-emerald-400"
-          >
-            新しい点検を開始
-          </button>
-        </div>
+        ) : (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div>
+              <p className="text-zinc-500">実施中のセッション</p>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                {selectedSession.title}
+              </p>
+            </div>
+            <button
+              onClick={() => setSelectedSessionId(null)}
+              className="text-sm text-zinc-500 hover:underline"
+            >
+              セッションを変更
+            </button>
+          </div>
+        )}
 
-        {!checklist ? (
+        {selectedSession && !checklist ? (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               作業（チェックリスト）を選択してください
@@ -459,14 +643,14 @@ export default function InspectScannerPage() {
               )}
             </div>
           </div>
-        ) : (
+        ) : selectedSession && checklist ? (
           <>
             <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs text-zinc-500">選択中の作業</p>
                   <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    {checklist.name}
+                    {checklist!.name}
                   </p>
                 </div>
                 <button
@@ -477,6 +661,24 @@ export default function InspectScannerPage() {
                 </button>
               </div>
             </div>
+
+            {qrNotIssuedEquipment.length > 0 && (
+              <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  ⚠️ QRコード未発行の対象があります
+                </p>
+                <div className="mt-2 flex flex-col gap-2">
+                  {qrNotIssuedEquipment.map((eq) => (
+                    <p key={eq.equipmentId} className="text-sm text-amber-800 dark:text-amber-300">
+                      {eq.code} {eq.name}
+                    </p>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                  点検前にQRコードを発行・貼付してください。
+                </p>
+              </div>
+            )}
 
             <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
               <div id="qr-reader" className="overflow-hidden rounded-lg" />
@@ -543,7 +745,7 @@ export default function InspectScannerPage() {
                         {steps.map((s) => (
                           <th
                             key={s.id}
-                            colSpan={2}
+                            colSpan={3}
                             className="px-2 py-1 text-center text-xs font-medium text-zinc-500"
                           >
                             {s.name}
@@ -557,7 +759,10 @@ export default function InspectScannerPage() {
                               状態
                             </th>
                             <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
-                              済
+                              現場
+                            </th>
+                            <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                              制御室
                             </th>
                           </Fragment>
                         ))}
@@ -574,11 +779,18 @@ export default function InspectScannerPage() {
                               <span className="font-medium text-zinc-900 dark:text-zinc-100">
                                 {row.code}
                               </span>
-                              <span className="ml-1 block text-xs text-zinc-500">{row.name}</span>
+                              <span className="ml-1 block text-xs text-zinc-500">
+                                {row.name}
+                                {row.qrIssuedAt ? (
+                                  <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                ) : (
+                                  <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                )}
+                              </span>
                             </Link>
                           </td>
                           {steps.map((s) => {
-                            const cell: Cell = row.cells[s.id] ?? { state: "NA", target: null };
+                            const cell: Cell = row.cells[s.id] ?? { state: "NA", target: null, confirmed: false };
                             const clickable = cell.state === "PENDING" && isCheckableStep(s.name);
                             return (
                               <Fragment key={s.id}>
@@ -608,6 +820,17 @@ export default function InspectScannerPage() {
                                     {checkGlyph(cell, s)}
                                   </span>
                                 </td>
+                                <td className="px-1 py-2 text-center text-base">
+                                  <span
+                                    className={
+                                      cell.confirmed
+                                        ? "text-emerald-600 dark:text-emerald-400"
+                                        : "text-zinc-300 dark:text-zinc-700"
+                                    }
+                                  >
+                                    {cell.confirmed ? "☑" : "☐"}
+                                  </span>
+                                </td>
                               </Fragment>
                             );
                           })}
@@ -620,9 +843,77 @@ export default function InspectScannerPage() {
               <p className="mt-3 text-xs text-zinc-400">
                 色つき◯/☓ = 操作するバルブ(緑=開ける／赤=閉める) ・ グレー = 状態が変わらない確認のみの工程 ・ ✕ NG ・ ／ 対象外 ・ ☑ 記録済み。◯/☓か☐をタップすると記録できます。バルブ名をタップすると詳細を確認できます。
               </p>
+
+              {selectedSession && checklist && steps.length > 0 && (
+                <div className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                      {selectedSession.current_item_id && (
+                        <>
+                          <p className="text-xs text-zinc-500">現在工程</p>
+                          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                            {steps.find((s) => s.id === selectedSession.current_item_id)?.name}
+                          </p>
+                          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                            現場進捗：
+                            {(() => {
+                              const currentStep = steps.find((s) => s.id === selectedSession.current_item_id);
+                              if (!currentStep) return "N/A";
+                              const requiredRows = rows.filter((r) => currentStep.id in r.cells && r.cells[currentStep.id]?.state !== "NA");
+                              const completedRows = requiredRows.filter((r) => r.cells[currentStep.id]?.state !== "PENDING");
+                              return `${completedRows.length} / ${requiredRows.length}`;
+                            })()}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      onClick={startNextStep}
+                      disabled={!isCurrentStepComplete()}
+                      className={`whitespace-nowrap rounded-lg py-2.5 px-4 text-sm font-semibold text-white ${
+                        isCurrentStepComplete()
+                          ? "bg-emerald-700 hover:bg-emerald-600 dark:bg-emerald-600"
+                          : "bg-zinc-400 cursor-not-allowed dark:bg-zinc-700"
+                      }`}
+                    >
+                      ▶ 次工程を開始
+                    </button>
+                  </div>
+
+                  {steps.length > 0 && (
+                    <div className="overflow-x-auto -mx-4 px-4">
+                      <div className="flex gap-2 pb-2">
+                        {steps.map((step, idx) => {
+                          const isCurrent = step.id === selectedSession.current_item_id;
+                          const isCheckable = isCheckableStep(step.name);
+                          const isPast = idx < getCurrentStepIndex();
+                          const isFuture = idx > getCurrentStepIndex();
+
+                          return (
+                            <div
+                              key={step.id}
+                              className={`flex-shrink-0 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap border ${
+                                isCurrent
+                                  ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-200"
+                                  : isPast
+                                  ? "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300"
+                                  : isFuture && isCheckable
+                                  ? "bg-zinc-200 border-zinc-400 text-zinc-500 dark:bg-zinc-700 dark:border-zinc-600 dark:text-zinc-500 opacity-60 cursor-not-allowed"
+                                  : "bg-zinc-100 border-zinc-300 text-zinc-700 dark:bg-zinc-800 dark:border-zinc-600 dark:text-zinc-300"
+                              }`}
+                            >
+                              {isCurrent ? "●" : isPast ? "✓" : isCheckable ? "○" : "‐"} {step.name}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </>
-        )}
+        ) : null}
       </div>
 
       {tapConfirm && (
