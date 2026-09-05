@@ -821,7 +821,7 @@ export default function InspectScannerPage() {
                     <p className="mt-2 text-sm text-zinc-500">
                       このチェックリストに紐づくバルブがありません。
                     </p>
-                  ) : (
+                  ) : displayMode === "current" ? (
                     <div className="mt-3 overflow-x-auto">
                       <table className="w-full min-w-[560px] border-collapse text-sm">
                         <thead>
@@ -920,6 +920,110 @@ export default function InspectScannerPage() {
                           })}
                         </tbody>
                       </table>
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-6 overflow-x-auto">
+                      {steps.map((step) => (
+                        <div key={step.id}>
+                          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                            {step.name}（{rows.length}台）
+                          </p>
+                          <table className="w-full min-w-[560px] border-collapse text-sm">
+                            <thead>
+                              <tr>
+                                <th className="sticky left-0 bg-white py-2 pr-3 text-left dark:bg-zinc-950">
+                                  バルブ
+                                </th>
+                                <th colSpan={isCheckableStep(step.name) ? 3 : 1} className="px-2 py-2 text-center text-xs font-medium text-zinc-500">
+                                  {step.name}
+                                </th>
+                              </tr>
+                              <tr>
+                                <th></th>
+                                <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                  状態
+                                </th>
+                                {isCheckableStep(step.name) && (
+                                  <>
+                                    <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                      現場
+                                    </th>
+                                    <th className="px-1 pb-1 text-center text-[10px] font-normal text-zinc-400">
+                                      制御室
+                                    </th>
+                                  </>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((row) => {
+                                const cell: Cell = row.cells[step.id] ?? { state: "NA", target: null, confirmed: false };
+                                const clickable = cell.state === "PENDING" && isCheckableStep(step.name);
+                                return (
+                                  <tr key={row.equipmentId} className="border-t border-zinc-100 dark:border-zinc-900">
+                                    <td className="sticky left-0 bg-white py-2 pr-3 dark:bg-zinc-950">
+                                      <Link
+                                        href={`/inspect/${encodeURIComponent(row.code)}`}
+                                        className="hover:underline"
+                                      >
+                                        <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                                          {row.code}
+                                        </span>
+                                        <span className="ml-1 block text-xs text-zinc-500">
+                                          {row.name}
+                                          {row.qrIssuedAt ? (
+                                            <span className="ml-1 text-emerald-600 dark:text-emerald-400">QR✓</span>
+                                          ) : (
+                                            <span className="ml-1 text-amber-600 dark:text-amber-400">QR⚠️</span>
+                                          )}
+                                        </span>
+                                      </Link>
+                                    </td>
+                                    <td className="px-1 py-2 text-center">
+                                      <button
+                                        onClick={() => clickable && setTapConfirm({ row, step })}
+                                        disabled={!clickable}
+                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cellClass(row, step)} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
+                                      >
+                                        {cellLabel(cell)}
+                                      </button>
+                                    </td>
+                                    {isCheckableStep(step.name) && (
+                                      <td className="px-1 py-2 text-center text-base">
+                                        <span
+                                          onClick={() => clickable && setTapConfirm({ row, step })}
+                                          className={
+                                            clickable
+                                              ? "cursor-pointer text-zinc-400"
+                                              : cell.state === "NA"
+                                              ? "text-zinc-200 dark:text-zinc-800"
+                                              : "text-emerald-600 dark:text-emerald-400"
+                                          }
+                                        >
+                                          {checkGlyph(cell, step)}
+                                        </span>
+                                      </td>
+                                    )}
+                                    {isCheckableStep(step.name) && (
+                                      <td className="px-1 py-2 text-center text-base">
+                                        <span
+                                          className={
+                                            cell.confirmed
+                                              ? "text-emerald-600 dark:text-emerald-400"
+                                              : "text-zinc-300 dark:text-zinc-700"
+                                          }
+                                        >
+                                          {cell.confirmed ? "☑" : "☐"}
+                                        </span>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>
