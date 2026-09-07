@@ -125,6 +125,10 @@ export default function InspectScannerPage() {
   const rowsRef = useRef<ValveRow[]>([]);
   const stepsRef = useRef<StepInfo[]>([]);
   const checklistRef = useRef<ActiveChecklist | null>(null);
+  // Stale closure 対策：1秒ごとのポーリング(setInterval)は初回マウント時に一度だけ
+  // 登録されるため、直接 loadGrid を呼ぶと登録時点(checklist/selectedSession未設定)の
+  // クロージャのまま固定されてしまう。常に最新の loadGrid を呼べるようrefを経由する。
+  const loadGridRef = useRef<() => void>(() => {});
 
   // スキャナー
   const [scanning, setScanning] = useState(false);
@@ -158,8 +162,11 @@ export default function InspectScannerPage() {
     if (saved) setDisplayMode(saved);
 
     // 制御室での更新を反映するため、定期的にグリッドをリロード
+    // loadGridRef経由で呼ぶことで、常に最新のchecklist/selectedSessionを参照する
+    // (loadGrid を直接呼ぶと、このeffectが初回マウント時に一度しか実行されないため、
+    //  登録時点のstale closureのままpolling自体が機能しなくなる)
     const interval = setInterval(() => {
-      loadGrid();
+      loadGridRef.current();
     }, 1000); // 1秒ごと
 
     return () => {
@@ -329,6 +336,11 @@ export default function InspectScannerPage() {
     setQrNotIssuedEquipment(notIssuedList.sort((a, b) => a.code.localeCompare(b.code)));
     setLoadingGrid(false);
   }, [checklist, selectedSession]);
+
+  // Stale closure 対策：loadGrid が再生成されるたびに最新版をrefへ反映する
+  useEffect(() => {
+    loadGridRef.current = loadGrid;
+  }, [loadGrid]);
 
   useEffect(() => {
     loadGrid();
