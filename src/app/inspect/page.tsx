@@ -5,8 +5,7 @@ import Link from "next/link";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
-  ensureActiveSession,
-  startNewSession,
+  startNewSessionWithChecklist,
   getActiveSessions,
   setCurrentStep,
   type InspectionSession,
@@ -106,6 +105,10 @@ export default function InspectScannerPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [checklist, setChecklist] = useState<ActiveChecklist | null>(null);
+  // 「新しい点検を開始」を押した直後〜作業（チェックリスト）を選ぶまでの状態。
+  // この間はまだ inspection_sessions にレコードを作らない
+  // （先にセッションだけ作ると、作業未選択の「準備中」セッションが制御室にも表示されてしまうため）。
+  const [pendingNewSession, setPendingNewSession] = useState(false);
 
   // 作業選択
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
@@ -390,9 +393,7 @@ export default function InspectScannerPage() {
   }
 
   async function selectChecklist(t: TemplateOption) {
-    if (!selectedSession) return;
-    setActiveChecklist({ id: t.id, name: t.name });
-    setChecklist({ id: t.id, name: t.name });
+    if (!selectedSession && !pendingNewSession) return;
 
     // 最初のチェック可能な工程を取得
     const { data: items } = await supabase
@@ -406,34 +407,50 @@ export default function InspectScannerPage() {
     // 最初のチェック可能な工程を探す（「作業前」をスキップ）
     const firstCheckableItem = items.find((item) => !UNCHECKED_STEP_NAMES.has(item.item_name)) || items[0];
 
-    // セッションの現在工程を設定
-    const { error: stepError } = await supabase
-      .from("inspection_sessions")
-      .update({
-        current_checklist_template_id: t.id,
-        current_item_id: firstCheckableItem.id,
-      })
-      .eq("id", selectedSession.id);
+    let session = selectedSession;
 
-    if (!stepError) {
-      // Stale closure 対策：useEffectのコミットを待たず、同期的に即座にrefへ反映する。
-      // これによりQRスキャンcallbackが直後に発火しても最新のcurrent_item_idを参照できる。
-      const updatedSession: InspectionSession = {
-        ...selectedSession,
-        current_item_id: firstCheckableItem.id,
-        current_checklist_template_id: t.id,
-      };
-      selectedSessionRef.current = updatedSession;
-
-      setSessions((prev) =>
-        prev.map((s) => (s.id === selectedSession.id ? updatedSession : s))
-      );
-
-      // 制御室に通知を送信
-      await supabase
-        .from("inspection_start_notifications")
-        .insert({ session_id: selectedSession.id, template_id: t.id, template_name: t.name });
+    if (!session) {
+      // 新規点検：作業（チェックリスト）を選んだこのタイミングで、初めてDBにセッションを作成する。
+      // 先にセッションだけ作ってしまうと、作業未選択の「準備中」セッションが制御室にも
+      // 表示されてしまうため、実際に点検が始まる瞬間まで作成を遅らせている。
+      const created = await startNewSessionWithChecklist(t.id, firstCheckableItem.id);
+      if (!created) return;
+      session = created;
+      setPendingNewSession(false);
+      setSelectedSessionId(created.id);
+      setSessions((prev) => [created, ...prev]);
+    } else {
+      // 既存セッションで作業を変更する場合は、現在工程を更新する
+      const { error: stepError } = await supabase
+        .from("inspection_sessions")
+        .update({
+          current_checklist_template_id: t.id,
+          current_item_id: firstCheckableItem.id,
+        })
+        .eq("id", session.id);
+      if (stepError) return;
     }
+
+    setActiveChecklist({ id: t.id, name: t.name });
+    setChecklist({ id: t.id, name: t.name });
+
+    // Stale closure 対策：useEffectのコミットを待たず、同期的に即座にrefへ反映する。
+    // これによりQRスキャンcallbackが直後に発火しても最新のcurrent_item_idを参照できる。
+    const updatedSession: InspectionSession = {
+      ...session,
+      current_item_id: firstCheckableItem.id,
+      current_checklist_template_id: t.id,
+    };
+    selectedSessionRef.current = updatedSession;
+
+    setSessions((prev) =>
+      prev.map((s) => (s.id === session!.id ? updatedSession : s))
+    );
+
+    // 制御室に通知を送信
+    await supabase
+      .from("inspection_start_notifications")
+      .insert({ session_id: session.id, template_id: t.id, template_name: t.name });
   }
 
   function changeChecklist() {
@@ -775,19 +792,18 @@ export default function InspectScannerPage() {
     setScanning(false);
   }
 
-  async function handleStartNewSession() {
+  // ここではまだDBにセッションを作らず、作業（チェックリスト）選択画面に進むだけにする。
+  // セッションの実際の作成は selectChecklist 内で、作業選択と同時に行う。
+  function handleStartNewSession() {
     stopScanner();
-    const next = await startNewSession();
-    if (next) {
-      setSessionCompleted(false);
-      setSelectedSessionId(next.id);
-      setChecklist(null);
-      clearActiveChecklist();
-      setSteps([]);
-      setRows([]);
-      setQrNotIssuedEquipment([]);
-      setSessions((prev) => [next, ...prev]);
-    }
+    setSessionCompleted(false);
+    setSelectedSessionId(null);
+    setChecklist(null);
+    clearActiveChecklist();
+    setSteps([]);
+    setRows([]);
+    setQrNotIssuedEquipment([]);
+    setPendingNewSession(true);
   }
 
   async function getSessionProgress(session: InspectionSession) {
@@ -925,7 +941,7 @@ export default function InspectScannerPage() {
           現場チェック
         </h1>
 
-        {!selectedSession ? (
+        {!selectedSession && !pendingNewSession ? (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               点検セッションを選択してください
@@ -994,7 +1010,7 @@ export default function InspectScannerPage() {
               </div>
             )}
           </div>
-        ) : (
+        ) : selectedSession ? (
           <div className="mt-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
             <div>
               <p className="text-zinc-500">実施中のセッション</p>
@@ -1009,13 +1025,23 @@ export default function InspectScannerPage() {
               セッションを変更
             </button>
           </div>
-        )}
+        ) : null}
 
-        {selectedSession && !checklist ? (
+        {(selectedSession || pendingNewSession) && !checklist ? (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              作業（チェックリスト）を選択してください
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                作業（チェックリスト）を選択してください
+              </p>
+              {pendingNewSession && !selectedSession && (
+                <button
+                  onClick={() => setPendingNewSession(false)}
+                  className="whitespace-nowrap text-sm text-zinc-500 hover:underline"
+                >
+                  ← セッション選択に戻る
+                </button>
+              )}
+            </div>
             <input
               type="text"
               value={searchText}

@@ -67,11 +67,22 @@ export async function setCurrentStep(
   return !error;
 }
 
-// 新しいセッションを開始する（既存セッションは独立）
-export async function startNewSession(): Promise<InspectionSession | null> {
+// 新しいセッションを、作業（チェックリスト）選択と同時に作成する。
+// セッションだけ先に作成してしまうと、作業未選択の「準備中」セッションが
+// 制御室ダッシュボードにも表示されてしまうため、実際に作業を選んだ
+// タイミングでまとめて作成する（＝チェックリストを選ぶまでは点検を開始しない）。
+export async function startNewSessionWithChecklist(
+  checklistTemplateId: string,
+  itemId: string
+): Promise<InspectionSession | null> {
   const { data, error } = await supabase
     .from("inspection_sessions")
-    .insert({ title: `${todayLabel()} の点検`, status: "in_progress" })
+    .insert({
+      title: `${todayLabel()} の点検`,
+      status: "in_progress",
+      current_checklist_template_id: checklistTemplateId,
+      current_item_id: itemId,
+    })
     .select("id, title, session_date, status, current_item_id, current_checklist_template_id")
     .single();
 
