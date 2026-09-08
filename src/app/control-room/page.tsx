@@ -436,7 +436,17 @@ export default function ControlRoomPage() {
           { event: "*", schema: "public", table: "inspection_results", filter: `session_id=eq.${session.id}` },
           (payload) => {
             const changed = payload.new as { equipment_id?: string; item_id?: string; result?: string };
-            if (changed.result === "OK" && changed.equipment_id && changed.item_id && isValveActionAudioEnabled()) {
+            // 開閉音声は「現場が新しく記録した瞬間」だけに鳴らす。制御室の確認操作（confirmed_atの更新）は
+            // resultを変えずにUPDATEイベントを発生させるため、eventTypeで見分けないと、
+            // 制御室を閉じている間に現場が記録 → 後で開いて確認、という操作のタイミングで
+            // UPDATEイベントとして音声が誤って鳴ってしまう。
+            if (
+              payload.eventType === "INSERT" &&
+              changed.result === "OK" &&
+              changed.equipment_id &&
+              changed.item_id &&
+              isValveActionAudioEnabled()
+            ) {
               const eventId = `valve-${session.id}-${changed.equipment_id}-${changed.item_id}`;
               const rows = rowsRef.current[session.id] ?? [];
               const steps = stepsRef.current[session.id] ?? [];
