@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
   ensureActiveSession,
@@ -125,10 +126,11 @@ export default function InspectScannerPage() {
   const rowsRef = useRef<ValveRow[]>([]);
   const stepsRef = useRef<StepInfo[]>([]);
   const checklistRef = useRef<ActiveChecklist | null>(null);
-  // Stale closure 対策：1秒ごとのポーリング(setInterval)は初回マウント時に一度だけ
-  // 登録されるため、直接 loadGrid を呼ぶと登録時点(checklist/selectedSession未設定)の
-  // クロージャのまま固定されてしまう。常に最新の loadGrid を呼べるようrefを経由する。
+  // Realtimeコールバック内でも常に最新のloadGridを呼べるようrefを経由する
+  // （callbackが古いレンダーのクロージャを保持し続けるstale closure対策）
   const loadGridRef = useRef<() => void>(() => {});
+  // 選択中セッションのinspection_resultsをRealtime購読するためのchannel
+  const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
 
   // スキャナー
   const [scanning, setScanning] = useState(false);
@@ -161,21 +163,49 @@ export default function InspectScannerPage() {
     const saved = localStorage.getItem("inspectDisplayMode") as "current" | "all" | null;
     if (saved) setDisplayMode(saved);
 
-    // 制御室での更新を反映するため、定期的にグリッドをリロード
-    // loadGridRef経由で呼ぶことで、常に最新のchecklist/selectedSessionを参照する
-    // (loadGrid を直接呼ぶと、このeffectが初回マウント時に一度しか実行されないため、
-    //  登録時点のstale closureのままpolling自体が機能しなくなる)
-    const interval = setInterval(() => {
-      loadGridRef.current();
-    }, 1000); // 1秒ごと
-
     return () => {
       stopScanner();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 制御室での更新（結果の記録・確認操作）を即時反映するため、選択中セッションの
+  // inspection_results をRealtimeで購読する。1秒ごとのポーリングだった旧実装は、
+  // 画面が定期的にちらつく体感の悪さがあったため撤廃した。
+  // callback内はloadGridRefを経由するため、selectedSessionが変わってチャンネルを
+  // 張り直す前の短い間でも常に最新のloadGridが呼ばれる。
+  useEffect(() => {
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
+    }
+    if (!selectedSession) return;
+
+    const channel = supabase
+      .channel(`inspect-results-${selectedSession.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "inspection_results",
+          filter: `session_id=eq.${selectedSession.id}`,
+        },
+        () => {
+          loadGridRef.current();
+        }
+      )
+      .subscribe();
+    realtimeChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (realtimeChannelRef.current === channel) {
+        realtimeChannelRef.current = null;
+      }
+    };
+  }, [selectedSession?.id]);
 
   // Stale closure 対策：最新の state を ref に同期
   // QRスキャンコールバック内で常に最新の current_item_id を参照できるように
