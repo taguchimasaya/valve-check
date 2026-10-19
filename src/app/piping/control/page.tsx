@@ -93,6 +93,9 @@ export default function ControlPage() {
     const v = execView(plan, e, valveState);
     valveState = v.valveState;
     inspLayers.push({ key: `insp-${e.id}`, pipeIds: plan.regionPipeIds, color: "#ef4444", width: 13, opacity: 0.6, blink: true });
+    if (plan.steps[e.currentStep] === "充填" && plan.fillPipeIds?.length) {
+      opLayers.push({ key: `fill-${e.id}`, pipeIds: plan.fillPipeIds, color: "#0d9488", width: 5, flow: true });
+    }
     for (const [id, m] of Object.entries(v.marks)) {
       marks[id] = m;
       const row = plan.rows.find((r) => r.nodeId === id);
@@ -370,6 +373,7 @@ export default function ControlPage() {
                   label: `${OPERATION_META[k].label}ライン`,
                 })),
                 { color: "#ef4444", label: "点検ライン（点滅）" },
+                { color: "#0d9488", label: "充填ライン（充填工程中）" },
                 { color: "#f59e0b", label: "操作待ち（点滅）", kind: "blink" as const },
                 { color: "#22c55e", label: "操作済み（点灯）※クリックで確認", kind: "ring" as const },
                 { color: "#2563eb", label: "制御室確認済み", kind: "ring" as const },

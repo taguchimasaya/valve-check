@@ -8,6 +8,7 @@ import {
   estimateDrain,
   formatLiters,
   formatMinutes,
+  DEFAULT_FILL_LPM,
   GRAVITY_LPM,
   planIsolation,
   type Target,
@@ -47,6 +48,7 @@ export default function PlannerPage() {
   const [excludedDrains, setExcludedDrains] = useState<string[]>([]);
   const [gaugeIds, setGaugeIds] = useState<string[]>([]);
   const [portableLpm, setPortableLpm] = useState(300);
+  const [fillLpm, setFillLpm] = useState(DEFAULT_FILL_LPM);
   const [mode, setMode] = useState<"target" | "expand">("target");
   const [previewStep, setPreviewStep] = useState(0);
   const [focusSeal, setFocusSeal] = useState<number | null>(null);
@@ -109,6 +111,7 @@ export default function PlannerPage() {
   const marks: Record<string, NodeMark> = {};
   if (iso) {
     layers.push({ key: "region", pipeIds: iso.regionPipeIds, color: "#ef4444", opacity: 0.4 });
+    layers.push({ key: "fill", pipeIds: iso.fill.pipeIds, color: "#0d9488", opacity: 0.6 });
     iso.sealGroups.forEach((s, i) =>
       layers.push({
         key: `seal-${i}`,
@@ -122,6 +125,7 @@ export default function PlannerPage() {
     iso.internalValves.forEach((v) => (marks[v] = "internal"));
     drains.forEach((d) => (marks[d] = "drain"));
     activeGauges.forEach((d) => (marks[d] = "gauge"));
+    iso.fill.openValves.forEach((v) => (marks[v] = "fill"));
     if (focusSeal !== null) iso.sealGroups[focusSeal]?.ventValves.forEach((v) => (marks[v] = "vent"));
   }
   const targetPipes = targets.filter((t) => t.type === "pipe").map((t) => t.id);
@@ -202,12 +206,14 @@ export default function PlannerPage() {
       regionPipeIds: iso.regionPipeIds,
       regionNodeIds: iso.regionNodeIds,
       sealPipeIds: iso.sealGroups.flatMap((s) => s.pipeIds),
+      fillPipeIds: iso.fill.pipeIds,
       steps: PLAN_STEPS,
       rows,
-      planner: { expandToDrain, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, portableLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, portableLpm, fillLpm },
       summary: {
         volumeL: iso.volumeL,
         drainMinutes: estimate?.minutes ?? null,
+        fillMinutes: fillLpm > 0 ? iso.volumeL / fillLpm : null,
         drains,
         warnings,
         notes: iso.notes,
@@ -252,6 +258,7 @@ export default function PlannerPage() {
       setExcludedDrains(p.planner.excludedDrains);
       setGaugeIds(p.planner.gaugeIds);
       setPortableLpm(p.planner.portableLpm);
+      setFillLpm(p.planner.fillLpm ?? DEFAULT_FILL_LPM);
     }
     setPreviewStep(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -322,6 +329,7 @@ export default function PlannerPage() {
                 { color: "#dc2626", label: "遮断弁（閉）", kind: "ring" },
                 { color: "#16a34a", label: "範囲内弁（開）", kind: "ring" },
                 { color: "#0284c7", label: "使用ドレン", kind: "ring" },
+                { color: "#0d9488", label: "充填ライン・充填弁" },
                 { color: "#f59e0b", label: "液封の恐れ" },
                 { color: "#a855f7", label: "圧力計取付", kind: "ring" },
               ]}
@@ -574,6 +582,35 @@ export default function PlannerPage() {
                       <p className="text-xs text-zinc-500">
                         受け容器の目安：ドラム缶（200L）{estimate.drums}本 ／ ローリー（16kL）{estimate.lorries}台
                       </p>
+                      <div className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+                        <p className="text-xs font-semibold text-teal-700 dark:text-teal-400">作業後の充填</p>
+                        {iso.fill.method === "none" ? (
+                          <p className="text-xs text-red-600">充填方法が見つかりません（仮設ラインなどを検討してください）。</p>
+                        ) : (
+                          <>
+                            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                              {iso.fill.method === "line"
+                                ? `充填ライン：${iso.fill.openValves.join(" → ")}（移送ポンプで送油）`
+                                : `遮断弁の微開：${iso.fill.openValves.join("・")}`}
+                            </p>
+                            <p className="flex items-center gap-1">
+                              充填時間：<b>{formatMinutes(fillLpm > 0 ? iso.volumeL / fillLpm : null)}</b>
+                              <input
+                                type="number"
+                                value={fillLpm}
+                                min={10}
+                                step={10}
+                                onChange={(e) => setFillLpm(Number(e.target.value))}
+                                className="ml-2 w-20 rounded border border-zinc-300 bg-transparent px-1 text-xs dark:border-zinc-700"
+                              />
+                              <span className="text-xs text-zinc-500">L/min</span>
+                            </p>
+                            <p className="text-[11px] text-zinc-400">
+                              ※静電気対策のため初期は低流速、エア抜きしながら充填する前提の目安です。
+                            </p>
+                          </>
+                        )}
+                      </div>
                       <p className="text-[11px] text-zinc-400">
                         ※配管長は図面縮尺（1px＝{g.facility.metersPerPx}m）からの概算、内径はSch40相当。自然流下の能力は口径別の目安値です。
                       </p>
@@ -598,8 +635,9 @@ export default function PlannerPage() {
                       <tbody>
                         {rows.map((r) => (
                           <tr key={r.code} className="border-t border-zinc-100 dark:border-zinc-800">
-                            <td className="py-1" title={r.name}>
+                            <td className="py-1" title={r.note ? `${r.name}（${r.note}）` : r.name}>
                               {r.code}
+                              {r.note && <span className="ml-0.5 text-amber-600">※</span>}
                             </td>
                             <td className="text-zinc-500">{ROLE_LABEL[r.role]}</td>
                             {r.states.map((s, i) => (

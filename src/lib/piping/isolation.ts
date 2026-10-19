@@ -31,6 +31,15 @@ export type SealGroup = {
   adjacentBoundary: string[];
 };
 
+export type FillPlan = {
+  /** line: 充填ラインから充填 / valve: 遮断弁を微開して充填 / none: 充填方法なし */
+  method: "line" | "valve" | "none";
+  /** 充填のために開ける弁（充填ライン上の弁、または微開する遮断弁） */
+  openValves: string[];
+  /** 充填に使う配管（図面表示用） */
+  pipeIds: string[];
+};
+
 export type IsolationResult = {
   targetSectionIds: string[];
   regionSectionIds: string[];
@@ -45,6 +54,7 @@ export type IsolationResult = {
   regionPsvs: string[];
   volumeL: number;
   sealGroups: SealGroup[];
+  fill: FillPlan;
   errors: string[];
   notes: string[];
 };
@@ -149,6 +159,7 @@ function pathToDrain(g: Graph, start: string[]): string[] | null {
       return path;
     }
     sec.valveIds.forEach((v) => {
+      if (g.nodeById.get(v)!.service) return; // 充填ラインなどの作業用弁を越えては広げない
       const o = otherSide(g, v, cur);
       if (!o || done.has(o)) return;
       const os = g.sectionById.get(o)!;
@@ -159,6 +170,71 @@ function pathToDrain(g: Graph, start: string[]): string[] | null {
         prev.set(o, cur);
         queue.push(o);
       }
+    });
+  }
+  return null;
+}
+
+/** 区間の中で、2つの弁（または節点）を結ぶ配管だけを取り出す */
+function pipesWithinSection(g: Graph, sectionId: string, from: string, to: string): string[] {
+  const inSection = new Set(g.sectionById.get(sectionId)!.pipeIds);
+  const prev = new Map<string, { node: string; pipe: string }>();
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    if (cur === to) break;
+    if (cur !== from && g.nodeById.get(cur)!.kind === "valve") continue;
+    g.adj.get(cur)!.forEach(({ pipe, other }) => {
+      if (!inSection.has(pipe.id) || seen.has(other)) return;
+      seen.add(other);
+      prev.set(other, { node: cur, pipe: pipe.id });
+      queue.push(other);
+    });
+  }
+  const out: string[] = [];
+  let c = to;
+  while (prev.has(c)) {
+    out.push(prev.get(c)!.pipe);
+    c = prev.get(c)!.node;
+  }
+  return c === from ? out : [...inSection];
+}
+
+/** 充填ライン（充填弁のみ通過）で、供給元（移送系統）まで到達する経路 */
+function fillLineRoute(g: Graph, start: string[]): { valves: string[]; pipeIds: string[] } | null {
+  const prev = new Map<string, { from: string; valve: string }>();
+  const seen = new Set(start);
+  const queue = [...start];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    const sec = g.sectionById.get(cur)!;
+    if (!start.includes(cur) && sec.nodeIds.some((n) => g.nodeById.get(n)!.fillSource)) {
+      const valves: string[] = [];
+      // 供給元の区間からは、充填元弁につながる配管だけを表示に含める
+      const lastValve = prev.get(cur)!.valve;
+      const pipeIds: string[] = sec.pipeIds.filter((pid) => {
+        const p = g.pipeById.get(pid)!;
+        return p.a === lastValve || p.b === lastValve;
+      });
+      let c = cur;
+      let exitValve = lastValve;
+      while (!start.includes(c)) {
+        const p = prev.get(c)!;
+        valves.push(p.valve);
+        if (c !== cur) pipeIds.push(...pipesWithinSection(g, c, p.valve, exitValve));
+        exitValve = p.valve;
+        c = p.from;
+      }
+      return { valves: valves.reverse(), pipeIds };
+    }
+    sec.valveIds.forEach((v) => {
+      if (!g.nodeById.get(v)!.fillLine) return;
+      const o = otherSide(g, v, cur);
+      if (!o || seen.has(o)) return;
+      seen.add(o);
+      prev.set(o, { from: cur, valve: v });
+      queue.push(o);
     });
   }
   return null;
@@ -293,6 +369,50 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
     });
   });
 
+  // 作業後の充填方法：充填ラインがあればそこから、無ければ遮断弁の微開で充填する
+  const fill: FillPlan = { method: "none", openValves: [], pipeIds: [] };
+  regionComponents(g, region).forEach((comp) => {
+    const route = fillLineRoute(g, comp);
+    if (route) {
+      fill.method = "line";
+      fill.openValves.push(...route.valves);
+      fill.pipeIds.push(...route.pipeIds);
+      return;
+    }
+    // 逆止弁・ポンプの下流側にある弁からは逆流させられないので除く
+    const againstFlow = (v: string) =>
+      g.adj.get(v)!.some(({ other }) => {
+        const n = g.nodeById.get(other)!;
+        return !!n.dirFrom && n.kind !== "psv" && n.dirFrom !== v;
+      });
+    // タンクにつながる弁、次に弁のすぐ外側の液量が多い弁を、充填の供給元として優先する
+    // （外側の区間の先は逆止弁で塞がれている場合があるため、隣の区間の量で比べる）
+    const supplyScore = (v: string) => {
+      const inside = comp.find((sid) => g.sectionById.get(sid)!.valveIds.includes(v))!;
+      const o = otherSide(g, v, inside);
+      const gi = o ? groupOf.get(o) : undefined;
+      if (!o || gi === undefined) return -1;
+      const tank = afterGroups[gi].some((sid) => g.sectionById.get(sid)!.tankIds.length > 0) ? 1e9 : 0;
+      return tank + g.sectionById.get(o)!.volumeL;
+    };
+    const pick = comp
+      .flatMap((sid) => g.sectionById.get(sid)!.valveIds)
+      .filter((v) => boundary.has(v) && !g.nodeById.get(v)!.service && !againstFlow(v))
+      .sort((a, b) => supplyScore(b) - supplyScore(a))[0];
+    if (pick) {
+      if (fill.method === "none") fill.method = "valve";
+      fill.openValves.push(pick);
+    }
+  });
+  fill.openValves = [...new Set(fill.openValves)];
+  if (fill.method === "line") {
+    notes.push(
+      `作業後は充填ライン（${fill.openValves.join("・")}）から、移送ポンプで低流速・エア抜きしながら充填します。`
+    );
+  } else if (fill.method === "valve") {
+    notes.push(`充填ラインが無いため、作業後は遮断弁 ${fill.openValves.join("・")} を微開して徐々に充填します。`);
+  }
+
   if (region.size > 0 && psvs.length === 0) {
     notes.push(
       "抜取範囲内に安全弁がありません。遮断後〜抜取完了までは液封状態となるため、速やかに抜取を開始してください。"
@@ -312,6 +432,7 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
     regionPsvs: psvs,
     volumeL,
     sealGroups,
+    fill,
     errors,
     notes,
   };
@@ -352,6 +473,9 @@ export function estimateDrain(
     lorries: Math.ceil(volumeL / 16000),
   };
 }
+
+/** 充填の標準速度（L/min）。静電気対策で初期は低流速とするための目安 */
+export const DEFAULT_FILL_LPM = 200;
 
 export function formatMinutes(min: number | null) {
   if (min === null || !isFinite(min)) return "—";

@@ -29,7 +29,8 @@ export type NodeMark =
   | "gauge" // 圧力計取付推奨
   | "vent" // 開けば液封を回避できる弁
   | "selected" // 選択中（対象機器）
-  | "manual"; // 制御室で手動変更した弁
+  | "manual" // 制御室で手動変更した弁
+  | "fill"; // 充填に使う弁
 
 const MARK_STYLE: Record<NodeMark, { color: string; blink?: boolean; fill?: string; width?: number }> = {
   pending: { color: "#f59e0b", blink: true, width: 3 },
@@ -43,6 +44,7 @@ const MARK_STYLE: Record<NodeMark, { color: string; blink?: boolean; fill?: stri
   vent: { color: "#f59e0b", width: 2 },
   selected: { color: "#06b6d4", fill: "rgba(6,182,212,0.25)", width: 3 },
   manual: { color: "#7c3aed", fill: "rgba(124,58,237,0.15)", width: 2.5 },
+  fill: { color: "#0d9488", width: 2.5 },
 };
 
 const CSS = `

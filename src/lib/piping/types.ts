@@ -38,6 +38,12 @@ export type PNode = {
   drainSizeA?: number;
   /** 圧力計を取り付けられるか（ドレン口・圧力計取付口） */
   gaugeMountable?: boolean;
+  /** 作業用の弁（充填弁など）。運用ラインの経路探索では通らない */
+  service?: boolean;
+  /** 充填ライン上の弁（充填経路の探索で通過できる） */
+  fillLine?: boolean;
+  /** 充填の供給元（移送ポンプ吐出側の分岐点） */
+  fillSource?: boolean;
   /** 固定の抜取ポンプが設置されている場合の能力（L/min） */
   drainPumpLpm?: number;
   /** ポンプ・逆止弁の上流側ノードID（流れの向き） */

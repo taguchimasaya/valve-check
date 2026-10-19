@@ -82,7 +82,7 @@ export function buildFacility(): Facility {
   }
 
   // ───────────── 受入系統（A / B）─────────────
-  function receiving(sys: "A" | "B", Y: (y: number) => number, headerJ: string) {
+  function receiving(sys: "A" | "B", Y: (y: number) => number, headerJ: string): string {
     const area = `受入系統${sys}`;
     const p = `R${sys}`; // コード接頭辞
     const src = add(`SRC-${sys}`, "source", 40, Y(300), area, {
@@ -116,13 +116,13 @@ export function buildFacility(): Facility {
         volumeL: 400,
       });
       const vout = V(`V-${p}S${k}O`, `受入${sys} ストレーナー${k} 出口弁`, 385, Y(y), "open", area);
-      const d = drain(`D-${p}S${k}`, `受入${sys} ストレーナー${k} ドレン`, 325, Y(y + 38), area, {
+      const d = drain(`D-${p}S${k}`, `受入${sys} ストレーナー${k} ドレン`, 325, Y(y + 40), area, {
         sizeA: 40,
       });
       pipe(j3, vin, 200, [[220, Y(y)]]);
       chain(200, vin, str, vout);
       pipe(vout, j4, 200, [[430, Y(y)]]);
-      pipe(str, d, 40);
+      fillBranch(`${p}S${k}`, `受入${sys} ストレーナー${k}`, str, d, 325, y, 22, k === 1 ? -1 : 1, k === 1 ? 295 : 358, Y, area);
     });
 
     // フィルター 3基（並列）
@@ -138,17 +138,59 @@ export function buildFacility(): Facility {
         volumeL: 2500,
       });
       const vout = V(`V-${p}F${k}O`, `受入${sys} フィルター${k} 出口弁`, 640, Y(y), "open", area);
-      const d = drain(`D-${p}F${k}`, `受入${sys} フィルター${k} ドレン`, 575, Y(y + 48), area, {
+      const d = drain(`D-${p}F${k}`, `受入${sys} フィルター${k} ドレン`, 575, Y(y + 46), area, {
         sizeA: 50,
       });
       pipe(j5, vin, 150, straight ? undefined : [[470, Y(y)]]);
       chain(150, vin, flt, vout);
       pipe(vout, j6, 150, straight ? undefined : [[685, Y(y)]]);
-      pipe(flt, d, 50);
+      fillBranch(`${p}F${k}`, `受入${sys} フィルター${k}`, flt, d, 575, y, 28, k === 2 ? 1 : -1, [530, 610, 545][i], Y, area);
     });
     pipe(j6, headerJ, 250);
 
-    areas.push({ x: 20, y: Math.min(Y(150), Y(500)), w: 690, h: 350, label: `受入系統${sys}` });
+    // 充填ヘッダー：各ストレーナー・フィルターの充填弁を束ね、移送系統へつなぐ
+    const fillJ = [...fillHeader].sort((a, b) => a.x - b.x).map((f) => f.j);
+    fillHeader.length = 0;
+    const fillEnd = J(`J-FL${sys}H`, 700, Y(490), area);
+    chain(50, ...fillJ, fillEnd);
+    const trv = add(`PSV-FL${sys}`, "psv", 700, Y(465), area, {
+      name: `受入${sys} 充填ヘッダー 熱膨張逃し弁`,
+      setPressureMPa: 1.0,
+    });
+    pipe(fillEnd, trv, 25);
+
+    areas.push({ x: 20, y: Math.min(Y(150), Y(515)), w: 690, h: 365, label: `受入系統${sys}` });
+    return fillEnd;
+  }
+
+  // 容器（ストレーナー・フィルター）下部の分岐 → ドレン口／充填弁 → 充填ヘッダー（y=490）
+  const fillHeader: { x: number; j: string }[] = [];
+  function fillBranch(
+    code: string,
+    name: string,
+    vessel: string,
+    drainId: string,
+    vx: number,
+    vy: number,
+    dt: number,
+    side: -1 | 1,
+    downX: number,
+    Y: (y: number) => number,
+    area: string
+  ) {
+    const tee = J(`J-${code}D`, vx, Y(vy + dt), area);
+    pipe(vessel, tee, 50);
+    pipe(tee, drainId, 50);
+    const fv = add(`V-F${code}`, "valve", vx + side * 18, Y(vy + dt), area, {
+      name: `${name} 充填弁`,
+      normal: "close",
+      service: true,
+      fillLine: true,
+    });
+    pipe(tee, fv, 25);
+    const hj = J(`J-F${code}`, downX, Y(490), area);
+    pipe(fv, hj, 25, [[downX, Y(vy + dt)]]);
+    fillHeader.push({ x: downX, j: hj });
   }
 
   // ───────────── 貯蔵ヤード（1 / 2）─────────────
@@ -302,8 +344,8 @@ export function buildFacility(): Facility {
 
   const y1 = yard(1, top);
   const y2 = yard(2, bottom);
-  receiving("A", top, y1.rStart);
-  receiving("B", bottom, y2.rStart);
+  const fillA = receiving("A", top, y1.rStart);
+  const fillB = receiving("B", bottom, y2.rStart);
   issueStation(1, top, y1.ix, y1.rEnd);
   issueStation(2, bottom, y2.ix, y2.rEnd);
 
@@ -353,7 +395,19 @@ export function buildFacility(): Facility {
   });
   pipe(tdg, piTd, 25);
   const vtdm = V("V-TDM", "移送吐出主弁（→受入連絡管）", 1000, 750, "open", ta);
-  chain(150, tp2, td, tdg, vtdm, rx);
+  // 充填ライン：移送ポンプ吐出から受入系統A・Bのストレーナー・フィルターへ
+  const jfl = add("J-FL", "junction", 1100, 750, ta, { label: "", fillSource: true });
+  chain(150, tp2, td, tdg, jfl, vtdm, rx);
+  ([["A", fillA, 490], ["B", fillB, 1010]] as const).forEach(([sys, end, y]) => {
+    const v = add(`V-FL${sys}`, "valve", 900, y, "充填ライン", {
+      name: `受入${sys} 充填元弁（移送系統より）`,
+      normal: "close",
+      service: true,
+      fillLine: true,
+    });
+    pipe(end, v, 50);
+    pipe(v, jfl, 50, [[1100, y]]);
+  });
   areas.push({ x: 1170, y: 660, w: 560, h: 180, label: "移送ポンプ設備" });
 
   return {

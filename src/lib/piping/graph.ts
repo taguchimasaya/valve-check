@@ -243,6 +243,7 @@ export function shortestPath(
       if (done.has(other) || blocked.has(other)) continue;
       const on = g.nodeById.get(other)!;
       if (on.kind === "drain" || on.kind === "gauge" || on.kind === "psv") continue;
+      if (on.service && other !== to) continue; // 充填弁などの作業用ラインは運用経路にしない
       if (on.dirFrom && on.dirFrom !== cur) continue;
       if (curNode.dirFrom && other === curNode.dirFrom) continue;
       const nd = dist.get(cur)! + g.pipeLengthM.get(pipe.id)!;

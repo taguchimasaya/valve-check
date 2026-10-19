@@ -244,6 +244,9 @@ export default function FieldPage() {
     { key: "region", pipeIds: plan.regionPipeIds, color: "#ef4444", opacity: 0.45, blink: true },
     { key: "seal", pipeIds: plan.sealPipeIds, color: "#f59e0b", opacity: 0.35 },
   ];
+  if (plan.steps[step] === "充填" && plan.fillPipeIds?.length) {
+    layers.push({ key: "fill", pipeIds: plan.fillPipeIds, color: "#0d9488", width: 6, flow: true });
+  }
   const completed = exec.status === "completed";
 
   return (
@@ -391,6 +394,7 @@ export default function FieldPage() {
                     {actionText(r, step)}
                   </span>
                   <span className="block truncate text-xs text-zinc-500">{r.name}</span>
+                  {r.note && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
                   {rec?.confirmedAt && <span className="text-[11px] text-blue-600">制御室確認済み</span>}
                 </button>
               );
@@ -405,6 +409,7 @@ export default function FieldPage() {
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
             <p className="text-xs text-zinc-500">{pending.name}</p>
             <p className="mt-1 text-2xl font-semibold">{pending.code}</p>
+            {pending.note && <p className="mt-1 text-sm font-medium text-amber-700">※{pending.note}</p>}
             {exec.records[recordKey(step, pending.code)]?.result === "OK" ? (
               <>
                 <p className="mt-2 text-sm text-zinc-600">記録済みです。取り消しますか？</p>
@@ -505,6 +510,7 @@ function StepTable({
               <td className="px-3 py-2">
                 <p className="font-medium">{r.code}</p>
                 <p className="text-xs text-zinc-500">{r.name}</p>
+                {r.note && <p className="text-xs text-amber-700">※{r.note}</p>}
               </td>
               {r.states.map((s, i) => {
                 const rec = exec.records[recordKey(i, r.code)];

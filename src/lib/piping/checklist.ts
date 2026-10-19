@@ -11,15 +11,17 @@ import type { ValveState } from "./types";
 // 抜取計画 → 「バルブ×工程」チェックリスト。
 // 既存システムの手順チェックリスト（Excel取込形式）と同じ構造で持ち、同じ形式で書き出せるようにする。
 
-export const PLAN_STEPS = ["作業前", "遮断", "抜取", "復旧"];
+// 抜取 → （作業） → 充填 → 復旧。作業そのものは弁操作が無いため工程に含めない。
+export const PLAN_STEPS = ["作業前", "遮断", "抜取", "充填", "復旧"];
 
-export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "imported";
+export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "imported";
 
 export const ROLE_LABEL: Record<RowRole, string> = {
   boundary: "遮断弁",
   internal: "範囲内弁",
   drain: "ドレン弁",
   gauge: "圧力計",
+  fill: "充填弁",
   imported: "取込",
 };
 
@@ -31,6 +33,8 @@ export type PlanRow = {
   role: RowRole;
   /** 工程ごとの目標状態（null＝その工程では対象外「／」） */
   states: (ValveState | null)[];
+  /** 操作上の注意（微開など） */
+  note?: string;
 };
 
 export type SavedPlan = {
@@ -44,6 +48,8 @@ export type SavedPlan = {
   regionNodeIds: string[];
   /** 液封の恐れがある区間（図面で注意表示する） */
   sealPipeIds: string[];
+  /** 充填に使う配管（充填工程中に図面で表示する） */
+  fillPipeIds?: string[];
   steps: string[];
   rows: PlanRow[];
   /** 作成画面で再編集するための入力条件 */
@@ -54,10 +60,12 @@ export type SavedPlan = {
     excludedDrains: string[];
     gaugeIds: string[];
     portableLpm: number;
+    fillLpm?: number;
   };
   summary: {
     volumeL: number | null;
     drainMinutes: number | null;
+    fillMinutes?: number | null;
     drains: string[];
     warnings: string[];
     notes: string[];
@@ -71,21 +79,38 @@ export function buildPlanRows(
   drainIds: string[],
   gaugeIds: string[]
 ): PlanRow[] {
+  // 工程：0 作業前 / 1 遮断 / 2 抜取 / 3 充填 / 4 復旧
   const rows: PlanRow[] = [];
-  const row = (id: string, role: RowRole, states: (ValveState | null)[]) => {
+  const row = (id: string, role: RowRole, states: (ValveState | null)[], note?: string) => {
     const n = g.nodeById.get(id)!;
-    rows.push({ code: n.label, nodeId: id, name: n.name, role, states });
+    rows.push({ code: n.label, nodeId: id, name: n.name, role, states, ...(note ? { note } : {}) });
   };
+  const fillOpen = new Set(iso.fill.openValves);
+  const isFillValve = (v: string) => !!g.nodeById.get(v)!.fillLine;
   iso.boundaryValves.forEach((v) => {
     const base = baseline[v] ?? "close";
-    row(v, "boundary", [base, "close", null, base]);
+    if (!fillOpen.has(v)) {
+      row(v, "boundary", [base, "close", null, null, base]);
+    } else if (isFillValve(v)) {
+      row(v, "fill", [base, "close", null, "open", base]);
+    } else {
+      // 充填ラインが無い場合：遮断弁を微開して充填し、そのまま復旧する
+      row(v, "boundary", [base, "close", null, "open", base], "充填時は微開で徐々に開く");
+    }
   });
   iso.internalValves.forEach((v) => {
     const base = baseline[v] ?? "close";
-    row(v, "internal", base === "open" ? ["open", "open", null, null] : ["close", "open", null, "close"]);
+    row(v, "internal", base === "open" ? ["open", "open", null, null, null] : ["close", "open", null, null, "close"]);
   });
-  drainIds.forEach((d) => row(d, "drain", ["close", null, "open", "close"]));
-  gaugeIds.forEach((d) => row(d, "gauge", ["close", "open", null, "close"]));
+  drainIds.forEach((d) => row(d, "drain", ["close", null, "open", "close", null]));
+  gaugeIds.forEach((d) => row(d, "gauge", ["close", "open", null, null, "close"]));
+  // 遮断範囲の外側にある充填ライン上の弁（充填元弁など）
+  iso.fill.openValves
+    .filter((v) => !iso.boundaryValves.includes(v))
+    .forEach((v) => {
+      const base = baseline[v] ?? "close";
+      row(v, "fill", [base, null, null, "open", base]);
+    });
   return rows;
 }
 
