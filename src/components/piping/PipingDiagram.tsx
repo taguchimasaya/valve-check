@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { pipePoints, type Graph } from "@/lib/piping/graph";
 import type { PNode, ValveState } from "@/lib/piping/types";
 
@@ -70,6 +70,13 @@ type Props = {
   toolbar?: ReactNode;
 };
 
+const MIN_ZOOM = 0.6;
+const MAX_ZOOM = 6;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+/** 拡大縮小の基準点：図面全体に対する位置（割合）と、それを表示枠内のどこに置くか（px） */
+type ZoomAnchor = { fx: number; fy: number; mx: number; my: number };
+
 function pipeWidth(sizeA: number) {
   return 1.4 + sizeA / 90;
 }
@@ -129,19 +136,123 @@ export default function PipingDiagram({
 
   const clickable = new Set(clickableKinds);
 
+  // ───── 拡大縮小（ボタン・マウスホイール・ピンチ） ─────
+  // 拡大後も、指やカーソルの下にあった図面の位置が同じ場所に来るようスクロールを合わせる
+  const zoomRef = useRef(1);
+  const anchorRef = useRef<ZoomAnchor | null>(null);
+
+  function anchorAt(mx: number, my: number): ZoomAnchor | null {
+    const el = scrollRef.current;
+    if (!el || !el.scrollWidth) return null;
+    return { fx: (el.scrollLeft + mx) / el.scrollWidth, fy: (el.scrollTop + my) / el.scrollHeight, mx, my };
+  }
+
+  function applyZoom(next: number, anchor: ZoomAnchor | null) {
+    const z = clampZoom(next);
+    if (z === zoomRef.current) return;
+    anchorRef.current = anchor;
+    zoomRef.current = z;
+    setZoom(z);
+  }
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const a = anchorRef.current;
+    if (!el || !a) return;
+    el.scrollLeft = a.fx * el.scrollWidth - a.mx;
+    el.scrollTop = a.fy * el.scrollHeight - a.my;
+    anchorRef.current = null;
+  }, [zoom]);
+
   function zoomBy(factor: number) {
     const el = scrollRef.current;
-    const next = Math.min(4, Math.max(0.6, zoom * factor));
-    if (el) {
-      const cx = (el.scrollLeft + el.clientWidth / 2) / el.scrollWidth;
-      const cy = (el.scrollTop + el.clientHeight / 2) / el.scrollHeight;
-      setZoom(next);
-      requestAnimationFrame(() => {
-        el.scrollLeft = cx * el.scrollWidth - el.clientWidth / 2;
-        el.scrollTop = cy * el.scrollHeight - el.clientHeight / 2;
-      });
-    } else setZoom(next);
+    applyZoom(zoomRef.current * factor, el ? anchorAt(el.clientWidth / 2, el.clientHeight / 2) : null);
   }
+
+  function resetZoom() {
+    anchorRef.current = { fx: 0, fy: 0, mx: 0, my: 0 };
+    zoomRef.current = 1;
+    setZoom(1);
+  }
+
+  // ホイール・ピンチはページ自体のスクロール／拡大を止める必要があるため、passive でないリスナーで受ける
+  const applyZoomRef = useRef(applyZoom);
+  const anchorAtRef = useRef(anchorAt);
+  useEffect(() => {
+    applyZoomRef.current = applyZoom;
+    anchorAtRef.current = anchorAt;
+  });
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const local = (x: number, y: number) => {
+      const r = el.getBoundingClientRect();
+      return [x - r.left, y - r.top] as const;
+    };
+
+    let wheelFactor = 1;
+    let wheelPos: readonly [number, number] = [0, 0];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // トラックパッドのピンチ（ctrlKey付き）は変化量が小さいので感度を上げる
+      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      wheelFactor *= Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0015));
+      wheelPos = local(e.clientX, e.clientY);
+      // 連続するホイール入力はまとめて1回の拡大縮小にする（約60fps）
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        const [mx, my] = wheelPos;
+        applyZoomRef.current(zoomRef.current * wheelFactor, anchorAtRef.current(mx, my));
+        wheelFactor = 1;
+      }, 16);
+    };
+
+    let pinch: { dist: number; zoom: number; fx: number; fy: number } | null = null;
+    const touchInfo = (e: TouchEvent) => {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      const [mx, my] = local((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+      return { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), mx, my };
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      const t = touchInfo(e);
+      const a = anchorAtRef.current(t.mx, t.my);
+      if (!a || !t.dist) return;
+      pinch = { dist: t.dist, zoom: zoomRef.current, fx: a.fx, fy: a.fy };
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const t = touchInfo(e);
+      // 2本指の中点を動かすと、拡大しながら移動もできる
+      applyZoomRef.current(pinch.zoom * (t.dist / pinch.dist), { fx: pinch.fx, fy: pinch.fy, mx: t.mx, my: t.my });
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinch = null;
+    };
+    // iOS Safari のページ拡大（gesture イベント）を止める
+    const stopGesture = (e: Event) => e.preventDefault();
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+    el.addEventListener("gesturestart", stopGesture);
+    el.addEventListener("gesturechange", stopGesture);
+    return () => {
+      if (timer) clearTimeout(timer);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("gesturestart", stopGesture);
+      el.removeEventListener("gesturechange", stopGesture);
+    };
+  }, []);
 
   function renderNode(n: PNode) {
     const o = orient.get(n.id);
@@ -337,13 +448,14 @@ export default function PipingDiagram({
         <button onClick={() => zoomBy(0.8)} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700" aria-label="縮小">
           －
         </button>
-        <button onClick={() => setZoom(1)} className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700">
+        <button onClick={resetZoom} className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700">
           全体
         </button>
         <span className="text-xs text-zinc-500">{Math.round(zoom * 100)}%</span>
+        <span className="hidden text-[11px] text-zinc-400 sm:inline">ホイール／ピンチで拡大縮小</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">{toolbar}</div>
       </div>
-      <div ref={scrollRef} className="overflow-auto" style={{ height }}>
+      <div ref={scrollRef} className="overflow-auto overscroll-contain" style={{ height, touchAction: "pan-x pan-y" }}>
         {mounted && (
         <svg
           viewBox={`0 0 ${f.width} ${f.height}`}

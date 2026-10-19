@@ -89,30 +89,31 @@ export function buildFacility(): Facility {
       label: `受入口${sys}`,
       name: `受入口${sys}（パイプライン）`,
     });
-    const v01 = V(`V-${p}01`, `受入${sys} 受入元弁`, 95, Y(300), "close", area);
-    const j1 = J(`J-${p}1`, 140, Y(300), area);
+    // 安全弁は受入元弁の上流（受入口側）に置き、受入元弁を閉じていても受入配管側を保護する
+    const j1 = J(`J-${p}1`, 115, Y(300), area);
+    const v01 = V(`V-${p}01`, `受入${sys} 受入元弁`, 155, Y(300), "close", area);
     // 安全弁・充填ヘッダーの逃し弁は、受入系統ごとの回収タンクへ逃がす
     const rt = add(`RT-${sys}`, "tank", 75, Y(440), area, {
       name: `受入${sys} 回収タンク（安全弁の逃がし先）`,
       capacityKL: 20,
       recovery: true,
     });
-    const psv = add(`PSV-${p}1`, "psv", 140, Y(355), area, {
+    const psv = add(`PSV-${p}1`, "psv", 115, Y(355), area, {
       name: `受入${sys} 安全弁（→回収タンクRT-${sys}）`,
       setPressureMPa: 1.0,
       dirFrom: j1,
     });
     pipe(j1, psv, 50);
-    pipe(psv, rt, 50, [[140, Y(440)]]);
-    const j2 = J(`J-${p}2`, 180, Y(300), area);
-    const pi = add(`PI-${p}1`, "gauge", 180, Y(255), area, {
+    pipe(psv, rt, 50, [[115, Y(440)]]);
+    const j2 = J(`J-${p}2`, 190, Y(300), area);
+    const pi = add(`PI-${p}1`, "gauge", 190, Y(255), area, {
       name: `受入${sys} 圧力計取付口`,
       normal: "close",
       gaugeMountable: true,
     });
     pipe(j2, pi, 25);
     const j3 = J(`J-${p}3`, 220, Y(300), area);
-    chain(250, src, v01, j1, j2, j3);
+    chain(250, src, j1, v01, j2, j3);
 
     // ストレーナー 2基（並列）
     const j4 = J(`J-${p}4`, 430, Y(300), area);
