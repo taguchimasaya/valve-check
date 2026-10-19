@@ -235,6 +235,43 @@ export default function PipingDiagram({
     // iOS Safari のページ拡大（gesture イベント）を止める
     const stopGesture = (e: Event) => e.preventDefault();
 
+    // マウスの左ボタンを押したまま動かすと図面をスクロールする。
+    // 少しでも動かした場合は、離したときのクリック（バルブ選択など）を発生させない。
+    let drag: { x: number; y: number; left: number; top: number; moved: boolean } | null = null;
+    let suppressClick = false;
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false };
+      e.preventDefault(); // ドラッグ中の文字選択を防ぐ
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        el.style.cursor = "grabbing";
+      }
+      el.scrollLeft = drag.left - dx;
+      el.scrollTop = drag.top - dy;
+    };
+    const onMouseUp = () => {
+      if (drag?.moved) {
+        suppressClick = true;
+        // クリックが発生しない場合（図面外で離した等）に備えて解除しておく
+        setTimeout(() => (suppressClick = false), 0);
+      }
+      drag = null;
+      el.style.cursor = "";
+    };
+    const onClickCapture = (e: MouseEvent) => {
+      if (!suppressClick) return;
+      suppressClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    };
+
     el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -242,6 +279,10 @@ export default function PipingDiagram({
     el.addEventListener("touchcancel", onTouchEnd);
     el.addEventListener("gesturestart", stopGesture);
     el.addEventListener("gesturechange", stopGesture);
+    el.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    el.addEventListener("click", onClickCapture, true);
     return () => {
       if (timer) clearTimeout(timer);
       el.removeEventListener("wheel", onWheel);
@@ -251,6 +292,10 @@ export default function PipingDiagram({
       el.removeEventListener("touchcancel", onTouchEnd);
       el.removeEventListener("gesturestart", stopGesture);
       el.removeEventListener("gesturechange", stopGesture);
+      el.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      el.removeEventListener("click", onClickCapture, true);
     };
   }, []);
 
@@ -452,10 +497,14 @@ export default function PipingDiagram({
           全体
         </button>
         <span className="text-xs text-zinc-500">{Math.round(zoom * 100)}%</span>
-        <span className="hidden text-[11px] text-zinc-400 sm:inline">ホイール／ピンチで拡大縮小</span>
+        <span className="hidden text-[11px] text-zinc-400 sm:inline">ホイール／ピンチで拡大縮小・ドラッグで移動</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">{toolbar}</div>
       </div>
-      <div ref={scrollRef} className="overflow-auto overscroll-contain" style={{ height, touchAction: "pan-x pan-y" }}>
+      <div
+        ref={scrollRef}
+        className="cursor-grab overflow-auto overscroll-contain"
+        style={{ height, touchAction: "pan-x pan-y" }}
+      >
         {mounted && (
         <svg
           viewBox={`0 0 ${f.width} ${f.height}`}
