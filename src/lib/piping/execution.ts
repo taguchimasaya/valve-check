@@ -1,5 +1,5 @@
 import type { NodeMark } from "@/components/piping/PipingDiagram";
-import type { PlanRow, SavedPlan } from "./checklist";
+import { isOperateCell, type PlanRow, type SavedPlan } from "./checklist";
 import { recordKey, type Execution } from "./store";
 import type { ValveState } from "./types";
 
@@ -40,7 +40,9 @@ export function execView(
       if (r.nodeId) valveState[r.nodeId] = r.states[step]!;
     }
     if (!r.nodeId) return;
-    marks[r.nodeId] = !rec ? "pending" : rec.result === "NG" ? "ng" : rec.confirmedAt ? "confirmed" : "done";
+    // 操作待ちは、閉操作＝赤・開操作＝青・確認のみ＝黄で点滅させる
+    const waiting: NodeMark = !isOperateCell(r, step) ? "pending" : r.states[step] === "close" ? "pendingClose" : "pendingOpen";
+    marks[r.nodeId] = !rec ? waiting : rec.result === "NG" ? "ng" : rec.confirmedAt ? "confirmed" : "done";
   });
   return {
     targets,

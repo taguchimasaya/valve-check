@@ -23,6 +23,10 @@ async function load(): Promise<PipingStore> {
   }
   // 古い形式で保存されたデータにも新しい項目を補う
   memory!.valveOverrides ??= {};
+  // 工程名の変更（遮断 → ラインナップ）を、保存済みのチェックリストにも反映する
+  memory!.plans.forEach((p) => {
+    if (p.source === "planner") p.steps = p.steps.map((st) => (st === "遮断" ? "ラインナップ" : st));
+  });
   memory!.log ??= [];
   return memory!;
 }

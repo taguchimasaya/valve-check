@@ -68,6 +68,18 @@ export default function FieldPage() {
   );
   const v = useMemo(() => (plan && exec ? execView(plan, exec, base) : null), [plan, exec, base]);
 
+  // 工程が変わったとき（点検を開いたときを含む）は、その工程の対象バルブ付近を表示する
+  const fitIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    fitIdsRef.current = (v?.targets ?? []).map((r) => r.nodeId).filter((id): id is string => !!id);
+  });
+  const fitKey = exec && view === "diagram" ? `${exec.id}:${exec.currentStep}` : null;
+  useEffect(() => {
+    if (!fitKey) return;
+    const t = setTimeout(() => diagramRef.current?.fitNodes(fitIdsRef.current), 80);
+    return () => clearTimeout(t);
+  }, [fitKey]);
+
   function showFlash(f: Flash) {
     setFlash(f);
     setTimeout(() => setFlash((cur) => (cur === f ? null : cur)), 3500);
@@ -525,14 +537,24 @@ export default function FieldPage() {
                 clickableKinds={["valve", "drain", "gauge"]}
                 onNodeClick={(id) => handleCode(g.nodeById.get(id)!.label, false)}
                 height="62vh"
+                toolbar={
+                  <button
+                    onClick={() => diagramRef.current?.fitNodes(fitIdsRef.current)}
+                    className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+                  >
+                    対象付近を表示
+                  </button>
+                }
               />
               <div className="mt-2">
                 <DiagramLegend
                   items={[
                     { color: "#ef4444", label: "点検範囲（点滅）" },
-                    { color: "#f59e0b", label: "この工程で操作（点滅）", kind: "blink" },
+                    { color: "#dc2626", label: "閉操作待ち（点滅）", kind: "blink" },
+                    { color: "#2563eb", label: "開操作待ち（点滅）", kind: "blink" },
+                    { color: "#f59e0b", label: "確認待ち（点滅）", kind: "blink" },
                     { color: "#22c55e", label: "操作済み（点灯）", kind: "ring" },
-                    { color: "#2563eb", label: "制御室確認済み", kind: "ring" },
+                    { color: "#15803d", label: "制御室確認済み", kind: "ring" },
                   ]}
                 />
               </div>
@@ -567,12 +589,20 @@ export default function FieldPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <span className="font-semibold">{rec?.result === "OK" ? "☑" : "☐"} {r.code}</span>
-                    <span className={`ml-2 rounded px-1.5 text-xs text-white ${r.states[step] === "close" ? "bg-red-500" : "bg-emerald-500"}`}>
+                    <span
+                      className={`ml-2 rounded px-1.5 text-xs ${
+                        !isOperateCell(r, step)
+                          ? "border border-amber-400 text-amber-700 dark:text-amber-400"
+                          : r.states[step] === "close"
+                            ? "bg-red-500 text-white"
+                            : "bg-blue-600 text-white"
+                      }`}
+                    >
                       {actionText(r, step)}
                     </span>
                     <span className="block truncate text-xs text-zinc-500">{r.name}</span>
                     {r.note && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
-                    {rec?.confirmedAt && <span className="text-[11px] text-blue-600">制御室確認済み</span>}
+                    {rec?.confirmedAt && <span className="text-[11px] text-green-700">制御室確認済み</span>}
                     {r.nodeId && <span className="block text-[11px] text-sky-600">📍 タップで図面上の位置を表示</span>}
                   </div>
                   <button

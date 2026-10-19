@@ -48,7 +48,9 @@ function midArrow(points: [number, number][]) {
 }
 
 export type NodeMark =
-  | "pending" // 操作待ち（点滅）
+  | "pending" // 確認待ち（点滅・黄）
+  | "pendingOpen" // 開操作待ち（点滅・青）
+  | "pendingClose" // 閉操作待ち（点滅・赤）
   | "done" // 現場で操作済み（点灯）
   | "confirmed" // 制御室確認済み
   | "ng"
@@ -63,8 +65,10 @@ export type NodeMark =
 
 const MARK_STYLE: Record<NodeMark, { color: string; blink?: boolean; fill?: string; width?: number }> = {
   pending: { color: "#f59e0b", blink: true, width: 3 },
+  pendingOpen: { color: "#2563eb", blink: true, width: 3.5 },
+  pendingClose: { color: "#dc2626", blink: true, width: 3.5 },
   done: { color: "#22c55e", fill: "rgba(34,197,94,0.35)", width: 3 },
-  confirmed: { color: "#2563eb", fill: "rgba(37,99,235,0.3)", width: 3 },
+  confirmed: { color: "#15803d", fill: "rgba(21,128,61,0.35)", width: 3 },
   ng: { color: "#dc2626", fill: "rgba(220,38,38,0.35)", width: 3, blink: true },
   boundary: { color: "#dc2626", width: 2.5 },
   internal: { color: "#16a34a", width: 2.5 },
@@ -91,6 +95,8 @@ const CSS = `
 export type DiagramHandle = {
   /** 指定したノード（バルブ等）の位置まで拡大・移動し、しばらく位置マークを表示する */
   focusNode: (id: string) => void;
+  /** 指定したノードがすべて収まる範囲まで拡大・移動する（点検中の対象バルブ付近の表示） */
+  fitNodes: (ids: string[]) => void;
 };
 
 type Props = {
@@ -215,13 +221,11 @@ export default function PipingDiagram({
     if (locateTimer.current) clearTimeout(locateTimer.current);
   }, []);
 
-  function focusNode(id: string) {
-    const n = graph.nodeById.get(id);
+  /** 図面上の点（cx, cy）が表示枠の中央に来るよう、倍率 z で表示する */
+  function showAt(z: number, cx: number, cy: number) {
     const el = scrollRef.current;
-    if (!n || !el) return;
-    el.parentElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    const anchor = { fx: n.x / f.width, fy: n.y / f.height, mx: el.clientWidth / 2, my: el.clientHeight / 2 };
-    const z = Math.max(zoomRef.current, 2.5);
+    if (!el) return;
+    const anchor = { fx: cx / f.width, fy: cy / f.height, mx: el.clientWidth / 2, my: el.clientHeight / 2 };
     if (z === zoomRef.current) {
       el.scrollTo({
         left: anchor.fx * el.scrollWidth - anchor.mx,
@@ -233,11 +237,33 @@ export default function PipingDiagram({
       zoomRef.current = z;
       setZoom(z);
     }
+  }
+
+  function fitNodes(ids: string[]) {
+    const el = scrollRef.current;
+    const ns = ids.map((id) => graph.nodeById.get(id)).filter((n): n is PNode => !!n);
+    if (!el || !ns.length) return;
+    const pad = 90;
+    const xs = ns.map((n) => n.x);
+    const ys = ns.map((n) => n.y);
+    const [minX, maxX, minY, maxY] = [Math.min(...xs) - pad, Math.max(...xs) + pad, Math.min(...ys) - pad, Math.max(...ys) + pad];
+    // 倍率1のときの描画幅は max(表示枠の幅, 1100px)。対象範囲が枠に収まる倍率を求める（寄りすぎない上限3倍）
+    const pxPerUnit = Math.min(el.clientWidth / (maxX - minX), el.clientHeight / (maxY - minY));
+    const z = clampZoom(Math.min(3, (pxPerUnit * f.width) / Math.max(el.clientWidth, 1100)));
+    showAt(z, (minX + maxX) / 2, (minY + maxY) / 2);
+  }
+
+  function focusNode(id: string) {
+    const n = graph.nodeById.get(id);
+    const el = scrollRef.current;
+    if (!n || !el) return;
+    el.parentElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    showAt(Math.max(zoomRef.current, 2.5), n.x, n.y);
     setLocate({ id, key: Date.now() });
     if (locateTimer.current) clearTimeout(locateTimer.current);
     locateTimer.current = setTimeout(() => setLocate(null), 5000);
   }
-  useImperativeHandle(ref, () => ({ focusNode }));
+  useImperativeHandle(ref, () => ({ focusNode, fitNodes }));
 
   function resetZoom() {
     anchorRef.current = { fx: 0, fy: 0, mx: 0, my: 0 };

@@ -374,9 +374,11 @@ export default function ControlPage() {
                 })),
                 { color: "#ef4444", label: "点検ライン（点滅）" },
                 { color: "#0d9488", label: "充填ライン（充填工程中）" },
-                { color: "#f59e0b", label: "操作待ち（点滅）", kind: "blink" as const },
+                { color: "#dc2626", label: "閉操作待ち（点滅）", kind: "blink" as const },
+                { color: "#2563eb", label: "開操作待ち（点滅）", kind: "blink" as const },
+                { color: "#f59e0b", label: "確認待ち（点滅）", kind: "blink" as const },
                 { color: "#22c55e", label: "操作済み（点灯）※クリックで確認", kind: "ring" as const },
-                { color: "#2563eb", label: "制御室確認済み", kind: "ring" as const },
+                { color: "#15803d", label: "制御室確認済み", kind: "ring" as const },
                 { color: "#7c3aed", label: "手動で開閉変更", kind: "ring" as const },
               ]}
             />

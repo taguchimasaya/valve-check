@@ -12,7 +12,7 @@ import type { ValveState } from "./types";
 // 既存システムの手順チェックリスト（Excel取込形式）と同じ構造で持ち、同じ形式で書き出せるようにする。
 
 // 抜取 → （作業） → 充填 → 復旧。作業そのものは弁操作が無いため工程に含めない。
-export const PLAN_STEPS = ["作業前", "遮断", "抜取", "充填", "復旧"];
+export const PLAN_STEPS = ["作業前", "ラインナップ", "抜取", "充填", "復旧"];
 
 export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "imported";
 
@@ -79,7 +79,7 @@ export function buildPlanRows(
   drainIds: string[],
   gaugeIds: string[]
 ): PlanRow[] {
-  // 工程：0 作業前 / 1 遮断 / 2 抜取 / 3 充填 / 4 復旧
+  // 工程：0 作業前 / 1 ラインナップ（遮断弁を閉め、抜取範囲を構成する） / 2 抜取 / 3 充填 / 4 復旧
   const rows: PlanRow[] = [];
   const row = (id: string, role: RowRole, states: (ValveState | null)[], note?: string) => {
     const n = g.nodeById.get(id)!;
