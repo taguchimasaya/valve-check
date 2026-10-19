@@ -48,7 +48,7 @@ export type SavedPlan = {
   rows: PlanRow[];
   /** 作成画面で再編集するための入力条件 */
   planner?: {
-    drainPreference: "any" | "pump";
+    expandToDrain: boolean;
     baselineMode: "normal" | "operation";
     extraSectionIds: string[];
     excludedDrains: string[];

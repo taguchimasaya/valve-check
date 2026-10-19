@@ -10,7 +10,6 @@ import {
   formatMinutes,
   GRAVITY_LPM,
   planIsolation,
-  type DrainPreference,
   type Target,
 } from "@/lib/piping/isolation";
 import { applyOperations, describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
@@ -42,7 +41,7 @@ export default function PlannerPage() {
   const [purpose, setPurpose] = useState(PURPOSES[0]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
-  const [drainPreference, setDrainPreference] = useState<DrainPreference>("any");
+  const [expandToDrain, setExpandToDrain] = useState(true);
   const [baselineMode, setBaselineMode] = useState<"normal" | "operation">("normal");
   const [extraSectionIds, setExtraSectionIds] = useState<string[]>([]);
   const [excludedDrains, setExcludedDrains] = useState<string[]>([]);
@@ -64,9 +63,9 @@ export default function PlannerPage() {
   const iso = useMemo(
     () =>
       targets.length || extraSectionIds.length
-        ? planIsolation(g, targets, { baseline, drainPreference, extraSectionIds })
+        ? planIsolation(g, targets, { baseline, expandToDrain, extraSectionIds })
         : null,
-    [g, targets, baseline, drainPreference, extraSectionIds]
+    [g, targets, baseline, expandToDrain, extraSectionIds]
   );
 
   const drains = useMemo(
@@ -202,7 +201,7 @@ export default function PlannerPage() {
       sealPipeIds: iso.sealGroups.flatMap((s) => s.pipeIds),
       steps: PLAN_STEPS,
       rows,
-      planner: { drainPreference, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, portableLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, portableLpm },
       summary: {
         volumeL: iso.volumeL,
         drainMinutes: estimate?.minutes ?? null,
@@ -244,7 +243,7 @@ export default function PlannerPage() {
     setPurpose(p.purpose);
     setTargets(p.targets);
     if (p.planner) {
-      setDrainPreference(p.planner.drainPreference);
+      setExpandToDrain(p.planner.expandToDrain ?? true);
       setBaselineMode(p.planner.baselineMode);
       setExtraSectionIds(p.planner.extraSectionIds);
       setExcludedDrains(p.planner.excludedDrains);
@@ -379,16 +378,17 @@ export default function PlannerPage() {
                 )}
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <label className="space-y-1">
-                  <span className="text-zinc-500">抜取設備の条件</span>
-                  <select
-                    value={drainPreference}
-                    onChange={(e) => setDrainPreference(e.target.value as DrainPreference)}
-                    className="w-full rounded border border-zinc-300 bg-transparent px-2 py-1 dark:border-zinc-700"
-                  >
-                    <option value="any">ドレン口があればよい</option>
-                    <option value="pump">抜取ポンプ付ドレンまで</option>
-                  </select>
+                <label className="flex items-start gap-1.5 pt-4">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={expandToDrain}
+                    onChange={(e) => setExpandToDrain(e.target.checked)}
+                  />
+                  <span>
+                    ドレン口まで広げる
+                    <span className="block text-[11px] text-zinc-400">外すと隣接弁のみで遮断</span>
+                  </span>
                 </label>
                 <label className="space-y-1">
                   <span className="text-zinc-500">作業前の弁状態</span>

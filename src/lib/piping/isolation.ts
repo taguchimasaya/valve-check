@@ -5,13 +5,14 @@ import type { ValveState } from "./types";
 
 export type Target = { type: "node" | "pipe"; id: string };
 
-export type DrainPreference = "any" | "pump";
-
 export type IsolationOptions = {
   /** 作業前の弁状態（待機状態 or 現在の運用状態） */
   baseline: Record<string, ValveState>;
-  /** any: ドレン口のある区間まで / pump: 抜取ポンプ付ドレンのある区間まで遮断範囲を広げる */
-  drainPreference: DrainPreference;
+  /**
+   * true: 対象区間にドレン口（抜取ポンプ付を含む）が無ければ、最寄りのドレン口のある区間まで広げる
+   * false: 対象に隣接するバルブだけで遮断する（抜取方法は別途検討）
+   */
+  expandToDrain: boolean;
   /** 手動で追加した区間（境界弁をクリックして範囲を広げたもの） */
   extraSectionIds?: string[];
 };
@@ -48,8 +49,7 @@ export type IsolationResult = {
   notes: string[];
 };
 
-function isDrainable(g: Graph, s: Section, pref: DrainPreference) {
-  if (pref === "pump") return s.drainIds.some((d) => g.nodeById.get(d)!.drainPumpLpm);
+function isDrainable(s: Section) {
   return s.drainIds.length > 0;
 }
 
@@ -123,7 +123,7 @@ function regionComponents(g: Graph, region: Set<string>): string[][] {
 }
 
 /** ドレン口のある区間までの最小容量経路（区間グラフ上のダイクストラ） */
-function pathToDrain(g: Graph, start: string[], pref: DrainPreference): string[] | null {
+function pathToDrain(g: Graph, start: string[]): string[] | null {
   const dist = new Map<string, number>();
   const prev = new Map<string, string>();
   const queue: string[] = [];
@@ -139,7 +139,7 @@ function pathToDrain(g: Graph, start: string[], pref: DrainPreference): string[]
     if (done.has(cur)) continue;
     done.add(cur);
     const sec = g.sectionById.get(cur)!;
-    if (!startSet.has(cur) && isDrainable(g, sec, pref)) {
+    if (!startSet.has(cur) && isDrainable(sec)) {
       const path: string[] = [];
       let c: string | undefined = cur;
       while (c && !startSet.has(c)) {
@@ -181,13 +181,13 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
   });
   const expanded: string[] = [];
 
-  // ドレン口（抜取設備）を含むまで範囲を広げる
-  for (let guard = 0; guard < 50; guard++) {
+  // ドレン口（抜取設備）を含むまで、最小の容量で範囲を広げる
+  for (let guard = 0; opts.expandToDrain && guard < 50; guard++) {
     const lacking = regionComponents(g, region).find(
-      (comp) => !comp.some((sid) => isDrainable(g, g.sectionById.get(sid)!, opts.drainPreference))
+      (comp) => !comp.some((sid) => isDrainable(g.sectionById.get(sid)!))
     );
     if (!lacking) break;
-    const path = pathToDrain(g, lacking, opts.drainPreference);
+    const path = pathToDrain(g, lacking);
     if (!path) {
       errors.push("抜取設備（ドレン口）のある区間まで遮断範囲を広げられませんでした。");
       break;
@@ -198,11 +198,6 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
         expanded.push(s);
       }
     });
-  }
-  if (expanded.length) {
-    notes.push(
-      `対象区間に${opts.drainPreference === "pump" ? "抜取ポンプ付ドレン" : "ドレン口"}が無いため、隣接区間まで遮断範囲を広げました。`
-    );
   }
 
   const boundary = new Set<string>();
@@ -228,6 +223,20 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
     });
   });
   internal.forEach((v) => boundary.delete(v));
+
+  if (expanded.length) {
+    const expandedSet = new Set(expanded);
+    const opened = [...internal].filter((v) =>
+      (g.valveSides.get(v) ?? []).some((s) => expandedSet.has(s))
+    );
+    const viaDrains = expanded.flatMap((s) => g.sectionById.get(s)!.drainIds);
+    notes.push(
+      `対象区間にドレン口が無いため、${opened.join("・")} を開けて ${viaDrains.join("・")} から抜き取る範囲にしました（隣接弁だけで遮断する場合は「ドレン口まで広げる」を外してください）。`
+    );
+  }
+  if (region.size > 0 && drains.length === 0) {
+    errors.push("抜取範囲内にドレン口がありません。抜取方法（仮設の抜取口など）を別途検討してください。");
+  }
 
   // 液封評価：遮断後の弁状態で、領域外の区間がタンク・安全弁に逃げられるか
   const after: Record<string, ValveState> = { ...opts.baseline };
