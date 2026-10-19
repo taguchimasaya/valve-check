@@ -14,12 +14,16 @@ let memory: PipingStore | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
 async function load(): Promise<PipingStore> {
-  if (memory) return memory;
-  try {
-    memory = { ...EMPTY_STORE, ...JSON.parse(await fs.readFile(DATA_FILE, "utf8")) };
-  } catch {
-    memory = structuredClone(EMPTY_STORE);
+  if (!memory) {
+    try {
+      memory = { ...structuredClone(EMPTY_STORE), ...JSON.parse(await fs.readFile(DATA_FILE, "utf8")) };
+    } catch {
+      memory = structuredClone(EMPTY_STORE);
+    }
   }
+  // 古い形式で保存されたデータにも新しい項目を補う
+  memory!.valveOverrides ??= {};
+  memory!.log ??= [];
   return memory!;
 }
 
@@ -119,6 +123,24 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       return null;
     case "setOperations":
       store.operations = a.operations;
+      return null;
+    case "setValve": {
+      if (a.state) store.valveOverrides[a.id] = a.state;
+      else delete store.valveOverrides[a.id];
+      store.log.unshift({
+        at: now,
+        type: "info",
+        text: a.state
+          ? `制御室で ${a.label} を「${a.state === "open" ? "開" : "閉"}」に変更しました`
+          : `制御室で ${a.label} の手動変更を解除しました`,
+      });
+      store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "clearValveOverrides":
+      store.valveOverrides = {};
+      store.log.unshift({ at: now, type: "info", text: "制御室で弁の手動変更をすべて解除しました" });
+      store.log = store.log.slice(0, 100);
       return null;
   }
 }

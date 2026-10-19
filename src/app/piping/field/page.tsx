@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import PipingDiagram, { DiagramLegend, type PipeLayer } from "@/components/piping/PipingDiagram";
-import { applyOperations } from "@/lib/piping/operations";
+import { currentValveState } from "@/lib/piping/operations";
 import { importPlanFromExcel, isOperateCell, newId, stateGlyph, type PlanRow, type SavedPlan } from "@/lib/piping/checklist";
 import { actionText, execView } from "@/lib/piping/execution";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
@@ -30,7 +30,11 @@ export default function FieldPage() {
   const plan = exec ? store?.plans.find((p) => p.id === exec.planId) ?? null : null;
   // 実際の弁状態の基準＝制御室で入力された運用状態（未入力なら待機状態）
   const operations = store?.operations;
-  const base = useMemo(() => applyOperations(g, operations ?? []).valveState, [g, operations]);
+  const overrides = store?.valveOverrides;
+  const base = useMemo(
+    () => currentValveState(g, operations ?? [], overrides ?? {}).valveState,
+    [g, operations, overrides]
+  );
   const v = useMemo(() => (plan && exec ? execView(plan, exec, base) : null), [plan, exec, base]);
 
   function showFlash(f: Flash) {

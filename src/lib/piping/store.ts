@@ -1,5 +1,6 @@
 import type { SavedPlan } from "./checklist";
 import type { Operation } from "./operations";
+import type { ValveState } from "./types";
 
 // ローカル試作用の共有ストア（next dev を動かしているPCの .local-data/ に保存）。
 // 現場（iPad）と制御室（PC）が同じ dev サーバーを見ることで状態を共有する。
@@ -31,6 +32,10 @@ export type PipingStore = {
   plans: SavedPlan[];
   executions: Execution[];
   operations: Operation[];
+  /** オペレーターが図面上で手動変更した弁状態（運用・待機状態より優先） */
+  valveOverrides: Record<string, ValveState>;
+  /** 制御室の操作記録（運用入力・弁の手動変更） */
+  log: ExecEvent[];
 };
 
 export type StoreAction =
@@ -43,9 +48,18 @@ export type StoreAction =
   | { action: "advanceStep"; execId: string }
   | { action: "completeExecution"; execId: string }
   | { action: "deleteExecution"; execId: string }
-  | { action: "setOperations"; operations: Operation[] };
+  | { action: "setOperations"; operations: Operation[] }
+  | { action: "setValve"; id: string; label: string; state: ValveState | null }
+  | { action: "clearValveOverrides" };
 
-export const EMPTY_STORE: PipingStore = { version: 0, plans: [], executions: [], operations: [] };
+export const EMPTY_STORE: PipingStore = {
+  version: 0,
+  plans: [],
+  executions: [],
+  operations: [],
+  valveOverrides: {},
+  log: [],
+};
 
 export const recordKey = (step: number, code: string) => `${step}:${code}`;
 

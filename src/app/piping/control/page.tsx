@@ -7,6 +7,7 @@ import { newId } from "@/lib/piping/checklist";
 import { execView, planConflicts } from "@/lib/piping/execution";
 import {
   applyOperations,
+  currentValveState,
   describeOperation,
   OPERATION_META,
   TANKS,
@@ -63,9 +64,13 @@ export default function ControlPage() {
   const [draft, setDraft] = useState<Draft>(INITIAL_DRAFT);
   const [hidden, setHidden] = useState<string[]>([]);
   const [opError, setOpError] = useState<string | null>(null);
+  // 図面クリック時の動作：確認（現場操作の確認）／弁操作（オペレーターによる開閉変更）
+  const [clickMode, setClickMode] = useState<"confirm" | "operate">("confirm");
+  const [valveDialog, setValveDialog] = useState<string | null>(null);
 
   const operations = useMemo(() => store?.operations ?? [], [store?.operations]);
-  const opState = useMemo(() => applyOperations(g, operations), [g, operations]);
+  const overrides = useMemo(() => store?.valveOverrides ?? {}, [store?.valveOverrides]);
+  const opState = useMemo(() => currentValveState(g, operations, overrides), [g, operations, overrides]);
   const running = (store?.executions ?? []).filter((e) => e.status === "in_progress");
   const shown = running.filter((e) => !hidden.includes(e.id));
 
@@ -97,6 +102,9 @@ export default function ControlPage() {
   }
 
   const layers = [...inspLayers, ...opLayers];
+  Object.keys(overrides).forEach((id) => {
+    if (!marks[id]) marks[id] = "manual";
+  });
 
   // ───── 新着の音声通知 ─────
   const seenRef = useRef<Set<string> | null>(null);
@@ -139,6 +147,19 @@ export default function ControlPage() {
     if (rec?.result === "OK" && !rec.confirmedAt) {
       act({ action: "confirm", execId: o.exec.id, step: o.step, code: o.code });
     }
+  }
+
+  function handleNodeClick(id: string) {
+    if (clickMode === "operate") setValveDialog(id);
+    else confirmValve(id);
+  }
+
+  async function setValve(id: string, state: "open" | "close" | null) {
+    const n = g.nodeById.get(id)!;
+    // 運用・待機状態と同じに戻すなら、手動変更として残さない
+    const base = applyOperations(g, operations).valveState[id];
+    await act({ action: "setValve", id, label: n.label, state: state === base ? null : state });
+    setValveDialog(null);
   }
 
   const toggle = (arr: number[], n: number) => (arr.includes(n) ? arr.filter((x) => x !== n) : [...arr, n].sort());
@@ -277,6 +298,31 @@ export default function ControlPage() {
                   ))}
                 </ul>
               )}
+              {Object.keys(overrides).length > 0 && (
+                <div className="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+                      手動で変更した弁（{Object.keys(overrides).length}）
+                    </p>
+                    <button onClick={() => act({ action: "clearValveOverrides" })} className="text-xs text-violet-700 underline">
+                      すべて解除
+                    </button>
+                  </div>
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {Object.entries(overrides).map(([id, st]) => (
+                      <li key={id} className="flex items-center gap-2">
+                        <span className="flex-1 truncate" title={g.nodeById.get(id)?.name}>
+                          {g.nodeById.get(id)?.label ?? id}
+                        </span>
+                        <span className={st === "open" ? "text-emerald-600" : "text-red-600"}>{st === "open" ? "開" : "閉"}</span>
+                        <button onClick={() => setValve(id, null)} className="text-zinc-500 underline">
+                          解除
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {opState.conflicts.map((c) => (
                 <p key={c} className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
                   {c}
@@ -293,9 +339,30 @@ export default function ControlPage() {
               layers={layers}
               marks={marks}
               clickableKinds={["valve", "drain", "gauge"]}
-              onNodeClick={confirmValve}
+              onNodeClick={handleNodeClick}
               height="80vh"
+              toolbar={
+                <div className="flex overflow-hidden rounded-lg border border-zinc-300 text-xs dark:border-zinc-700">
+                  <button
+                    onClick={() => setClickMode("confirm")}
+                    className={`px-2.5 py-1 ${clickMode === "confirm" ? "bg-emerald-600 text-white" : ""}`}
+                  >
+                    確認モード
+                  </button>
+                  <button
+                    onClick={() => setClickMode("operate")}
+                    className={`px-2.5 py-1 ${clickMode === "operate" ? "bg-violet-600 text-white" : ""}`}
+                  >
+                    弁操作モード
+                  </button>
+                </div>
+              }
             />
+            {clickMode === "operate" && (
+              <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-950 dark:text-violet-200">
+                弁操作モード：図面のバルブ・ドレン弁・圧力計元弁をクリックすると、開閉状態を変更できます（ローカル試作のため実機は動きません）。
+              </p>
+            )}
             <DiagramLegend
               items={[
                 ...(Object.keys(OPERATION_META) as OperationKind[]).map((k) => ({
@@ -306,6 +373,7 @@ export default function ControlPage() {
                 { color: "#f59e0b", label: "操作待ち（点滅）", kind: "blink" as const },
                 { color: "#22c55e", label: "操作済み（点灯）※クリックで確認", kind: "ring" as const },
                 { color: "#2563eb", label: "制御室確認済み", kind: "ring" as const },
+                { color: "#7c3aed", label: "手動で開閉変更", kind: "ring" as const },
               ]}
             />
           </section>
@@ -394,8 +462,10 @@ export default function ControlPage() {
 
             <Panel title="通知">
               <ul className="max-h-[45vh] space-y-1 overflow-auto text-xs">
-                {running
-                  .flatMap((e) => e.events.map((ev) => ({ ev, name: e.planName })))
+                {[
+                  ...running.flatMap((e) => e.events.map((ev) => ({ ev, name: e.planName }))),
+                  ...(store?.log ?? []).map((ev) => ({ ev, name: "制御室" })),
+                ]
                   .sort((a, b) => b.ev.at.localeCompare(a.ev.at))
                   .slice(0, 40)
                   .map(({ ev, name }, i) => (
@@ -411,7 +481,77 @@ export default function ControlPage() {
           </aside>
         </div>
       </div>
+      {valveDialog && (
+        <ValveDialog
+          name={g.nodeById.get(valveDialog)!.name}
+          label={g.nodeById.get(valveDialog)!.label}
+          state={valveState[valveDialog]}
+          overridden={valveDialog in overrides}
+          onSet={(s) => setValve(valveDialog, s)}
+          onClose={() => setValveDialog(null)}
+        />
+      )}
     </main>
+  );
+}
+
+function ValveDialog({
+  name,
+  label,
+  state,
+  overridden,
+  onSet,
+  onClose,
+}: {
+  name: string;
+  label: string;
+  state: "open" | "close" | undefined;
+  overridden: boolean;
+  onSet: (s: "open" | "close" | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+        <p className="text-xs text-zinc-500">{name}</p>
+        <p className="mt-1 text-2xl font-semibold">{label}</p>
+        <p className="mt-1 text-sm">
+          現在：
+          <span className={state === "open" ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
+            {state === "open" ? "開" : "閉"}
+          </span>
+          {overridden && <span className="ml-2 text-xs text-violet-600">（手動変更中）</span>}
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onSet("open")}
+            disabled={state === "open"}
+            className="rounded-lg bg-emerald-600 py-3 text-lg font-bold text-white disabled:opacity-30"
+          >
+            開にする
+          </button>
+          <button
+            onClick={() => onSet("close")}
+            disabled={state === "close"}
+            className="rounded-lg bg-red-600 py-3 text-lg font-bold text-white disabled:opacity-30"
+          >
+            閉にする
+          </button>
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button onClick={onClose} className="rounded-lg border border-zinc-300 py-2 text-sm dark:border-zinc-700">
+            キャンセル
+          </button>
+          <button
+            onClick={() => onSet(null)}
+            disabled={!overridden}
+            className="rounded-lg border border-violet-400 py-2 text-sm text-violet-700 disabled:opacity-30"
+          >
+            手動変更を解除
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

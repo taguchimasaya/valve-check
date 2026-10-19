@@ -174,8 +174,23 @@ export function buildFacility(): Facility {
         const x = tx + l.dx;
         const v = V(`V-${no}${l.key}`, `T-${no} ${l.label}`, x, Y(l.vy), "close", area);
         const hj = J(`J-${no}${l.key}`, x, Y(l.hy), area);
-        pipe(tank, v, l.size, [[x, Y(150)]]);
-        pipe(v, hj, l.size);
+        if (l.key === "T") {
+          pipe(tank, v, l.size, [[x, Y(150)]]);
+          pipe(v, hj, l.size);
+        } else {
+          // 受入弁・払出弁には、ヘッダー側（下流）の圧力をタンク側（上流）へ逃がす逃し弁をバイパスで設ける
+          const jt = J(`J-${no}${l.key}T`, x, Y(l.vy - 16), area);
+          const jh = J(`J-${no}${l.key}H`, x, Y(l.vy + 16), area);
+          const psv = add(`PSV-${no}${l.key}`, "psv", x - 14, Y(l.vy), area, {
+            name: `T-${no} ${l.label} 逃し弁（ヘッダー側→タンク側）`,
+            setPressureMPa: 1.0,
+            dirFrom: jh,
+          });
+          pipe(tank, jt, l.size, [[x, Y(150)]]);
+          chain(l.size, jt, v, jh, hj);
+          pipe(jh, psv, 25, [[x - 14, Y(l.vy + 16)]]);
+          pipe(psv, jt, 25, [[x - 14, Y(l.vy - 16)]]);
+        }
         l.arr.push(hj);
       });
     });

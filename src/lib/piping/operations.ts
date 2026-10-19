@@ -133,6 +133,26 @@ export type OperationState = {
   conflicts: string[];
 };
 
+/** 運用状態に、オペレーターの手動変更を重ねた現在の弁状態 */
+export function currentValveState(
+  g: Graph,
+  ops: Operation[],
+  overrides: Record<string, ValveState> = {}
+): OperationState {
+  const s = applyOperations(g, ops);
+  const valveState = { ...s.valveState, ...overrides };
+  const conflicts = [...s.conflicts];
+  s.routes.forEach((r) => {
+    if (r.error) return;
+    r.openValves.forEach((v) => {
+      if (overrides[v] === "close") {
+        conflicts.push(`${v}：「${OPERATION_META[r.op.kind].label}」ライン上のバルブが手動で閉になっています`);
+      }
+    });
+  });
+  return { ...s, valveState, conflicts };
+}
+
 /** 待機状態に各運用の開閉を重ねた弁状態 */
 export function applyOperations(g: Graph, ops: Operation[]): OperationState {
   const valveState = normalValveState(g.facility);

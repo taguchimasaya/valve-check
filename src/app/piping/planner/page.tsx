@@ -12,7 +12,7 @@ import {
   planIsolation,
   type Target,
 } from "@/lib/piping/isolation";
-import { applyOperations, describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
+import { currentValveState, describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
 import { planConflicts } from "@/lib/piping/execution";
 import {
   buildPlanRows,
@@ -54,10 +54,13 @@ export default function PlannerPage() {
 
   const storeOps = store?.operations;
   const operations = useMemo(() => storeOps ?? [], [storeOps]);
-  const opState = useMemo(() => applyOperations(g, operations), [g, operations]);
+  const storeOverrides = store?.valveOverrides;
+  const overrides = useMemo(() => storeOverrides ?? {}, [storeOverrides]);
+  const opState = useMemo(() => currentValveState(g, operations, overrides), [g, operations, overrides]);
+  const hasCurrentState = operations.length > 0 || Object.keys(overrides).length > 0;
   const baseline = useMemo(
-    () => (baselineMode === "operation" && operations.length ? opState.valveState : normalValveState(g.facility)),
-    [g, baselineMode, operations, opState]
+    () => (baselineMode === "operation" && hasCurrentState ? opState.valveState : normalValveState(g.facility)),
+    [g, baselineMode, hasCurrentState, opState]
   );
 
   const iso = useMemo(
@@ -86,10 +89,10 @@ export default function PlannerPage() {
   // 制御室で入力中の運用との干渉
   const conflicts = useMemo(
     () =>
-      iso && operations.length
+      iso && hasCurrentState
         ? planConflicts({ rows, regionPipeIds: iso.regionPipeIds }, opState, (k) => OPERATION_META[k as OperationKind].label)
         : [],
-    [iso, rows, operations, opState]
+    [iso, rows, hasCurrentState, opState]
   );
   const estimate = useMemo(
     () => (iso ? estimateDrain(g, drains, iso.volumeL, portableLpm) : null),
@@ -398,15 +401,18 @@ export default function PlannerPage() {
                     className="w-full rounded border border-zinc-300 bg-transparent px-2 py-1 dark:border-zinc-700"
                   >
                     <option value="normal">待機状態</option>
-                    <option value="operation">現在の運用（制御室入力）</option>
+                    <option value="operation">現在の状態（制御室の運用・弁操作）</option>
                   </select>
                 </label>
               </div>
               {baselineMode === "operation" && (
                 <p className="mt-2 text-xs text-zinc-500">
-                  {operations.length
-                    ? operations.map((o) => describeOperation(o)).join(" ／ ")
-                    : "制御室で運用が入力されていないため、待機状態を使用しています。"}
+                  {hasCurrentState
+                    ? [
+                        ...operations.map((o) => describeOperation(o)),
+                        ...(Object.keys(overrides).length ? [`手動変更 ${Object.keys(overrides).length}弁`] : []),
+                      ].join(" ／ ")
+                    : "制御室で運用・弁操作が入力されていないため、待機状態を使用しています。"}
                 </p>
               )}
               <div className="mt-3 flex gap-2">

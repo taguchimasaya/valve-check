@@ -38,9 +38,16 @@ export type Graph = {
   valveSides: Map<string, string[]>;
 };
 
+/** バルブをまたぐ逃し弁（入口側→出口側へ圧力を逃がす。通常は流れない） */
+export function isBypassRelief(n: PNode) {
+  return n.kind === "psv" && !!n.dirFrom;
+}
+
 /** 区間を区切るノード（ここで配管が分断されるとみなす） */
 export function isSeparator(n: PNode) {
-  return n.kind === "valve" || n.kind === "tank" || n.kind === "source" || n.kind === "sink";
+  return (
+    n.kind === "valve" || n.kind === "tank" || n.kind === "source" || n.kind === "sink" || isBypassRelief(n)
+  );
 }
 
 export function pipePoints(g: Pick<Graph, "nodeById">, p: Pipe): [number, number][] {
@@ -116,6 +123,7 @@ export function buildGraph(facility: Facility): Graph {
     const nodeSet = new Set<string>();
     const valveSet = new Set<string>();
     const tankSet = new Set<string>();
+    const reliefSet = new Set<string>();
     let external = false;
     let volumeL = 0;
     pipeIds.forEach((pid) => {
@@ -126,7 +134,10 @@ export function buildGraph(facility: Facility): Graph {
         const n = nodeById.get(nid)!;
         if (n.kind === "valve") valveSet.add(nid);
         else if (n.kind === "tank") tankSet.add(nid);
-        else if (n.kind === "source" || n.kind === "sink") external = true;
+        else if (isBypassRelief(n)) {
+          // 逃し弁の入口側の区間だけが、その逃し弁で保護される
+          if ((p.a === nid ? p.b : p.a) === n.dirFrom) reliefSet.add(nid);
+        } else if (n.kind === "source" || n.kind === "sink") external = true;
         else nodeSet.add(nid);
       });
     });
@@ -150,7 +161,7 @@ export function buildGraph(facility: Facility): Graph {
       volumeL,
       drainIds: ofKind("drain"),
       gaugeIds: ofKind("gauge"),
-      psvIds: ofKind("psv"),
+      psvIds: [...ofKind("psv"), ...reliefSet],
     });
   });
 

@@ -28,7 +28,8 @@ export type NodeMark =
   | "drain" // 抜取に使うドレン
   | "gauge" // 圧力計取付推奨
   | "vent" // 開けば液封を回避できる弁
-  | "selected"; // 選択中（対象機器）
+  | "selected" // 選択中（対象機器）
+  | "manual"; // 制御室で手動変更した弁
 
 const MARK_STYLE: Record<NodeMark, { color: string; blink?: boolean; fill?: string; width?: number }> = {
   pending: { color: "#f59e0b", blink: true, width: 3 },
@@ -41,6 +42,7 @@ const MARK_STYLE: Record<NodeMark, { color: string; blink?: boolean; fill?: stri
   gauge: { color: "#a855f7", width: 2.5 },
   vent: { color: "#f59e0b", width: 2 },
   selected: { color: "#06b6d4", fill: "rgba(6,182,212,0.25)", width: 3 },
+  manual: { color: "#7c3aed", fill: "rgba(124,58,237,0.15)", width: 2.5 },
 };
 
 const CSS = `
@@ -236,7 +238,7 @@ export default function PipingDiagram({
           <g>
             <rect x={n.x - 7} y={n.y - 9} width={14} height={18} className="fill-amber-100 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.5} />
             <path d={`M${n.x - 4},${n.y - 5} l8,3 l-8,3 l8,3`} stroke="#b45309" fill="none" strokeWidth={1} />
-            {showLabels && (
+            {showLabels && !n.dirFrom && (
               <text x={n.x + 10} y={n.y + 3} fontSize={8} fill="#b45309" fontWeight={600}>
                 {n.label}
               </text>
