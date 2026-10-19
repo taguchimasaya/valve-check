@@ -14,12 +14,14 @@ import {
   isOperateCell,
   newId,
   ROLE_LABEL,
+  stateAtStep,
   stateGlyph,
   type PlanRow,
   type RowRole,
   type SavedPlan,
 } from "@/lib/piping/checklist";
 import type { Graph } from "@/lib/piping/graph";
+import { stepFlow } from "@/lib/piping/flow";
 import type { ValveState } from "@/lib/piping/types";
 import { actionText, execView } from "@/lib/piping/execution";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
@@ -776,15 +778,47 @@ function PlanPreview({
   deleteLabel: string;
 }) {
   const diagramRef = useRef<DiagramHandle>(null);
+  // 表示する工程（点検中なら現在の工程から）
+  const [step, setStep] = useState(exec && exec.status === "in_progress" ? exec.currentStep : 0);
+
+  // その工程を終えた時点の弁状態と、その工程での燃料の流れ
+  const valveState = stateAtStep(base, plan.rows, step);
+  const flow = stepFlow(graph, plan, step, valveState);
   const layers: PipeLayer[] = [
-    { key: "region", pipeIds: plan.regionPipeIds, color: "#ef4444", opacity: 0.45 },
-    { key: "seal", pipeIds: plan.sealPipeIds, color: "#f59e0b", opacity: 0.35 },
-    { key: "fill", pipeIds: plan.fillPipeIds ?? [], color: "#0d9488", opacity: 0.55 },
+    { key: "region", pipeIds: plan.regionPipeIds, color: "#ef4444", opacity: flow ? 0.2 : 0.4 },
+    { key: "seal", pipeIds: plan.sealPipeIds, color: "#f59e0b", opacity: 0.3 },
   ];
-  const view = exec ? execView(plan, exec, base) : null;
-  const marks: Record<string, NodeMark> = view
-    ? view.marks
-    : Object.fromEntries(plan.rows.filter((r) => r.nodeId).map((r) => [r.nodeId!, ROLE_MARK[r.role]]));
+  if (flow) {
+    layers.push({
+      key: `flow-${step}`,
+      pipeIds: [...flow.directions.keys()],
+      directions: flow.directions,
+      color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+      width: 6,
+      flow: true,
+    });
+  }
+
+  // その工程で操作する弁：開操作＝緑、閉操作＝赤、状態が変わらない確認＝水色
+  const opened: PlanRow[] = [];
+  const closed: PlanRow[] = [];
+  const confirmed: PlanRow[] = [];
+  plan.rows.forEach((r) => {
+    if (!r.states[step] || step === 0) return;
+    if (!isOperateCell(r, step)) confirmed.push(r);
+    else if (r.states[step] === "open") opened.push(r);
+    else closed.push(r);
+  });
+  const marks: Record<string, NodeMark> =
+    step === 0
+      ? Object.fromEntries(plan.rows.filter((r) => r.nodeId).map((r) => [r.nodeId!, ROLE_MARK[r.role]]))
+      : Object.fromEntries([
+          ...confirmed.filter((r) => r.nodeId).map((r) => [r.nodeId!, "selected" as NodeMark]),
+          ...opened.filter((r) => r.nodeId).map((r) => [r.nodeId!, "internal" as NodeMark]),
+          ...closed.filter((r) => r.nodeId).map((r) => [r.nodeId!, "boundary" as NodeMark]),
+        ]);
+  const codes = (rows: PlanRow[]) => rows.map((r) => r.code + (r.note ? "※" : "")).join("、");
+  const label = (id: string) => graph.nodeById.get(id)?.label || "移送系統（移送ポンプ吐出）";
   const done = exec ? Object.values(exec.records).filter((r) => r.result === "OK").length : 0;
   const total = plan.rows.reduce((a, r) => a + r.states.filter((s, i) => s && i > 0).length, 0);
 
@@ -822,7 +856,93 @@ function PlanPreview({
               ))}
             </ul>
           )}
-          <PipingDiagram ref={diagramRef} graph={graph} valveState={view?.valveState ?? base} layers={layers} marks={marks} height="42vh" />
+          {/* 工程の切り替え */}
+          <div className="flex flex-wrap items-center gap-1">
+            <button
+              onClick={() => setStep(Math.max(0, step - 1))}
+              disabled={step === 0}
+              className="rounded-lg border border-zinc-300 px-2 py-1.5 text-sm disabled:opacity-30 dark:border-zinc-700"
+              aria-label="前の工程"
+            >
+              ◀
+            </button>
+            {plan.steps.map((st, i) => (
+              <button
+                key={st}
+                onClick={() => setStep(i)}
+                className={`flex-1 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${
+                  i === step
+                    ? "bg-zinc-800 font-semibold text-white dark:bg-zinc-200 dark:text-zinc-900"
+                    : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300"
+                }`}
+              >
+                {i === 0 ? st : `${i}. ${st}`}
+                {exec?.status === "in_progress" && i === exec.currentStep && <span className="ml-1 text-amber-500">●</span>}
+              </button>
+            ))}
+            <button
+              onClick={() => setStep(Math.min(plan.steps.length - 1, step + 1))}
+              disabled={step === plan.steps.length - 1}
+              className="rounded-lg border border-zinc-300 px-2 py-1.5 text-sm disabled:opacity-30 dark:border-zinc-700"
+              aria-label="次の工程"
+            >
+              ▶
+            </button>
+          </div>
+
+          {/* その工程の内容（状態遷移と流れ） */}
+          <div className="grid gap-2 rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800 sm:grid-cols-2">
+            {step === 0 ? (
+              <p className="text-zinc-600 dark:text-zinc-400 sm:col-span-2">
+                作業前の状態です。図面の弁は作業前の開閉（緑＝開、赤＝閉）、リングはチェックリストの対象弁（区分別）を表します。
+              </p>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  <p>
+                    <span className="mr-1 inline-block rounded bg-red-500 px-1.5 text-white">閉操作</span>
+                    {codes(closed) || "なし"}
+                  </p>
+                  <p>
+                    <span className="mr-1 inline-block rounded bg-emerald-500 px-1.5 text-white">開操作</span>
+                    {codes(opened) || "なし"}
+                  </p>
+                  <p>
+                    <span className="mr-1 inline-block rounded bg-cyan-500 px-1.5 text-white">確認</span>
+                    {codes(confirmed) || "なし"}
+                  </p>
+                </div>
+                <div className="text-zinc-600 dark:text-zinc-400">
+                  {flow?.kind === "drain" && (
+                    <p>
+                      <span className="mr-1 inline-block rounded bg-sky-600 px-1.5 text-white">流れ</span>
+                      範囲内の燃料を {flow.origins.map(label).join("・")} へ抜き取ります（矢印＝流れ方向）。
+                    </p>
+                  )}
+                  {flow?.kind === "fill" && (
+                    <p>
+                      <span className="mr-1 inline-block rounded bg-teal-600 px-1.5 text-white">流れ</span>
+                      {flow.origins.map(label).join("・")} から範囲内へ充填します（矢印＝流れ方向）。
+                    </p>
+                  )}
+                  {!flow && <p>この工程では燃料の移動はありません（弁の開閉のみ）。</p>}
+                  {[...closed, ...opened].some((r) => r.note) && <p className="mt-1 text-amber-700">※ {[...closed, ...opened].find((r) => r.note)?.note}</p>}
+                </div>
+              </>
+            )}
+          </div>
+
+          <PipingDiagram ref={diagramRef} graph={graph} valveState={valveState} layers={layers} marks={marks} height="42vh" />
+          <DiagramLegend
+            items={[
+              { color: "#22c55e", label: "開操作", kind: "ring" },
+              { color: "#dc2626", label: "閉操作", kind: "ring" },
+              { color: "#06b6d4", label: "確認（状態変化なし）", kind: "ring" },
+              { color: "#0284c7", label: "抜取の流れ" },
+              { color: "#0d9488", label: "充填の流れ" },
+              { color: "#ef4444", label: "点検範囲" },
+            ]}
+          />
           <div className="overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-xs">
               <thead className="bg-zinc-50 text-zinc-500 dark:bg-zinc-900">
@@ -832,11 +952,13 @@ function PlanPreview({
                   {plan.steps.map((st, i) => (
                     <th
                       key={st}
-                      className={`px-2 text-center font-medium ${
-                        exec?.status === "in_progress" && i === exec.currentStep ? "bg-amber-100 text-zinc-900 dark:bg-amber-900 dark:text-white" : ""
+                      onClick={() => setStep(i)}
+                      className={`cursor-pointer px-2 text-center font-medium ${
+                        i === step ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
                       }`}
                     >
                       {st}
+                      {exec?.status === "in_progress" && i === exec.currentStep && <span className="ml-0.5 text-amber-500">●</span>}
                     </th>
                   ))}
                 </tr>
@@ -858,7 +980,7 @@ function PlanPreview({
                     {r.states.map((st, i) => {
                       const rec = exec?.records[recordKey(i, r.code)];
                       return (
-                        <td key={i} className="px-2 text-center">
+                        <td key={i} className={`px-2 text-center ${i === step ? "bg-zinc-100 dark:bg-zinc-900" : ""}`}>
                           <span
                             className={`inline-block min-w-6 rounded px-1 ${
                               !st

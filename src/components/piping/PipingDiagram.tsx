@@ -26,7 +26,26 @@ export type PipeLayer = {
   /** 流れ方向の破線アニメーション（運用ライン） */
   flow?: boolean;
   opacity?: number;
+  /** 配管ID → 流れの上流側ノードID（指定した配管は流れの向きに描き、矢印を付ける） */
+  directions?: Map<string, string>;
 };
+
+/** 折れ線の長さ方向の中点と、その位置の向き（度） */
+function midArrow(points: [number, number][]) {
+  const lens = points.slice(1).map((q, i) => Math.hypot(q[0] - points[i][0], q[1] - points[i][1]));
+  const total = lens.reduce((a, b) => a + b, 0);
+  if (total < 30) return null; // 短い枝管には矢印を付けない（見づらくなるため）
+  let half = total / 2;
+  for (let i = 0; i < lens.length; i++) {
+    if (half <= lens[i] || i === lens.length - 1) {
+      const [a, b] = [points[i], points[i + 1]];
+      const t = lens[i] ? Math.min(1, half / lens[i]) : 0;
+      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, deg: (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI };
+    }
+    half -= lens[i];
+  }
+  return null;
+}
 
 export type NodeMark =
   | "pending" // 操作待ち（点滅）
@@ -588,20 +607,34 @@ export default function PipingDiagram({
           {layers.map((l) => (
             <g key={l.key} className={l.blink ? "piping-blink" : undefined} opacity={l.opacity ?? 1}>
               {[...l.pipeIds].map((pid) => {
-                const geo = pipeGeom.get(pid);
-                if (!geo) return null;
+                const raw = pipeGeom.get(pid);
+                if (!raw) return null;
                 const p = graph.pipeById.get(pid)!;
+                // 流れの向きが指定されていれば、上流側の端から描く（流れアニメーション・矢印の向きになる）
+                const from = l.directions?.get(pid);
+                const geo = from && from === p.b ? [...raw].reverse() : raw;
+                const arrow = from ? midArrow(geo) : null;
                 return (
-                  <polyline
-                    key={pid}
-                    points={pts(geo)}
-                    fill="none"
-                    stroke={l.color}
-                    strokeWidth={l.width ?? pipeWidth(p.sizeA) + 5}
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                    className={l.flow ? "piping-flow" : undefined}
-                  />
+                  <g key={pid}>
+                    <polyline
+                      points={pts(geo)}
+                      fill="none"
+                      stroke={l.color}
+                      strokeWidth={l.width ?? pipeWidth(p.sizeA) + 5}
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                      className={l.flow ? "piping-flow" : undefined}
+                    />
+                    {arrow && (
+                      <polygon
+                        points="-7,-6 7,0 -7,6"
+                        transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.deg})`}
+                        fill={l.color}
+                        stroke="white"
+                        strokeWidth={1}
+                      />
+                    )}
+                  </g>
                 );
               })}
             </g>
