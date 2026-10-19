@@ -592,7 +592,9 @@ export default function FieldPage() {
                     <span
                       className={`ml-2 rounded px-1.5 text-xs ${
                         !isOperateCell(r, step)
-                          ? "border border-amber-400 text-amber-700 dark:text-amber-400"
+                          ? r.states[step] === "close"
+                            ? "border border-red-400 font-semibold text-red-600 dark:text-red-400"
+                            : "border border-blue-400 font-semibold text-blue-600 dark:text-blue-400"
                           : r.states[step] === "close"
                             ? "bg-red-500 text-white"
                             : "bg-blue-600 text-white"
