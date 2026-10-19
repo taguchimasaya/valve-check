@@ -145,9 +145,13 @@ export default function InspectScannerPage() {
   // 同一QRの連続検出防止：処理中〜一定時間は再スキャンを無視する
   const scanLockRef = useRef(false);
 
-  // グリッドのマスをタップしたときの確認ポップアップ
+  // バルブの開閉確認ポップアップ（グリッドのタップ・QRスキャンの両方から開く）
   const [tapConfirm, setTapConfirm] = useState<{ row: ValveRow; step: StepInfo } | null>(null);
   const [tapSaving, setTapSaving] = useState(false);
+  // 開閉の選び間違い（開操作が必要なバルブで「閉操作」を選んだ等）の表示
+  const [tapChoiceError, setTapChoiceError] = useState<string | null>(null);
+  // ポップアップ表示中は次のQRを読まないよう、QRコールバックから参照する
+  const tapConfirmRef = useRef<{ row: ValveRow; step: StepInfo } | null>(null);
   const [startingNextStep, setStartingNextStep] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [sessionProgress, setSessionProgress] = useState<
@@ -227,6 +231,10 @@ export default function InspectScannerPage() {
   useEffect(() => {
     checklistRef.current = checklist;
   }, [checklist]);
+
+  useEffect(() => {
+    tapConfirmRef.current = tapConfirm;
+  }, [tapConfirm]);
 
   // 最後の工程完了を定期的に検出してセッション終了
   useEffect(() => {
@@ -470,6 +478,8 @@ export default function InspectScannerPage() {
     // 　1回目の記録処理が完了する前に2回目の検出が発生し、
     // 　「既に記録済み」判定になってビープ音が鳴らないケースがあった）
     if (scanLockRef.current) return;
+    // 開閉確認ポップアップの表示中は読み取らない
+    if (tapConfirmRef.current) return;
 
     // 常に最新の state を参照するため、ref から取得
     const currentSession = selectedSessionRef.current;
@@ -545,16 +555,25 @@ export default function InspectScannerPage() {
       return;
     }
 
-    // QRスキャン時は常に現在工程を記録する（結果音のみ、読み上げ音声はなし）
-    // 記録処理中〜完了後しばらくは同一QRの再検出をロックし、ビープ音の再生を妨げないようにする
+    // QRスキャン後も、開閉確認ポップアップで「閉操作／開操作」を選んでから記録する
+    // （選んだ操作が現在工程の目標と違えばエラーにして記録しない）
+    openConfirm(row, currentStep);
+  }
+
+  function openConfirm(row: ValveRow, step: StepInfo) {
+    setTapChoiceError(null);
+    tapConfirmRef.current = { row, step };
+    setTapConfirm({ row, step });
+  }
+
+  function closeConfirm() {
+    tapConfirmRef.current = null;
+    setTapConfirm(null);
+    // 閉じた直後に同じQRを再検出して、すぐ再表示されないよう短時間ロック
     scanLockRef.current = true;
-    try {
-      await completeStep(row, currentStep);
-    } finally {
-      setTimeout(() => {
-        scanLockRef.current = false;
-      }, 1500);
-    }
+    setTimeout(() => {
+      scanLockRef.current = false;
+    }, 1500);
   }
 
   // タップ確認ポップアップ、またはQR/手入力の記録先から呼ばれる、実際の記録処理。
@@ -650,16 +669,27 @@ export default function InspectScannerPage() {
       showFlash({ type: "info", text: `${row.code}（${row.name}）は既に操作済みです。` });
       return;
     }
-    setTapConfirm({ row, step: currentStep });
+    openConfirm(row, currentStep);
   }
 
-  async function confirmTap() {
+  // ポップアップで選んだ開閉が、現在工程の目標（◯＝開／☓＝閉）と一致するときだけ記録する
+  async function confirmTap(choice: TargetState) {
     if (!tapConfirm) return;
+    const target = tapConfirm.row.cells[tapConfirm.step.id]?.target;
+    if (target && choice !== target) {
+      void playResultBeep("NG");
+      setTapChoiceError(
+        `${tapConfirm.row.code} は${target === "close" ? "閉" : "開"}操作の対象です。${
+          choice === "close" ? "閉" : "開"
+        }操作は選択できません。`
+      );
+      return;
+    }
     setTapSaving(true);
     // 結果音（ピッ/ブブー）のみ。読み上げ音声はなし
     await completeStep(tapConfirm.row, tapConfirm.step);
     setTapSaving(false);
-    setTapConfirm(null);
+    closeConfirm();
   }
 
   // 現在工程のインデックスを取得
@@ -1513,7 +1543,7 @@ export default function InspectScannerPage() {
       {tapConfirm && (
         <div
           className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !tapSaving && setTapConfirm(null)}
+          onClick={() => !tapSaving && closeConfirm()}
         >
           <div
             className="w-full max-w-xs rounded-xl bg-white p-6 text-center dark:bg-zinc-900"
@@ -1524,41 +1554,35 @@ export default function InspectScannerPage() {
               {tapConfirm.row.code}
             </p>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">{tapConfirm.row.name}</p>
-            <p className="mt-3 text-lg font-semibold">
-              {(() => {
-                const target = tapConfirm.row.cells[tapConfirm.step.id]?.target;
-                const action = classifyAction(
-                  requiredSequence(tapConfirm.row),
-                  tapConfirm.step.id
-                );
-                const isClose = target === "close";
-                const verb = action?.endsWith("confirm") ? "確認" : "操作";
-                const label = `${isClose ? "閉" : "開"}${verb}（${isClose ? "☓" : "◯"}）`;
-                return (
-                  <span className={isClose ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                    {label}
-                  </span>
-                );
-              })()}
+            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
+              {tapSaving ? "記録中..." : "操作した内容を選択してください。"}
             </p>
-            <div className="mt-5 flex gap-2">
+            {tapChoiceError && (
+              <p className="mt-2 rounded-lg bg-red-600 px-3 py-2 text-left text-sm font-semibold text-white">
+                {tapChoiceError}
+              </p>
+            )}
+            <div className="mt-4 grid grid-cols-3 gap-2">
               <button
-                onClick={() => setTapConfirm(null)}
+                onClick={closeConfirm}
                 disabled={tapSaving}
-                className="flex-1 rounded-lg border border-zinc-300 py-2.5 text-sm font-medium text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
+                className="rounded-lg border border-zinc-300 py-3 text-sm font-medium text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
               >
                 キャンセル
               </button>
               <button
-                onClick={confirmTap}
+                onClick={() => confirmTap("close")}
                 disabled={tapSaving}
-                className={`flex-1 rounded-lg border-2 py-2.5 text-sm font-semibold disabled:opacity-50 ${
-                  tapConfirm.row.cells[tapConfirm.step.id]?.target === "close"
-                    ? "border-red-600 bg-red-600 text-white dark:border-red-500 dark:bg-red-500"
-                    : "border-emerald-600 bg-emerald-600 text-white dark:border-emerald-500 dark:bg-emerald-500"
-                }`}
+                className="rounded-lg bg-red-600 py-3 text-sm font-bold text-white disabled:opacity-50 dark:bg-red-500"
               >
-                {tapSaving ? "記録中..." : "記録する"}
+                閉操作
+              </button>
+              <button
+                onClick={() => confirmTap("open")}
+                disabled={tapSaving}
+                className="rounded-lg bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-50 dark:bg-emerald-500"
+              >
+                開操作
               </button>
             </div>
           </div>

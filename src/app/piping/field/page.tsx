@@ -49,6 +49,10 @@ export default function FieldPage() {
       setTimeout(() => diagramRef.current?.focusNode(nodeId), 50);
     } else diagramRef.current?.focusNode(nodeId);
   }
+  const pendingRef = useRef<PlanRow | null>(null);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
   // 開閉の選び間違い（開操作対象で閉操作を選んだ等）の表示
   const [choiceError, setChoiceError] = useState<string | null>(null);
   const [importInfo, setImportInfo] = useState<string[] | null>(null);
@@ -133,8 +137,8 @@ export default function FieldPage() {
       if (!fromScan) openDialog(row);
       return;
     }
-    if (fromScan) record(row, "OK");
-    else openDialog(row);
+    // QR読取でもタップでも、開閉を選ぶダイアログで確認してから記録する（結果音は選択後）
+    openDialog(row);
   }
   // QRコールバックから常に最新の handleCode を呼ぶ（stale closure 対策）
   const handleCodeRef = useRef(handleCode);
@@ -159,6 +163,8 @@ export default function FieldPage() {
         { fps: 10, qrbox: { width: 220, height: 220 } },
         (text) => {
           const code = text.trim();
+          // 開閉の確認ダイアログを表示している間は、次のQRを読まない
+          if (pendingRef.current) return;
           const last = lastScanRef.current;
           if (last && last.code === code && Date.now() - last.at < 2500) return;
           lastScanRef.current = { code, at: Date.now() };
@@ -813,6 +819,23 @@ function PlanPreview({
   // 表示する工程（点検中なら現在の工程から）
   const [step, setStep] = useState(exec && exec.status === "in_progress" ? exec.currentStep : 0);
 
+  // 作業エリア（抜取範囲と、表示中の工程で操作する弁。作業前はラインナップの対象弁）に合わせて拡大する。
+  // 工程を切り替えるたびに合わせ直す（充填では充填元弁まで、ラインナップでは範囲付近だけ）
+  const areaIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    areaIdsRef.current = [
+      ...plan.regionNodeIds,
+      ...plan.rows
+        .filter((r) => r.states[step === 0 ? Math.min(1, plan.steps.length - 1) : step])
+        .map((r) => r.nodeId)
+        .filter((id): id is string => !!id),
+    ];
+  });
+  useEffect(() => {
+    const t = setTimeout(() => diagramRef.current?.fitNodes(areaIdsRef.current), 80);
+    return () => clearTimeout(t);
+  }, [plan.id, step]);
+
   // その工程を終えた時点の弁状態と、その工程での燃料の流れ
   const valveState = stateAtStep(base, plan.rows, step);
   const flow = stepFlow(graph, plan, step, valveState);
@@ -964,7 +987,22 @@ function PlanPreview({
             )}
           </div>
 
-          <PipingDiagram ref={diagramRef} graph={graph} valveState={valveState} layers={layers} marks={marks} height="42vh" />
+          <PipingDiagram
+            ref={diagramRef}
+            graph={graph}
+            valveState={valveState}
+            layers={layers}
+            marks={marks}
+            height="42vh"
+            toolbar={
+              <button
+                onClick={() => diagramRef.current?.fitNodes(areaIdsRef.current)}
+                className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+              >
+                作業エリアを表示
+              </button>
+            }
+          />
           <DiagramLegend
             items={[
               { color: "#22c55e", label: "開操作", kind: "ring" },
