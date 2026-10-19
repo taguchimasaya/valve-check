@@ -48,6 +48,10 @@ export type PNode = {
   drainPumpLpm?: number;
   /** ポンプ・逆止弁の上流側ノードID（流れの向き） */
   dirFrom?: string;
+  /** 回収タンク（安全弁の逃がし先。貯蔵タンクではない） */
+  recovery?: boolean;
+  /** 図面でラベルを省略する（タンク弁の逃し弁など、数が多いもの） */
+  compact?: boolean;
   /** タンク容量（kL） */
   capacityKL?: number;
   /** 安全弁の設定圧力（MPa） */

@@ -240,7 +240,7 @@ export default function PipingDiagram({
           <g>
             <rect x={n.x - 7} y={n.y - 9} width={14} height={18} className="fill-amber-100 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.5} />
             <path d={`M${n.x - 4},${n.y - 5} l8,3 l-8,3 l8,3`} stroke="#b45309" fill="none" strokeWidth={1} />
-            {showLabels && !n.dirFrom && (
+            {showLabels && !n.compact && (
               <text x={n.x + 10} y={n.y + 3} fontSize={8} fill="#b45309" fontWeight={600}>
                 {n.label}
               </text>
@@ -283,6 +283,19 @@ export default function PipingDiagram({
           </g>
         );
       case "tank":
+        if (n.recovery) {
+          return (
+            <g>
+              <rect x={n.x - 28} y={n.y - 18} width={56} height={36} rx={5} className="fill-amber-50 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.6} />
+              <text x={n.x} y={n.y - 1} textAnchor="middle" fontSize={9} fontWeight={700} fill="#b45309">
+                {n.label}
+              </text>
+              <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
+                回収タンク
+              </text>
+            </g>
+          );
+        }
         return (
           <g>
             <rect x={n.x - 55} y={n.y - 45} width={110} height={90} rx={8} className="fill-sky-50 dark:fill-sky-950" stroke="#0369a1" strokeWidth={2} />
@@ -395,7 +408,7 @@ export default function PipingDiagram({
             const n = graph.nodeById.get(id);
             if (!n) return null;
             const s = MARK_STYLE[mark];
-            const r = n.kind === "tank" ? 62 : n.kind === "filter" ? 25 : n.kind.includes("ump") ? 20 : 14;
+            const r = n.kind === "tank" ? (n.recovery ? 34 : 62) : n.kind === "filter" ? 25 : n.kind.includes("ump") ? 20 : 14;
             return (
               <circle
                 key={`mark-${id}`}
@@ -420,7 +433,7 @@ export default function PipingDiagram({
                 onClick={isClickable ? () => onNodeClick!(n.id) : undefined}
                 style={isClickable ? { cursor: "pointer" } : undefined}
               >
-                {isClickable && <circle cx={n.x} cy={n.y} r={n.kind === "tank" ? 50 : 14} fill="transparent" />}
+                {isClickable && <circle cx={n.x} cy={n.y} r={n.kind === "tank" && !n.recovery ? 50 : 14} fill="transparent" />}
                 {renderNode(n)}
                 <title>
                   {n.name}
