@@ -44,9 +44,9 @@ export default function PipingHome() {
           ← ホームに戻る
         </Link>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（ローカル試作）</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（試作）</h1>
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-            既存データ（Supabase）には接続しません
+            既存の機器マスター・チェックリストとは別に保存します
           </span>
         </div>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">

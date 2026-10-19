@@ -363,7 +363,7 @@ export default function ControlPage() {
             />
             {clickMode === "operate" && (
               <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-950 dark:text-violet-200">
-                弁操作モード：図面のバルブ・ドレン弁・圧力計元弁をクリックすると、開閉状態を変更できます（ローカル試作のため実機は動きません）。
+                弁操作モード：図面のバルブ・ドレン弁・圧力計元弁をクリックすると、開閉状態を変更できます（図面上の状態のみ変更します。実機の弁は動きません）。
               </p>
             )}
             <DiagramLegend

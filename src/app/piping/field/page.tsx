@@ -265,7 +265,7 @@ export default function FieldPage() {
 
     async function deletePlan(p: SavedPlan) {
       const n = executions.filter((e) => e.planId === p.id).length;
-      const msg = `チェックリスト「${p.name}」を削除しますか？${n ? `\nこのチェックリストの点検記録（${n}件）も削除されます。` : ""}\n（ローカルデータのみ・元に戻せません）`;
+      const msg = `チェックリスト「${p.name}」を削除しますか？${n ? `\nこのチェックリストの点検記録（${n}件）も削除されます。` : ""}\n（元に戻せません）`;
       if (!confirm(msg)) return;
       await act({ action: "deletePlan", id: p.id });
       setPreview(null);

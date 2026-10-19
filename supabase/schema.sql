@@ -162,3 +162,17 @@ create policy "demo: allow all on inspection_sessions" on inspection_sessions fo
 create policy "demo: allow all on inspection_results" on inspection_results for all using (true) with check (true);
 create policy "demo: allow all on step_notifications" on step_notifications for all using (true) with check (true);
 create policy "demo: allow all on step_start_notifications" on step_start_notifications for all using (true) with check (true);
+
+-- --- 配管系統図機能 ---
+-- 抜取チェックリスト作成・図面での現場点検・制御室の保存先（1行のJSON）。
+-- 単独で実行する場合は supabase/piping_store.sql を使用してください。
+create table if not exists piping_store (
+  id text primary key,
+  data jsonb not null default '{}'::jsonb,
+  version integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+insert into piping_store (id) values ('main') on conflict (id) do nothing;
+grant select, insert, update on piping_store to anon, authenticated;
+alter table piping_store enable row level security;
+create policy "demo: allow all on piping_store" on piping_store for all using (true) with check (true);

@@ -1,6 +1,6 @@
 import type { AreaBox, Facility, NodeKind, PNode, Pipe, ValveState } from "./types";
 
-// 仮想空港給油施設（ローカル試作用）の配管系統。
+// 仮想空港給油施設（試作用）の配管系統。
 //
 //  受入系統A ─┐                    ┌─ 第1ヤード（T-101〜106）─┐            ┌─ 払出ポンプ系統1 → ハイドラント1
 //             ├ 受入連絡管 ─ 移送ポンプ ─ 移送吸込管 ┤  払出連絡管 ┤
@@ -476,7 +476,7 @@ export function buildFacility(): Facility {
   areas.push({ x: 1170, y: 660, w: 560, h: 180, label: "移送ポンプ設備" });
 
   return {
-    name: "仮想空港 給油施設（ローカル試作）",
+    name: "仮想空港 給油施設（試作）",
     width: W,
     height: H,
     metersPerPx: 0.15,

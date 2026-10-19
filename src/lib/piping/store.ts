@@ -2,9 +2,9 @@ import type { SavedPlan } from "./checklist";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 
-// ローカル試作用の共有ストア（next dev を動かしているPCの .local-data/ に保存）。
-// 現場（iPad）と制御室（PC）が同じ dev サーバーを見ることで状態を共有する。
-// 既存システムの Supabase には一切書き込まない。
+// 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
+// 保存先は API（/api/piping）側で切り替わる：本番は Supabase の piping_store テーブル、
+// ローカル開発では .local-data/ のファイル。既存システムのテーブルには書き込まない。
 
 export type ValveRecord = {
   result: "OK" | "NG";
@@ -65,7 +65,7 @@ export const recordKey = (step: number, code: string) => `${step}:${code}`;
 
 export async function fetchStore(): Promise<PipingStore> {
   const res = await fetch("/api/piping", { cache: "no-store" });
-  if (!res.ok) throw new Error("ローカルストアを読み込めませんでした");
+  if (!res.ok) throw new Error((await res.text()) || "配管系統図のデータを読み込めませんでした");
   return res.json();
 }
 

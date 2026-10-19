@@ -711,7 +711,7 @@ export default function PlannerPage() {
                       <span className="text-xs text-zinc-500">{p.summary.volumeL ? formatLiters(p.summary.volumeL) : ""}</span>
                       <button
                         onClick={() => {
-                          if (confirm(`「${p.name}」を削除しますか？（ローカルデータのみ）`)) act({ action: "deletePlan", id: p.id });
+                          if (confirm(`「${p.name}」を削除しますか？（元に戻せません）`)) act({ action: "deletePlan", id: p.id });
                         }}
                         className="text-xs text-red-600"
                       >
