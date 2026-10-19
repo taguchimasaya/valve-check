@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local dev output
 dev-server.log
+
+# piping diagram local store (ローカル試作)
+/.local-data/
