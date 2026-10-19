@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { pipePoints, type Graph } from "@/lib/piping/graph";
 import type { PNode, ValveState } from "@/lib/piping/types";
 
@@ -54,9 +64,18 @@ const CSS = `
 .piping-flow { stroke-dasharray: 14 10; animation: piping-flow 0.8s linear infinite; }
 .piping-hit { cursor: pointer; }
 .piping-hit:hover .piping-hover { stroke: #06b6d4; stroke-opacity: 0.5; }
+@keyframes piping-ping { 0% { transform: scale(0.5); opacity: 1 } 100% { transform: scale(1.8); opacity: 0 } }
+.piping-ping { transform-box: fill-box; transform-origin: center; animation: piping-ping 1.1s ease-out infinite; }
 `;
 
+/** 親画面から図面を操作するためのハンドル */
+export type DiagramHandle = {
+  /** 指定したノード（バルブ等）の位置まで拡大・移動し、しばらく位置マークを表示する */
+  focusNode: (id: string) => void;
+};
+
 type Props = {
+  ref?: Ref<DiagramHandle>;
   graph: Graph;
   valveState: Record<string, ValveState>;
   layers?: PipeLayer[];
@@ -86,6 +105,7 @@ function pts(points: [number, number][]) {
 }
 
 export default function PipingDiagram({
+  ref,
   graph,
   valveState,
   layers = [],
@@ -168,6 +188,37 @@ export default function PipingDiagram({
     const el = scrollRef.current;
     applyZoom(zoomRef.current * factor, el ? anchorAt(el.clientWidth / 2, el.clientHeight / 2) : null);
   }
+
+  // ───── 位置表示（チェックリストのタグから呼ばれる） ─────
+  const [locate, setLocate] = useState<{ id: string; key: number } | null>(null);
+  const locateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (locateTimer.current) clearTimeout(locateTimer.current);
+  }, []);
+
+  function focusNode(id: string) {
+    const n = graph.nodeById.get(id);
+    const el = scrollRef.current;
+    if (!n || !el) return;
+    el.parentElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const anchor = { fx: n.x / f.width, fy: n.y / f.height, mx: el.clientWidth / 2, my: el.clientHeight / 2 };
+    const z = Math.max(zoomRef.current, 2.5);
+    if (z === zoomRef.current) {
+      el.scrollTo({
+        left: anchor.fx * el.scrollWidth - anchor.mx,
+        top: anchor.fy * el.scrollHeight - anchor.my,
+        behavior: "smooth",
+      });
+    } else {
+      anchorRef.current = anchor;
+      zoomRef.current = z;
+      setZoom(z);
+    }
+    setLocate({ id, key: Date.now() });
+    if (locateTimer.current) clearTimeout(locateTimer.current);
+    locateTimer.current = setTimeout(() => setLocate(null), 5000);
+  }
+  useImperativeHandle(ref, () => ({ focusNode }));
 
   function resetZoom() {
     anchorRef.current = { fx: 0, fy: 0, mx: 0, my: 0 };
@@ -616,6 +667,28 @@ export default function PipingDiagram({
               </g>
             );
           })}
+
+          {/* 位置表示（タグから選んだバルブ） */}
+          {locate &&
+            (() => {
+              const n = graph.nodeById.get(locate.id);
+              if (!n) return null;
+              return (
+                <g key={`locate-${locate.key}`} pointerEvents="none">
+                  <circle cx={n.x} cy={n.y} r={26} fill="none" stroke="#0ea5e9" strokeWidth={4} className="piping-ping" />
+                  <circle cx={n.x} cy={n.y} r={20} fill="rgba(14,165,233,0.15)" stroke="#0284c7" strokeWidth={3} />
+                  <path
+                    d={`M${n.x - 34},${n.y} h10 M${n.x + 24},${n.y} h10 M${n.x},${n.y - 34} v10 M${n.x},${n.y + 24} v10`}
+                    stroke="#0284c7"
+                    strokeWidth={3}
+                  />
+                  <rect x={n.x - 34} y={n.y - 58} width={68} height={18} rx={4} fill="#0284c7" />
+                  <text x={n.x} y={n.y - 45} textAnchor="middle" fontSize={11} fontWeight={700} fill="white">
+                    {n.label}
+                  </text>
+                </g>
+              );
+            })()}
         </svg>
         )}
       </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend, type PipeLayer } from "@/components/piping/PipingDiagram";
+import PipingDiagram, { DiagramLegend, type DiagramHandle, type PipeLayer } from "@/components/piping/PipingDiagram";
 import { currentValveState } from "@/lib/piping/operations";
 import { importPlanFromExcel, isOperateCell, newId, stateGlyph, type PlanRow, type SavedPlan } from "@/lib/piping/checklist";
 import { actionText, execView } from "@/lib/piping/execution";
@@ -23,6 +23,16 @@ export default function FieldPage() {
   const [view, setView] = useState<"diagram" | "table">("diagram");
   const [flash, setFlash] = useState<Flash | null>(null);
   const [pending, setPending] = useState<PlanRow | null>(null);
+  const diagramRef = useRef<DiagramHandle>(null);
+  // チェックリストのタグ・表から、図面上の位置を表示する（表表示中なら図面に切り替える）
+  function locateOnDiagram(nodeId: string) {
+    if (view !== "diagram") {
+      setView("diagram");
+      setTimeout(() => diagramRef.current?.focusNode(nodeId), 50);
+    } else diagramRef.current?.focusNode(nodeId);
+  }
+  // 開閉の選び間違い（開操作対象で閉操作を選んだ等）の表示
+  const [choiceError, setChoiceError] = useState<string | null>(null);
   const [importInfo, setImportInfo] = useState<string[] | null>(null);
 
 
@@ -55,6 +65,26 @@ export default function FieldPage() {
     }
   }
 
+  function openDialog(row: PlanRow) {
+    setChoiceError(null);
+    setPending(row);
+  }
+
+  // ダイアログで選んだ開閉が、この工程の目標状態と一致するときだけ記録する
+  function choose(row: PlanRow, state: "open" | "close") {
+    if (!exec) return;
+    const target = row.states[exec.currentStep];
+    if (state !== target) {
+      playBeep("NG");
+      setChoiceError(
+        `${row.code} は${target === "close" ? "閉" : "開"}操作の対象です。${state === "close" ? "閉" : "開"}操作は選択できません。`
+      );
+      return;
+    }
+    record(row, "OK");
+    setPending(null);
+  }
+
   // QR読取・図面タップ共通：現在工程の対象かを判定する
   function handleCode(code: string, fromScan: boolean) {
     if (!exec || !plan || !v) return;
@@ -67,11 +97,11 @@ export default function FieldPage() {
     const rec = exec.records[recordKey(exec.currentStep, row.code)];
     if (rec?.result === "OK") {
       showFlash({ type: "info", text: `${row.code} は記録済みです` });
-      if (!fromScan) setPending(row);
+      if (!fromScan) openDialog(row);
       return;
     }
     if (fromScan) record(row, "OK");
-    else setPending(row);
+    else openDialog(row);
   }
   // QRコールバックから常に最新の handleCode を呼ぶ（stale closure 対策）
   const handleCodeRef = useRef(handleCode);
@@ -348,6 +378,7 @@ export default function FieldPage() {
           {view === "diagram" ? (
             <>
               <PipingDiagram
+                ref={diagramRef}
                 graph={g}
                 valveState={v.valveState}
                 layers={layers}
@@ -368,7 +399,7 @@ export default function FieldPage() {
               </div>
             </>
           ) : (
-            <StepTable plan={plan} exec={exec} onTap={(r) => handleCode(r.code, false)} />
+            <StepTable plan={plan} exec={exec} onTap={(r) => handleCode(r.code, false)} onLocate={locateOnDiagram} />
           )}
         </div>
 
@@ -378,10 +409,16 @@ export default function FieldPage() {
             {v.targets.map((r) => {
               const rec = exec.records[recordKey(step, r.code)];
               return (
-                <button
+                <div
                   key={r.code}
-                  onClick={() => handleCode(r.code, false)}
-                  className={`rounded-lg border px-3 py-2 text-left text-sm ${
+                  role="button"
+                  tabIndex={0}
+                  title="クリックで図面上の位置を表示"
+                  onClick={() => (r.nodeId ? locateOnDiagram(r.nodeId) : handleCode(r.code, false))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && r.nodeId) locateOnDiagram(r.nodeId);
+                  }}
+                  className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm ${
                     rec?.result === "OK"
                       ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950"
                       : rec?.result === "NG"
@@ -389,14 +426,26 @@ export default function FieldPage() {
                         : "border-amber-300 bg-white dark:border-amber-800 dark:bg-zinc-950"
                   }`}
                 >
-                  <span className="font-semibold">{rec?.result === "OK" ? "☑" : "☐"} {r.code}</span>
-                  <span className={`ml-2 rounded px-1.5 text-xs text-white ${r.states[step] === "close" ? "bg-red-500" : "bg-emerald-500"}`}>
-                    {actionText(r, step)}
-                  </span>
-                  <span className="block truncate text-xs text-zinc-500">{r.name}</span>
-                  {r.note && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
-                  {rec?.confirmedAt && <span className="text-[11px] text-blue-600">制御室確認済み</span>}
-                </button>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-semibold">{rec?.result === "OK" ? "☑" : "☐"} {r.code}</span>
+                    <span className={`ml-2 rounded px-1.5 text-xs text-white ${r.states[step] === "close" ? "bg-red-500" : "bg-emerald-500"}`}>
+                      {actionText(r, step)}
+                    </span>
+                    <span className="block truncate text-xs text-zinc-500">{r.name}</span>
+                    {r.note && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
+                    {rec?.confirmedAt && <span className="text-[11px] text-blue-600">制御室確認済み</span>}
+                    {r.nodeId && <span className="block text-[11px] text-sky-600">📍 タップで図面上の位置を表示</span>}
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCode(r.code, false);
+                    }}
+                    className="shrink-0 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    {rec?.result === "OK" ? "記録済" : "記録"}
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -430,38 +479,36 @@ export default function FieldPage() {
               </>
             ) : (
               <>
-                <p
-                  className={`mt-3 rounded-lg py-3 text-center text-xl font-bold text-white ${
-                    pending.states[step] === "close" ? "bg-red-500" : "bg-emerald-500"
-                  }`}
-                >
-                  {actionText(pending, step)}
-                </p>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <button onClick={() => setPending(null)} className="rounded-lg border border-zinc-300 py-2.5 text-sm">
+                <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">操作した内容を選択してください。</p>
+                {choiceError && (
+                  <p className="mt-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white">{choiceError}</p>
+                )}
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button onClick={() => setPending(null)} className="rounded-lg border border-zinc-300 py-3 text-sm">
                     キャンセル
                   </button>
                   <button
-                    onClick={() => {
-                      record(pending, "NG");
-                      setPending(null);
-                    }}
-                    className="rounded-lg bg-red-700 py-2.5 text-sm font-semibold text-white"
+                    onClick={() => choose(pending, "close")}
+                    className="rounded-lg bg-red-500 py-3 text-base font-bold text-white hover:bg-red-600"
                   >
-                    NG
+                    閉操作
                   </button>
                   <button
-                    onClick={() => {
-                      record(pending, "OK");
-                      setPending(null);
-                    }}
-                    className={`rounded-lg py-2.5 text-sm font-semibold text-white ${
-                      pending.states[step] === "close" ? "bg-red-500" : "bg-emerald-600"
-                    }`}
+                    onClick={() => choose(pending, "open")}
+                    className="rounded-lg bg-emerald-600 py-3 text-base font-bold text-white hover:bg-emerald-500"
                   >
-                    記録する
+                    開操作
                   </button>
                 </div>
+                <button
+                  onClick={() => {
+                    record(pending, "NG");
+                    setPending(null);
+                  }}
+                  className="mt-3 w-full text-center text-xs text-zinc-500 underline"
+                >
+                  バルブが操作できない等の異常を報告（NG）
+                </button>
               </>
             )}
           </div>
@@ -486,10 +533,12 @@ function StepTable({
   plan,
   exec,
   onTap,
+  onLocate,
 }: {
   plan: SavedPlan;
   exec: Execution;
   onTap: (r: PlanRow) => void;
+  onLocate: (nodeId: string) => void;
 }) {
   return (
     <div className="overflow-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -508,7 +557,13 @@ function StepTable({
           {plan.rows.map((r) => (
             <tr key={r.code} className="border-t border-zinc-100 dark:border-zinc-800">
               <td className="px-3 py-2">
-                <p className="font-medium">{r.code}</p>
+                {r.nodeId ? (
+                  <button onClick={() => onLocate(r.nodeId!)} className="text-left font-medium text-sky-700 hover:underline dark:text-sky-400" title="図面上の位置を表示">
+                    📍 {r.code}
+                  </button>
+                ) : (
+                  <p className="font-medium">{r.code}</p>
+                )}
                 <p className="text-xs text-zinc-500">{r.name}</p>
                 {r.note && <p className="text-xs text-amber-700">※{r.note}</p>}
               </td>

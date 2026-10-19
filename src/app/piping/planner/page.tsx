@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
+import PipingDiagram, { DiagramLegend, type DiagramHandle, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
 import { normalValveState, otherSide } from "@/lib/piping/graph";
 import {
   estimateDrain,
@@ -53,6 +53,7 @@ export default function PlannerPage() {
   const [previewStep, setPreviewStep] = useState(0);
   const [focusSeal, setFocusSeal] = useState<number | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const diagramRef = useRef<DiagramHandle>(null);
 
   const storeOps = store?.operations;
   const operations = useMemo(() => storeOps ?? [], [storeOps]);
@@ -280,6 +281,7 @@ export default function PlannerPage() {
         <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_440px]">
           <div className="min-w-0 space-y-3">
             <PipingDiagram
+              ref={diagramRef}
               graph={g}
               valveState={previewState}
               layers={layers}
@@ -636,7 +638,12 @@ export default function PlannerPage() {
                         {rows.map((r) => (
                           <tr key={r.code} className="border-t border-zinc-100 dark:border-zinc-800">
                             <td className="py-1" title={r.note ? `${r.name}（${r.note}）` : r.name}>
-                              {r.code}
+                              <button
+                                onClick={() => r.nodeId && diagramRef.current?.focusNode(r.nodeId)}
+                                className="text-sky-700 hover:underline dark:text-sky-400"
+                              >
+                                {r.code}
+                              </button>
                               {r.note && <span className="ml-0.5 text-amber-600">※</span>}
                             </td>
                             <td className="text-zinc-500">{ROLE_LABEL[r.role]}</td>
