@@ -45,3 +45,5 @@ dev-server.log
 
 # piping diagram local store (ローカル試作)
 /.local-data/
+
+certificates
