@@ -2,9 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend, type DiagramHandle, type PipeLayer } from "@/components/piping/PipingDiagram";
+import PipingDiagram, {
+  DiagramLegend,
+  type DiagramHandle,
+  type NodeMark,
+  type PipeLayer,
+} from "@/components/piping/PipingDiagram";
 import { currentValveState } from "@/lib/piping/operations";
-import { importPlanFromExcel, isOperateCell, newId, stateGlyph, type PlanRow, type SavedPlan } from "@/lib/piping/checklist";
+import {
+  importPlanFromExcel,
+  isOperateCell,
+  newId,
+  ROLE_LABEL,
+  stateGlyph,
+  type PlanRow,
+  type RowRole,
+  type SavedPlan,
+} from "@/lib/piping/checklist";
+import type { Graph } from "@/lib/piping/graph";
+import type { ValveState } from "@/lib/piping/types";
 import { actionText, execView } from "@/lib/piping/execution";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
 import { playBeep } from "@/lib/piping/sound";
@@ -34,6 +50,9 @@ export default function FieldPage() {
   // 開閉の選び間違い（開操作対象で閉操作を選んだ等）の表示
   const [choiceError, setChoiceError] = useState<string | null>(null);
   const [importInfo, setImportInfo] = useState<string[] | null>(null);
+  // 一覧画面：検索語、プレビュー表示中のチェックリスト（点検記録つきの場合は execId も）
+  const [search, setSearch] = useState("");
+  const [preview, setPreview] = useState<{ planId: string; execId?: string } | null>(null);
 
 
   const exec = store?.executions.find((e) => e.id === execId) ?? null;
@@ -176,7 +195,79 @@ export default function FieldPage() {
 
   // ───────────── 点検未選択：一覧 ─────────────
   if (!exec || !plan || !v) {
-    const running = (store?.executions ?? []).filter((e) => e.status === "in_progress");
+    const plans = store?.plans ?? [];
+    const executions = store?.executions ?? [];
+    const planById = new Map(plans.map((p) => [p.id, p]));
+    const q = normalize(search);
+    const planHit = (p: SavedPlan | undefined) =>
+      !!p &&
+      [p.name, p.purpose, ...p.rows.flatMap((r) => [r.code, r.name])].some((t) => normalize(t).includes(q));
+    const execHit = (e: Execution) => !q || normalize(e.planName).includes(q) || planHit(planById.get(e.planId));
+    const running = executions.filter((e) => e.status === "in_progress" && execHit(e));
+    const completed = executions.filter((e) => e.status === "completed" && execHit(e));
+    const shownPlans = plans.filter((p) => !q || planHit(p));
+
+    async function deletePlan(p: SavedPlan) {
+      const n = executions.filter((e) => e.planId === p.id).length;
+      const msg = `チェックリスト「${p.name}」を削除しますか？${n ? `\nこのチェックリストの点検記録（${n}件）も削除されます。` : ""}\n（ローカルデータのみ・元に戻せません）`;
+      if (!confirm(msg)) return;
+      await act({ action: "deletePlan", id: p.id });
+      setPreview(null);
+      showFlash({ type: "info", text: `「${p.name}」を削除しました` });
+    }
+    async function deleteExec(e: Execution) {
+      if (!confirm(`点検「${e.planName}」（開始：${new Date(e.startedAt).toLocaleString("ja-JP")}）の記録を削除しますか？\n（元に戻せません）`)) return;
+      await act({ action: "deleteExecution", execId: e.id });
+      setPreview(null);
+      showFlash({ type: "info", text: `点検「${e.planName}」の記録を削除しました` });
+    }
+
+    const previewPlan = preview ? planById.get(preview.planId) : undefined;
+    const previewExec = preview?.execId ? executions.find((e) => e.id === preview.execId) : undefined;
+
+    const execItem = (e: Execution, tone: "running" | "done") => {
+      const p = planById.get(e.planId);
+      return (
+        <li
+          key={e.id}
+          className={`rounded-lg border p-3 ${
+            tone === "running"
+              ? "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950"
+              : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
+          }`}
+        >
+          <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.planName}</p>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            {tone === "running" ? `現在工程：${p?.steps[e.currentStep] ?? "—"} ／ ` : "完了 ／ "}
+            開始：{new Date(e.startedAt).toLocaleString("ja-JP")}
+          </p>
+          <div className="mt-2 flex gap-2">
+            {tone === "running" && (
+              <button
+                onClick={() => selectExec(e.id)}
+                className="flex-1 rounded-lg bg-emerald-700 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                この点検を再開
+              </button>
+            )}
+            <button
+              onClick={() => setPreview({ planId: e.planId, execId: e.id })}
+              disabled={!p}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              プレビュー
+            </button>
+            <button
+              onClick={() => deleteExec(e)}
+              className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-zinc-900 dark:text-red-400"
+            >
+              削除
+            </button>
+          </div>
+        </li>
+      );
+    };
+
     return (
       <main className="min-h-screen bg-zinc-50 px-4 py-6 dark:bg-black">
         <div className="mx-auto max-w-3xl">
@@ -187,44 +278,43 @@ export default function FieldPage() {
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
           {flash && <FlashBar flash={flash} />}
 
+          <div className="mt-4 flex items-center gap-2">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="作業名・目的・バルブ番号で検索（例：FLT-RA2、V-101R、フィルター）"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            />
+            {search && (
+              <span className="whitespace-nowrap text-xs text-zinc-500">
+                {running.length + completed.length + shownPlans.length}件
+              </span>
+            )}
+          </div>
+
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【点検中の作業】</p>
             {running.length === 0 ? (
-              <p className="mt-2 text-sm text-zinc-500">点検中の作業はありません。</p>
+              <p className="mt-2 text-sm text-zinc-500">{q ? "該当する点検中の作業はありません。" : "点検中の作業はありません。"}</p>
             ) : (
-              <ul className="mt-2 space-y-2">
-                {running.map((e) => {
-                  const p = store!.plans.find((x) => x.id === e.planId);
-                  return (
-                    <li key={e.id} className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-700 dark:bg-emerald-950">
-                      <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.planName}</p>
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        現在工程：{p?.steps[e.currentStep] ?? "—"} ／ 開始：{new Date(e.startedAt).toLocaleString("ja-JP")}
-                      </p>
-                      <button
-                        onClick={() => selectExec(e.id)}
-                        className="mt-2 w-full rounded-lg bg-emerald-700 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
-                      >
-                        この点検を再開
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <ul className="mt-2 space-y-2">{running.map((e) => execItem(e, "running"))}</ul>
             )}
           </section>
 
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">新しい点検を開始</p>
-            {(store?.plans ?? []).length === 0 ? (
+            {plans.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">
                 チェックリストがありません。<Link href="/piping/planner" className="text-emerald-700 underline">①で作成</Link>
                 するか、既存形式のExcelを取り込んでください。
               </p>
+            ) : shownPlans.length === 0 ? (
+              <p className="mt-2 text-sm text-zinc-500">該当するチェックリストはありません。</p>
             ) : (
               <ul className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
-                {store!.plans.map((p) => (
-                  <li key={p.id} className="flex items-center gap-3 py-2">
+                {shownPlans.map((p) => (
+                  <li key={p.id} className="flex flex-wrap items-center gap-2 py-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.name}</p>
                       <p className="text-xs text-zinc-500">
@@ -233,10 +323,22 @@ export default function FieldPage() {
                       </p>
                     </div>
                     <button
+                      onClick={() => setPreview({ planId: p.id })}
+                      className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700"
+                    >
+                      プレビュー
+                    </button>
+                    <button
                       onClick={() => startPlan(p.id)}
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600"
                     >
                       開始
+                    </button>
+                    <button
+                      onClick={() => deletePlan(p)}
+                      className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
+                    >
+                      削除
                     </button>
                   </li>
                 ))}
@@ -263,7 +365,42 @@ export default function FieldPage() {
               </ul>
             )}
           </section>
+
+          {completed.length > 0 && (
+            <details className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950" open={!!q}>
+              <summary className="cursor-pointer text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                完了した点検（{completed.length}）
+              </summary>
+              <ul className="mt-2 space-y-2">{completed.map((e) => execItem(e, "done"))}</ul>
+            </details>
+          )}
         </div>
+
+        {previewPlan && (
+          <PlanPreview
+            graph={g}
+            plan={previewPlan}
+            exec={previewExec}
+            base={base}
+            onClose={() => setPreview(null)}
+            onStart={
+              previewExec
+                ? previewExec.status === "in_progress"
+                  ? () => {
+                      setPreview(null);
+                      selectExec(previewExec.id);
+                    }
+                  : undefined
+                : () => {
+                    setPreview(null);
+                    startPlan(previewPlan.id);
+                  }
+            }
+            startLabel={previewExec ? "この点検を再開" : "この内容で点検を開始"}
+            onDelete={() => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan))}
+            deleteLabel={previewExec ? "この点検記録を削除" : "チェックリストを削除"}
+          />
+        )}
       </main>
     );
   }
@@ -598,6 +735,173 @@ function StepTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// 全角・半角、大文字・小文字の違いを無視して検索する
+function normalize(t: string) {
+  return t.normalize("NFKC").toLowerCase();
+}
+
+const ROLE_MARK: Record<RowRole, NodeMark> = {
+  boundary: "boundary",
+  internal: "internal",
+  drain: "drain",
+  gauge: "gauge",
+  fill: "fill",
+  imported: "selected",
+};
+
+// チェックリスト（と点検記録）のプレビュー：図面で範囲と対象バルブ、表で工程ごとの開閉を確認する
+function PlanPreview({
+  graph,
+  plan,
+  exec,
+  base,
+  onClose,
+  onStart,
+  startLabel,
+  onDelete,
+  deleteLabel,
+}: {
+  graph: Graph;
+  plan: SavedPlan;
+  exec?: Execution;
+  base: Record<string, ValveState>;
+  onClose: () => void;
+  onStart?: () => void;
+  startLabel: string;
+  onDelete: () => void;
+  deleteLabel: string;
+}) {
+  const diagramRef = useRef<DiagramHandle>(null);
+  const layers: PipeLayer[] = [
+    { key: "region", pipeIds: plan.regionPipeIds, color: "#ef4444", opacity: 0.45 },
+    { key: "seal", pipeIds: plan.sealPipeIds, color: "#f59e0b", opacity: 0.35 },
+    { key: "fill", pipeIds: plan.fillPipeIds ?? [], color: "#0d9488", opacity: 0.55 },
+  ];
+  const view = exec ? execView(plan, exec, base) : null;
+  const marks: Record<string, NodeMark> = view
+    ? view.marks
+    : Object.fromEntries(plan.rows.filter((r) => r.nodeId).map((r) => [r.nodeId!, ROLE_MARK[r.role]]));
+  const done = exec ? Object.values(exec.records).filter((r) => r.result === "OK").length : 0;
+  const total = plan.rows.reduce((a, r) => a + r.states.filter((s, i) => s && i > 0).length, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[95vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white dark:bg-zinc-950"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 border-b border-zinc-200 px-5 py-3 dark:border-zinc-800">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-zinc-500">
+              {exec ? (exec.status === "completed" ? "完了した点検" : "点検中") : "チェックリスト"}のプレビュー
+            </p>
+            <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-50">{plan.name}</h2>
+            <p className="text-xs text-zinc-500">
+              {plan.source === "excel" ? "Excel取込" : plan.purpose} ・ {plan.steps.length}工程 ・ {plan.rows.length}弁
+              {plan.summary.volumeL ? ` ・ 抜取量 ${formatLiters(plan.summary.volumeL)}` : ""}
+              {plan.summary.drainMinutes ? ` ・ 抜取 ${formatMinutes(plan.summary.drainMinutes)}` : ""}
+              {plan.summary.fillMinutes ? ` ・ 充填 ${formatMinutes(plan.summary.fillMinutes)}` : ""}
+              {exec ? ` ・ 記録 ${done}/${total}` : ""}
+              {exec && exec.status === "in_progress" ? ` ・ 現在工程：${plan.steps[exec.currentStep]}` : ""}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg border border-zinc-300 px-3 py-1 text-sm dark:border-zinc-700" aria-label="閉じる">
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-3 overflow-auto p-4">
+          {plan.summary.warnings.length > 0 && (
+            <ul className="list-disc rounded-lg bg-amber-50 py-2 pl-8 pr-3 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              {plan.summary.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          )}
+          <PipingDiagram ref={diagramRef} graph={graph} valveState={view?.valveState ?? base} layers={layers} marks={marks} height="42vh" />
+          <div className="overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full text-xs">
+              <thead className="bg-zinc-50 text-zinc-500 dark:bg-zinc-900">
+                <tr>
+                  <th className="px-2 py-1.5 text-left font-medium">バルブ</th>
+                  <th className="px-2 text-left font-medium">区分</th>
+                  {plan.steps.map((st, i) => (
+                    <th
+                      key={st}
+                      className={`px-2 text-center font-medium ${
+                        exec?.status === "in_progress" && i === exec.currentStep ? "bg-amber-100 text-zinc-900 dark:bg-amber-900 dark:text-white" : ""
+                      }`}
+                    >
+                      {st}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {plan.rows.map((r) => (
+                  <tr key={r.code} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="px-2 py-1">
+                      {r.nodeId ? (
+                        <button onClick={() => diagramRef.current?.focusNode(r.nodeId!)} className="text-left text-sky-700 hover:underline dark:text-sky-400">
+                          📍 {r.code}
+                        </button>
+                      ) : (
+                        r.code
+                      )}
+                      <span className="block text-[11px] text-zinc-500">{r.name}</span>
+                    </td>
+                    <td className="px-2 text-zinc-500">{ROLE_LABEL[r.role]}</td>
+                    {r.states.map((st, i) => {
+                      const rec = exec?.records[recordKey(i, r.code)];
+                      return (
+                        <td key={i} className="px-2 text-center">
+                          <span
+                            className={`inline-block min-w-6 rounded px-1 ${
+                              !st
+                                ? "text-zinc-300 dark:text-zinc-700"
+                                : rec?.result === "NG"
+                                  ? "bg-red-700 text-white"
+                                  : isOperateCell(r, i) && i > 0
+                                    ? st === "open"
+                                      ? "bg-emerald-500 text-white"
+                                      : "bg-red-500 text-white"
+                                    : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"
+                            }`}
+                          >
+                            {stateGlyph(st)}
+                            {exec && st && i > 0 ? (rec?.result === "OK" ? "☑" : "☐") : ""}
+                          </span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+          <button
+            onClick={onDelete}
+            className="mr-auto rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
+          >
+            {deleteLabel}
+          </button>
+          <button onClick={onClose} className="rounded-lg border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
+            閉じる
+          </button>
+          {onStart && (
+            <button onClick={onStart} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
+              {startLabel}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
