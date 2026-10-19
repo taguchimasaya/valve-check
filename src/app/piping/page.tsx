@@ -24,6 +24,12 @@ const menus = [
     desc: "運用パターン・タンク・ポンプを入力して運用ラインを表示し、点検ラインの点滅・操作済みバルブの点灯で進捗を確認します。",
     href: "/piping/control",
   },
+  {
+    no: "QR",
+    title: "機器QRコード印刷",
+    desc: "系統図で使っているバルブ・ドレン弁・圧力計元弁のQRコードを印刷します（既存の機器QRと同じ形式）。",
+    href: "/piping/qr",
+  },
 ];
 
 export default function PipingHome() {
@@ -48,7 +54,7 @@ export default function PipingHome() {
           バルブ{valves}箇所、ドレン口{drains}箇所、配管区間{graph.sections.length}区間。
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {menus.map((m) => (
             <Link
               key={m.href}

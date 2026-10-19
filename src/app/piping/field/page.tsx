@@ -162,7 +162,10 @@ export default function FieldPage() {
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 220, height: 220 } },
         (text) => {
-          const code = text.trim();
+          // 既存の機器QRと同じ「…/inspect/{機器番号}」形式でも、番号だけのQRでも読めるようにする
+          const raw = text.trim();
+          const marker = raw.indexOf("/inspect/");
+          const code = safeDecode(marker >= 0 ? raw.slice(marker + "/inspect/".length) : raw).trim();
           // 開閉の確認ダイアログを表示している間は、次のQRを読まない
           if (pendingRef.current) return;
           const last = lastScanRef.current;
@@ -777,6 +780,14 @@ function StepTable({
       </table>
     </div>
   );
+}
+
+function safeDecode(t: string) {
+  try {
+    return decodeURIComponent(t);
+  } catch {
+    return t;
+  }
 }
 
 // 全角・半角、大文字・小文字の違いを無視して検索する
