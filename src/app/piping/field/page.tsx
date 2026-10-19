@@ -150,17 +150,38 @@ export default function FieldPage() {
   const scannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
   const lastScanRef = useRef<{ code: string; at: number } | null>(null);
   const [scanning, setScanning] = useState(false);
+  // 読取枠を表示しているか（カメラ起動中も含む）。枠が非表示（幅0）のままだと
+  // html5-qrcode が読取範囲を計算できず起動に失敗するため、先に枠を表示してから起動する。
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const readerBoxRef = useRef<HTMLDivElement>(null);
 
   async function startScanner() {
     setCameraError(null);
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setCameraError(
+        "カメラは HTTPS で開いたときだけ使えます。https://（PCのIPアドレス）:3000/piping/field で開き直してください。"
+      );
+      return;
+    }
+    setScannerOpen(true);
+    // 枠が描画されてから起動する
+    await new Promise((r) => setTimeout(r, 50));
+    readerBoxRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
     try {
       const { Html5Qrcode } = await import("html5-qrcode");
       const scanner = new Html5Qrcode("piping-qr-reader");
       scannerRef.current = scanner;
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
+        {
+          fps: 10,
+          // 読取範囲は映像の大きさに合わせる（固定サイズだと小さい画面で起動に失敗することがある）
+          qrbox: (w: number, h: number) => {
+            const size = Math.max(120, Math.floor(Math.min(w, h) * 0.7));
+            return { width: size, height: size };
+          },
+        },
         (text) => {
           // 既存の機器QRと同じ「…/inspect/{機器番号}」形式でも、番号だけのQRでも読めるようにする
           const raw = text.trim();
@@ -176,8 +197,19 @@ export default function FieldPage() {
         undefined
       );
       setScanning(true);
-    } catch {
-      setCameraError("カメラを起動できませんでした。図面またはチェックリストのバルブをタップして記録してください。");
+    } catch (e) {
+      scannerRef.current = null;
+      setScannerOpen(false);
+      // html5-qrcode はエラーを文字列で返すことがあるため、名前・本文の両方から原因を判定する
+      const text = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+      const reason = /NotAllowedError|Permission/i.test(text)
+        ? "カメラの使用が許可されていません。ブラウザのサイト設定でカメラを許可してください。"
+        : /NotFoundError|OverconstrainedError/i.test(text)
+          ? "カメラが見つかりません。"
+          : /NotReadableError|TrackStartError/i.test(text)
+            ? "カメラを他のアプリが使用中です。他のアプリやタブを閉じてから再度お試しください。"
+            : `（${text}）`;
+      setCameraError(`カメラを起動できませんでした：${reason} 図面またはチェックリストのバルブをタップしても記録できます。`);
     }
   }
   function stopScanner() {
@@ -189,6 +221,7 @@ export default function FieldPage() {
       scannerRef.current = null;
     }
     setScanning(false);
+    setScannerOpen(false);
   }
   useEffect(() => () => stopScanner(), []);
 
@@ -512,16 +545,29 @@ export default function FieldPage() {
             </button>
           </div>
           <button
-            onClick={scanning ? stopScanner : startScanner}
-            className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${scanning ? "bg-zinc-700 text-white" : "bg-sky-600 text-white"}`}
+            onClick={scannerOpen ? stopScanner : startScanner}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${scannerOpen ? "bg-zinc-700 text-white" : "bg-sky-600 text-white"}`}
           >
-            {scanning ? "QR読取を停止" : "QRで読み取る"}
+            {scannerOpen ? "QR読取を停止" : "QRで読み取る"}
           </button>
         </div>
 
         {flash && <FlashBar flash={flash} />}
         {cameraError && <p className="mt-2 text-sm text-red-600">{cameraError}</p>}
-        <div id="piping-qr-reader" className={`mx-auto mt-2 max-w-sm overflow-hidden rounded-xl ${scanning ? "" : "hidden"}`} />
+        {scannerOpen && (
+          <div ref={readerBoxRef} className="mx-auto mt-2 w-full max-w-sm">
+            {!scanning && <p className="py-2 text-center text-sm text-zinc-500">カメラを起動しています…</p>}
+            <div id="piping-qr-reader" className="min-h-48 w-full overflow-hidden rounded-xl bg-black" />
+            {scanning && (
+              <button
+                onClick={stopScanner}
+                className="mt-2 w-full rounded-lg border border-zinc-300 py-2 text-sm dark:border-zinc-700"
+              >
+                QR読取を停止
+              </button>
+            )}
+          </div>
+        )}
 
         {plan.summary.warnings.length > 0 && (
           <details className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
