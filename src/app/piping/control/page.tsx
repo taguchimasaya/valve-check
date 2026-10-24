@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import PipingDiagram, { DiagramLegend, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
-import { newId } from "@/lib/piping/checklist";
+import { newId, stateAtStep } from "@/lib/piping/checklist";
+import { stepFlow } from "@/lib/piping/flow";
 import { execView, planConflicts } from "@/lib/piping/execution";
 import {
   applyOperations,
@@ -93,8 +94,17 @@ export default function ControlPage() {
     const v = execView(plan, e, valveState);
     valveState = v.valveState;
     inspLayers.push({ key: `insp-${e.id}`, pipeIds: plan.regionPipeIds, color: "#ef4444", width: 13, opacity: 0.6, blink: true });
-    if (plan.steps[e.currentStep] === "充填" && plan.fillPipeIds?.length) {
-      opLayers.push({ key: `fill-${e.id}`, pipeIds: plan.fillPipeIds, color: "#0d9488", width: 5, flow: true });
+    // 抜取・充填の工程中は、燃料の流れる向き（充填：供給元→抜き取った機器）を矢印で示す
+    const flow = stepFlow(g, plan, e.currentStep, stateAtStep(opState.valveState, plan.rows, e.currentStep));
+    if (flow) {
+      opLayers.push({
+        key: `flow-${e.id}`,
+        pipeIds: [...flow.directions.keys()],
+        directions: flow.directions,
+        color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+        width: 5,
+        flow: true,
+      });
     }
     for (const [id, m] of Object.entries(v.marks)) {
       marks[id] = m;

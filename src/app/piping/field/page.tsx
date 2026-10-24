@@ -467,8 +467,17 @@ export default function FieldPage() {
     { key: "region", pipeIds: plan.regionPipeIds, color: "#ef4444", opacity: 0.45, blink: true },
     { key: "seal", pipeIds: plan.sealPipeIds, color: "#f59e0b", opacity: 0.35 },
   ];
-  if (plan.steps[step] === "充填" && plan.fillPipeIds?.length) {
-    layers.push({ key: "fill", pipeIds: plan.fillPipeIds, color: "#0d9488", width: 6, flow: true });
+  // 抜取・充填の工程では、燃料の流れる向き（抜取：範囲→ドレン、充填：供給元→抜き取った機器）を矢印で示す
+  const flow = stepFlow(g, plan, step, stateAtStep(base, plan.rows, step));
+  if (flow) {
+    layers.push({
+      key: `flow-${step}`,
+      pipeIds: [...flow.directions.keys()],
+      directions: flow.directions,
+      color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+      width: 6,
+      flow: true,
+    });
   }
   const completed = exec.status === "completed";
 
