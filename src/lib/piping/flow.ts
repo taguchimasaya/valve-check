@@ -34,6 +34,9 @@ function spread(
     if (!origins.includes(cur) && node.kind === "valve" && state[cur] !== "open") continue;
     for (const { pipe, other } of g.adj.get(cur)!) {
       if (!allowedPipes.has(pipe.id) || directions.has(pipe.id)) continue;
+      // ドレン口・圧力計取付口・安全弁への枝管には燃料が入るが、流れとしては描かない（起点のドレンは除く）
+      const kind = g.nodeById.get(other)!.kind;
+      if ((kind === "drain" || kind === "gauge" || kind === "psv") && !origins.includes(other)) continue;
       directions.set(pipe.id, towardOrigin ? other : cur);
       if (!seen.has(other)) {
         seen.add(other);
