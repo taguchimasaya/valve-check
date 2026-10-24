@@ -463,7 +463,15 @@ export function estimateDrain(
     if (n.drainPumpLpm) return { id, method: "pump" as const, rateLpm: n.drainPumpLpm };
     return { id, method: "gravity" as const, rateLpm: GRAVITY_LPM[n.drainSizeA ?? 50] ?? 100 };
   });
-  const totalLpm = perDrain.reduce((a, d) => a + d.rateLpm, 0);
+  // 同じ抜取ポンプにつながるドレン口が複数あっても、ポンプの能力は1台分
+  const pumpSystems = new Map<string, number>();
+  let totalLpm = 0;
+  perDrain.forEach((d) => {
+    const sys = g.nodeById.get(d.id)!.drainSystem;
+    if (d.method === "pump" && sys) pumpSystems.set(sys, Math.max(pumpSystems.get(sys) ?? 0, d.rateLpm));
+    else totalLpm += d.rateLpm;
+  });
+  pumpSystems.forEach((lpm) => (totalLpm += lpm));
   return {
     perDrain,
     totalLpm,

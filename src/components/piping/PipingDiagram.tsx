@@ -535,7 +535,7 @@ export default function PipingDiagram({
           </g>
         );
       case "tank":
-        if (n.recovery) {
+        if (n.recovery || n.small) {
           return (
             <g>
               <rect x={n.x - 28} y={n.y - 18} width={56} height={36} rx={5} className="fill-amber-50 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.6} />
@@ -543,7 +543,7 @@ export default function PipingDiagram({
                 {n.label}
               </text>
               <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
-                回収タンク
+                {n.recovery ? "回収タンク" : "メンテ用タンク"}
               </text>
             </g>
           );
@@ -679,7 +679,7 @@ export default function PipingDiagram({
             const n = graph.nodeById.get(id);
             if (!n) return null;
             const s = MARK_STYLE[mark];
-            const r = n.kind === "tank" ? (n.recovery ? 34 : 62) : n.kind === "filter" ? 25 : n.kind.includes("ump") ? 20 : 14;
+            const r = n.kind === "tank" ? (n.recovery || n.small ? 34 : 62) : n.kind === "filter" ? 25 : n.kind.includes("ump") ? 20 : 14;
             return (
               <circle
                 key={`mark-${id}`}
@@ -704,7 +704,7 @@ export default function PipingDiagram({
                 onClick={isClickable ? () => onNodeClick!(n.id) : undefined}
                 style={isClickable ? { cursor: "pointer" } : undefined}
               >
-                {isClickable && <circle cx={n.x} cy={n.y} r={n.kind === "tank" && !n.recovery ? 50 : 14} fill="transparent" />}
+                {isClickable && <circle cx={n.x} cy={n.y} r={n.kind === "tank" && !n.recovery && !n.small ? 50 : 14} fill="transparent" />}
                 {renderNode(n)}
                 <title>
                   {n.name}

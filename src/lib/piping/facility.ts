@@ -172,7 +172,82 @@ export function buildFacility(): Facility {
     pipe(trv, rt, 25, [[75, Y(512)]]);
 
     areas.push({ x: 20, y: Math.min(Y(150), Y(530)), w: 690, h: 380, label: `受入系統${sys}` });
+    if (sys === "A") drainRecoveryA();
     return fillEnd;
+  }
+
+  // ───── 受入系統A の抜取・回収設備 ─────
+  // ストレーナー・フィルターのドレン口 → 抜取用配管（抜取ヘッダー）→ 抜取用ストレーナー → 抜取ポンプ
+  // → 抜取用フィルター → メンテ用小型タンク → 移送用ストレーナー → 移送ポンプ → 移送用フィルター
+  // → 受入配管（受入ヘッダー1と受入連絡弁の間）
+  let recoveryOutlet: string | null = null;
+  function drainRecoveryA() {
+    const area = "受入A 抜取・回収設備";
+    const pumpLpm = 200;
+    // ドレン口を抜取用配管へつなぐ（ドレン弁が容器側と抜取配管側を区切る）
+    const connectDrain = (drainId: string, collector: string) => {
+      const n = nodes.find((v) => v.id === drainId)!;
+      n.drainTo = collector;
+      n.drainPumpLpm = pumpLpm;
+      n.drainSystem = "DP-A1";
+      n.name = `${n.name}（→抜取ポンプ DP-A1）`;
+      pipe(drainId, collector, 40);
+    };
+    // ストレーナー側の集合管（x=245）とフィルター側の集合管（x=665）
+    const cs1 = J("J-DCS1", 245, 270, area);
+    const cs2 = J("J-DCS2", 245, 410, area);
+    const dh1 = J("J-DH1", 245, 560, area);
+    const cf1 = J("J-DCF1", 665, 236, area);
+    const cf2 = J("J-DCF2", 665, 346, area);
+    const cf3 = J("J-DCF3", 665, 456, area);
+    const dh2 = J("J-DH2", 665, 560, area);
+    connectDrain("D-RAS1", cs1);
+    connectDrain("D-RAS2", cs2);
+    connectDrain("D-RAF1", cf1);
+    connectDrain("D-RAF2", cf2);
+    connectDrain("D-RAF3", cf3);
+    chain(40, cs1, cs2, dh1);
+    chain(40, cf1, cf2, cf3, dh2);
+    // 抜取ヘッダー
+    const dha = J("J-DHA", 455, 560, area);
+    chain(50, dh1, dha, dh2);
+
+    // 抜取系：ストレーナー → ポンプ → 逆止弁 → フィルター → メンテ用小型タンク（右から左へ流れる）
+    const v1 = V("V-DA1", "受入A 抜取ポンプ 吸込弁", 420, 610, "open", area);
+    const s1 = add("STR-DA1", "strainer", 370, 610, area, { name: "受入A 抜取用ストレーナー", volumeL: 50 });
+    const p1 = add("DP-A1", "transferPump", 315, 610, area, { name: "受入A 抜取ポンプ", volumeL: 20 });
+    const c1 = add("CV-DA1", "check", 270, 610, area, { name: "受入A 抜取ポンプ 逆止弁" });
+    const f1 = add("FLT-DA1", "filter", 215, 610, area, { name: "受入A 抜取用フィルター", volumeL: 100 });
+    const v2 = V("V-DA2", "受入A メンテ用小型タンク 入口弁", 160, 610, "open", area);
+    const tank = add("TM-A", "tank", 90, 650, area, {
+      name: "受入A メンテ用小型タンク",
+      capacityKL: 5,
+      small: true,
+    });
+    pipe(dha, v1, 50, [[455, 610]]);
+    chain(50, v1, s1, p1, c1, f1, v2);
+    pipe(v2, tank, 50, [[90, 610]]);
+    setDir(p1, s1);
+    setDir(c1, p1);
+    const d1 = drain("D-DA1", "受入A 抜取用ストレーナー ドレン", 370, 640, area, { sizeA: 25 });
+    pipe(s1, d1, 25);
+
+    // 移送系：メンテ用小型タンク → ストレーナー → ポンプ → 逆止弁 → フィルター → 送油弁 → 受入配管
+    const v3 = V("V-DA3", "受入A メンテ用小型タンク 出口弁", 160, 690, "open", area);
+    const s2 = add("STR-DA2", "strainer", 210, 690, area, { name: "受入A メインタンク移送用ストレーナー", volumeL: 50 });
+    const p2 = add("DP-A2", "transferPump", 265, 690, area, { name: "受入A メインタンク移送ポンプ", volumeL: 20 });
+    const c2 = add("CV-DA2", "check", 315, 690, area, { name: "受入A メインタンク移送ポンプ 逆止弁" });
+    const f2 = add("FLT-DA2", "filter", 370, 690, area, { name: "受入A メインタンク移送用フィルター", volumeL: 100 });
+    const v4 = V("V-DA4", "受入A メインタンク移送 送油弁（→受入配管）", 430, 690, "close", area);
+    pipe(tank, v3, 50, [[90, 690]]);
+    chain(50, v3, s2, p2, c2, f2, v4);
+    setDir(p2, s2);
+    setDir(c2, p2);
+    const d2 = drain("D-DA2", "受入A 移送用ストレーナー ドレン", 210, 720, area, { sizeA: 25 });
+    pipe(s2, d2, 25);
+    recoveryOutlet = v4;
+
+    areas.push({ x: 25, y: 540, w: 680, h: 190, label: area });
   }
 
   // 容器（ストレーナー・フィルター）下部の分岐 → ドレン口／充填弁 → 充填ヘッダー（y=490）
@@ -408,7 +483,15 @@ export function buildFacility(): Facility {
   const rx = J("J-RX", 730, 750, "受入連絡管");
   const vrx1 = V("V-RX1", "受入連絡弁（第1ヤード側）", 730, 520, "close", "受入連絡管");
   const vrx2 = V("V-RX2", "受入連絡弁（第2ヤード側）", 730, 980, "close", "受入連絡管");
-  chain(250, y1.rStart, vrx1, rx, vrx2, y2.rStart);
+  // 受入A 抜取・回収設備の送油先（受入ヘッダー1と受入連絡弁 V-RX1 の間）
+  const rxa = J("J-RXA", 730, 450, "受入連絡管");
+  chain(250, y1.rStart, rxa, vrx1, rx, vrx2, y2.rStart);
+  if (recoveryOutlet) {
+    pipe(recoveryOutlet, rxa, 80, [
+      [712, 690],
+      [712, 450],
+    ]);
+  }
 
   // ───────────── 払出連絡管 ─────────────
   const vix = V("V-IX", "払出連絡弁（系統1⇔系統2）", 1880, 750, "close", "払出連絡管");

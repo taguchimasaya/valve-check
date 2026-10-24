@@ -47,6 +47,12 @@ export type PNode = {
   fillSource?: boolean;
   /** 固定の抜取ポンプが設置されている場合の能力（L/min） */
   drainPumpLpm?: number;
+  /** ドレン口の先が抜取用配管につながっている場合の、配管側の接続先ノードID（ドレン弁が区間を区切る） */
+  drainTo?: string;
+  /** 同じ抜取ポンプを共有するドレン口のまとまり（抜取時間の計算でポンプ能力を重複して数えない） */
+  drainSystem?: string;
+  /** 小型タンク（メンテ用など。貯蔵タンクより小さく描く） */
+  small?: boolean;
   /** ポンプ・逆止弁の上流側ノードID（流れの向き） */
   dirFrom?: string;
   /** 回収タンク（安全弁の逃がし先。貯蔵タンクではない） */
