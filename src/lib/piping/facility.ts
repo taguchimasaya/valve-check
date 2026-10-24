@@ -92,19 +92,25 @@ export function buildFacility(): Facility {
     // 安全弁は受入元弁の上流（受入口側）に置き、受入元弁を閉じていても受入配管側を保護する
     const j1 = J(`J-${p}1`, 115, Y(300), area);
     const v01 = V(`V-${p}01`, `受入${sys} 受入元弁`, 155, Y(300), "close", area);
-    // 安全弁・充填ヘッダーの逃し弁は、受入系統ごとの回収タンクへ逃がす
-    const rt = add(`RT-${sys}`, "tank", 75, Y(440), area, {
-      name: `受入${sys} 回収タンク（安全弁の逃がし先）`,
-      capacityKL: 20,
-      recovery: true,
-    });
+    // 安全弁・充填ヘッダーの逃し弁の逃がし先：
+    // 受入系統A は抜取・回収設備のメンテ用小型タンク（TM-A）、受入系統B は回収タンク（RT-B）
+    const reliefTo = sys === "A" ? "TM-A" : `RT-${sys}`;
+    const rt =
+      sys === "A"
+        ? null
+        : add(`RT-${sys}`, "tank", 75, Y(440), area, {
+            name: `受入${sys} 回収タンク（安全弁の逃がし先）`,
+            capacityKL: 20,
+            recovery: true,
+          });
     const psv = add(`PSV-${p}1`, "psv", 115, Y(355), area, {
-      name: `受入${sys} 安全弁（→回収タンクRT-${sys}）`,
+      name: `受入${sys} 安全弁（→${sys === "A" ? "メンテ用小型タンク TM-A" : `回収タンク RT-${sys}`}）`,
       setPressureMPa: 1.0,
       dirFrom: j1,
     });
     pipe(j1, psv, 50);
-    pipe(psv, rt, 50, [[115, Y(440)]]);
+    if (rt) pipe(psv, rt, 50, [[115, Y(440)]]);
+    else pendingRelief.push({ from: psv, sizeA: 50, via: [[115, 650]] });
     const j2 = J(`J-${p}2`, 190, Y(300), area);
     const pi = add(`PI-${p}1`, "gauge", 190, Y(255), area, {
       name: `受入${sys} 圧力計取付口`,
@@ -164,12 +170,21 @@ export function buildFacility(): Facility {
     const fillEnd = J(`J-FL${sys}H`, 700, Y(490), area);
     chain(50, ...fillJ, fillEnd);
     const trv = add(`PSV-FL${sys}`, "psv", 700, Y(512), area, {
-      name: `受入${sys} 充填ヘッダー 熱膨張逃し弁（→回収タンクRT-${sys}）`,
+      name: `受入${sys} 充填ヘッダー 熱膨張逃し弁（→${reliefTo}）`,
       setPressureMPa: 1.0,
       dirFrom: fillEnd,
     });
     pipe(fillEnd, trv, 25);
-    pipe(trv, rt, 25, [[75, Y(512)]]);
+    if (rt) pipe(trv, rt, 25, [[75, Y(512)]]);
+    else
+      pendingRelief.push({
+        from: trv,
+        sizeA: 25,
+        via: [
+          [75, 512],
+          [75, 650],
+        ],
+      });
 
     areas.push({ x: 20, y: Math.min(Y(150), Y(530)), w: 690, h: 380, label: `受入系統${sys}` });
     if (sys === "A") drainRecoveryA();
@@ -181,17 +196,23 @@ export function buildFacility(): Facility {
   // → 抜取用フィルター → メンテ用小型タンク → 移送用ストレーナー → 移送ポンプ → 移送用フィルター
   // → 受入配管（受入ヘッダー1と受入連絡弁の間）
   let recoveryOutlet: string | null = null;
+  // メンテ用小型タンクができてから接続する安全弁の逃がし配管
+  const pendingRelief: { from: string; sizeA: number; via: [number, number][] }[] = [];
   function drainRecoveryA() {
     const area = "受入A 抜取・回収設備";
     const pumpLpm = 200;
-    // ドレン口を抜取用配管へつなぐ（ドレン弁が容器側と抜取配管側を区切る）
-    const connectDrain = (drainId: string, collector: string) => {
+    // ドレン口 → ドレン弁（通常閉）→ 抜取用配管。抜取時はドレン弁・V-DA1・V-DA2 を開けて抜取ポンプで送る
+    const connectDrain = (drainId: string, collector: string, vx: number, vy: number) => {
       const n = nodes.find((v) => v.id === drainId)!;
-      n.drainTo = collector;
+      const valve = V(`V-D${drainId.slice(2)}`, `${n.name.replace("ドレン", "ドレン弁")}`, vx, vy, "close", n.area);
       n.drainPumpLpm = pumpLpm;
       n.drainSystem = "DP-A1";
-      n.name = `${n.name}（→抜取ポンプ DP-A1）`;
-      pipe(drainId, collector, 40);
+      n.drainRoute = [valve, "V-DA1", "V-DA2"];
+      n.drainTarget = "TM-A";
+      n.name = `${n.name}口（→抜取ポンプ DP-A1）`;
+      n.normal = undefined; // ドレン口そのものは操作しない（ドレン弁で開閉する）
+      pipe(drainId, valve, 40);
+      pipe(valve, collector, 40);
     };
     // ストレーナー側の集合管（x=245）とフィルター側の集合管（x=665）
     const cs1 = J("J-DCS1", 245, 270, area);
@@ -201,11 +222,11 @@ export function buildFacility(): Facility {
     const cf2 = J("J-DCF2", 665, 346, area);
     const cf3 = J("J-DCF3", 665, 456, area);
     const dh2 = J("J-DH2", 665, 560, area);
-    connectDrain("D-RAS1", cs1);
-    connectDrain("D-RAS2", cs2);
-    connectDrain("D-RAF1", cf1);
-    connectDrain("D-RAF2", cf2);
-    connectDrain("D-RAF3", cf3);
+    connectDrain("D-RAS1", cs1, 270, 270);
+    connectDrain("D-RAS2", cs2, 270, 410);
+    connectDrain("D-RAF1", cf1, 630, 236);
+    connectDrain("D-RAF2", cf2, 640, 346);
+    connectDrain("D-RAF3", cf3, 640, 456);
     chain(40, cs1, cs2, dh1);
     chain(40, cf1, cf2, cf3, dh2);
     // 抜取ヘッダー
@@ -213,39 +234,61 @@ export function buildFacility(): Facility {
     chain(50, dh1, dha, dh2);
 
     // 抜取系：ストレーナー → ポンプ → 逆止弁 → フィルター → メンテ用小型タンク（右から左へ流れる）
-    const v1 = V("V-DA1", "受入A 抜取ポンプ 吸込弁", 420, 610, "open", area);
+    const v1 = V("V-DA1", "受入A 抜取ポンプ 吸込弁", 420, 610, "close", area);
     const s1 = add("STR-DA1", "strainer", 370, 610, area, { name: "受入A 抜取用ストレーナー", volumeL: 50 });
     const p1 = add("DP-A1", "transferPump", 315, 610, area, { name: "受入A 抜取ポンプ", volumeL: 20 });
     const c1 = add("CV-DA1", "check", 270, 610, area, { name: "受入A 抜取ポンプ 逆止弁" });
     const f1 = add("FLT-DA1", "filter", 215, 610, area, { name: "受入A 抜取用フィルター", volumeL: 100 });
-    const v2 = V("V-DA2", "受入A メンテ用小型タンク 入口弁", 160, 610, "open", area);
+    const v2 = V("V-DA2", "受入A メンテ用小型タンク 入口弁", 160, 610, "close", area);
     const tank = add("TM-A", "tank", 90, 650, area, {
       name: "受入A メンテ用小型タンク",
       capacityKL: 5,
       small: true,
     });
-    pipe(dha, v1, 50, [[455, 610]]);
-    chain(50, v1, s1, p1, c1, f1, v2);
-    pipe(v2, tank, 50, [[90, 610]]);
+    // 回収ラインは常に燃料で満たされているため、閉じた弁の間が液封にならないよう、
+    // 弁をまたいで下流側（メンテ用小型タンク側）へ逃がす逃し弁を設ける
+    const bypassRelief = (valve: string, x: number, y: number, upX: number, downX: number, psvY: number, name: string) => {
+      const ju = J(`J-${valve}U`, upX, y, area);
+      const jd = J(`J-${valve}D`, downX, y, area);
+      const psv = add(`PSV-${valve.slice(2)}`, "psv", x, psvY, area, {
+        name,
+        setPressureMPa: 1.0,
+        dirFrom: ju,
+        compact: true,
+      });
+      pipe(ju, psv, 25, [[upX, psvY]]);
+      pipe(psv, jd, 25, [[downX, psvY]]);
+      return { ju, jd };
+    };
+    const r1 = bypassRelief(v1, 420, 610, 436, 404, 594, "受入A 抜取ポンプ吸込弁 逃し弁（抜取ヘッダー→ポンプ側）");
+    const r2 = bypassRelief(v2, 160, 610, 176, 144, 594, "受入A メンテ用タンク入口弁 逃し弁（→メンテ用小型タンク）");
+    pipe(dha, r1.ju, 50, [[455, 610]]);
+    chain(50, r1.ju, v1, r1.jd, s1, p1, c1, f1, r2.ju, v2, r2.jd);
+    pipe(r2.jd, tank, 50, [[90, 610]]);
     setDir(p1, s1);
     setDir(c1, p1);
     const d1 = drain("D-DA1", "受入A 抜取用ストレーナー ドレン", 370, 640, area, { sizeA: 25 });
     pipe(s1, d1, 25);
 
     // 移送系：メンテ用小型タンク → ストレーナー → ポンプ → 逆止弁 → フィルター → 送油弁 → 受入配管
-    const v3 = V("V-DA3", "受入A メンテ用小型タンク 出口弁", 160, 690, "open", area);
+    const v3 = V("V-DA3", "受入A メンテ用小型タンク 出口弁", 160, 690, "close", area);
     const s2 = add("STR-DA2", "strainer", 210, 690, area, { name: "受入A メインタンク移送用ストレーナー", volumeL: 50 });
     const p2 = add("DP-A2", "transferPump", 265, 690, area, { name: "受入A メインタンク移送ポンプ", volumeL: 20 });
     const c2 = add("CV-DA2", "check", 315, 690, area, { name: "受入A メインタンク移送ポンプ 逆止弁" });
     const f2 = add("FLT-DA2", "filter", 370, 690, area, { name: "受入A メインタンク移送用フィルター", volumeL: 100 });
     const v4 = V("V-DA4", "受入A メインタンク移送 送油弁（→受入配管）", 430, 690, "close", area);
-    pipe(tank, v3, 50, [[90, 690]]);
-    chain(50, v3, s2, p2, c2, f2, v4);
+    const r3 = bypassRelief(v3, 160, 690, 176, 144, 674, "受入A メンテ用タンク出口弁 逃し弁（移送ポンプ側→メンテ用小型タンク）");
+    pipe(tank, r3.jd, 50, [[90, 690]]);
+    chain(50, r3.jd, v3, r3.ju, s2, p2, c2, f2, v4);
     setDir(p2, s2);
     setDir(c2, p2);
     const d2 = drain("D-DA2", "受入A 移送用ストレーナー ドレン", 210, 720, area, { sizeA: 25 });
     pipe(s2, d2, 25);
     recoveryOutlet = v4;
+    // 受入A の安全弁・充填ヘッダー逃し弁の逃がし先をメンテ用小型タンクにする
+    pendingRelief.forEach((r) => {
+      pipe(r.from, tank, r.sizeA, r.via);
+    });
 
     areas.push({ x: 25, y: 540, w: 680, h: 190, label: area });
   }

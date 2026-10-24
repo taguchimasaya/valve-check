@@ -87,7 +87,10 @@ export function buildPlanRows(
   };
   const fillOpen = new Set(iso.fill.openValves);
   const isFillValve = (v: string) => !!g.nodeById.get(v)!.fillLine;
+  // 抜取に使うドレン口のドレン弁・抜取ポンプ側の弁は、下の「ドレン弁」の行で扱う
+  const drainRouteValves = new Set(drainIds.flatMap((d) => g.nodeById.get(d)?.drainRoute ?? []));
   iso.boundaryValves.forEach((v) => {
+    if (drainRouteValves.has(v)) return;
     const base = baseline[v] ?? "close";
     if (!fillOpen.has(v)) {
       row(v, "boundary", [base, "close", null, null, base]);
@@ -102,7 +105,24 @@ export function buildPlanRows(
     const base = baseline[v] ?? "close";
     row(v, "internal", base === "open" ? ["open", "open", null, null, null] : ["close", "open", null, null, "close"]);
   });
-  drainIds.forEach((d) => row(d, "drain", ["close", null, "open", "close", null]));
+  const added = new Set<string>();
+  drainIds.forEach((d) => {
+    const n = g.nodeById.get(d)!;
+    if (!n.drainRoute?.length) {
+      row(d, "drain", ["close", null, "open", "close", null]);
+      return;
+    }
+    // ドレン口 → ドレン弁 → 抜取ポンプ側の弁（共有している弁は1回だけ載せる）
+    n.drainRoute.forEach((v, i) => {
+      if (added.has(v)) return;
+      added.add(v);
+      const pumpNote =
+        i === n.drainRoute!.length - 1 && n.drainSystem
+          ? `抜取ポンプ ${n.drainSystem} を起動して${n.drainTarget ?? "回収タンク"}へ抜き取る（終了後に停止）`
+          : undefined;
+      row(v, "drain", ["close", null, "open", "close", null], pumpNote);
+    });
+  });
   gaugeIds.forEach((d) => row(d, "gauge", ["close", "open", null, null, "close"]));
   // 遮断範囲の外側にある充填ライン上の弁（充填元弁など）
   iso.fill.openValves

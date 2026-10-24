@@ -37,7 +37,7 @@ export default function PipingQrPage() {
   const all = useMemo(
     () =>
       g.facility.nodes
-        .filter((n) => n.kind in KIND_LABEL)
+        .filter((n) => n.kind in KIND_LABEL && !n.drainRoute)
         .sort((a, b) => a.area.localeCompare(b.area, "ja") || a.label.localeCompare(b.label, "ja", { numeric: true })),
     [g]
   );

@@ -1,5 +1,5 @@
 import type { SavedPlan } from "./checklist";
-import type { Graph } from "./graph";
+import { shortestPath, type Graph } from "./graph";
 import type { ValveState } from "./types";
 
 // 工程ごとの燃料の流れ（抜取：範囲内 → ドレン口、充填：供給元 → 範囲内）を求める。
@@ -58,11 +58,26 @@ export function stepFlow(
   if (!region.size) return null;
 
   if (name === "抜取") {
-    const origins = plan.rows
-      .filter((r) => r.role === "drain" && r.nodeId && r.states[step] === "open")
-      .map((r) => r.nodeId!);
+    const openDrainRows = new Set(
+      plan.rows.filter((r) => r.role === "drain" && r.nodeId && r.states[step] === "open").map((r) => r.nodeId!)
+    );
+    // 抜取用配管つきのドレン口は、ドレン弁（ルートの最初の弁）が開いていれば起点にする
+    const origins = [
+      ...[...openDrainRows].filter((id) => g.nodeById.get(id)?.kind === "drain"),
+      ...g.facility.nodes
+        .filter((n) => n.drainRoute?.length && openDrainRows.has(n.drainRoute[0]) && plan.regionNodeIds.includes(n.id))
+        .map((n) => n.id),
+    ];
     if (!origins.length) return null;
-    return { kind: "drain", directions: spread(g, origins, region, state, true), origins };
+    const directions = spread(g, origins, region, state, true);
+    // 抜取用配管につながるドレン口は、その先（ドレン弁 → 抜取ポンプ → 回収先タンク）も流れとして描く
+    origins.forEach((d) => {
+      const target = g.nodeById.get(d)?.drainTarget;
+      const route = target ? shortestPath(g, d, target) : null;
+      // ドレン口〜ドレン弁の配管は抜取範囲にも含まれるが、向きは抜取ポンプ側へ流れる向きを優先する
+      route?.pipeIds.forEach((pid, i) => directions.set(pid, route.nodeIds[i]));
+    });
+    return { kind: "drain", directions, origins };
   }
 
   if (name === "充填") {

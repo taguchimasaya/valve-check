@@ -50,14 +50,8 @@ export function isSeparator(n: PNode) {
     n.kind === "tank" ||
     n.kind === "source" ||
     n.kind === "sink" ||
-    isBypassRelief(n) ||
-    isLinedDrain(n)
+    isBypassRelief(n)
   );
-}
-
-/** 先が抜取用配管につながっているドレン口（ドレン弁が容器側と抜取配管側を区切る） */
-export function isLinedDrain(n: PNode) {
-  return n.kind === "drain" && !!n.drainTo;
 }
 
 export function pipePoints(g: Pick<Graph, "nodeById">, p: Pipe): [number, number][] {
@@ -134,7 +128,7 @@ export function buildGraph(facility: Facility): Graph {
     const valveSet = new Set<string>();
     const tankSet = new Set<string>();
     const reliefSet = new Set<string>();
-    const linedDrainSet = new Set<string>();
+
     let external = false;
     let volumeL = 0;
     pipeIds.forEach((pid) => {
@@ -148,9 +142,6 @@ export function buildGraph(facility: Facility): Graph {
         else if (isBypassRelief(n)) {
           // 逃し弁の入口側の区間だけが、その逃し弁で保護される
           if ((p.a === nid ? p.b : p.a) === n.dirFrom) reliefSet.add(nid);
-        } else if (isLinedDrain(n)) {
-          // 容器側（抜取配管ではない側）の区間だけが、このドレン口から抜き取れる
-          if ((p.a === nid ? p.b : p.a) !== n.drainTo) linedDrainSet.add(nid);
         } else if (n.kind === "source" || n.kind === "sink") external = true;
         else nodeSet.add(nid);
       });
@@ -173,7 +164,7 @@ export function buildGraph(facility: Facility): Graph {
       tankIds: [...tankSet],
       external,
       volumeL,
-      drainIds: [...ofKind("drain"), ...linedDrainSet],
+      drainIds: ofKind("drain"),
       gaugeIds: ofKind("gauge"),
       psvIds: [...ofKind("psv"), ...reliefSet],
     });
