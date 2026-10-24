@@ -204,6 +204,9 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       store.log = store.log.slice(0, 100);
       return null;
     }
+    case "setLayout":
+      store.layout = a.layout;
+      return null;
     case "clearValveOverrides":
       store.valveOverrides = {};
       store.log.unshift({ at: now, type: "info", text: "制御室で弁の手動変更をすべて解除しました" });

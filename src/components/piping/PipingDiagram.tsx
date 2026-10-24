@@ -112,6 +112,12 @@ type Props = {
   height?: string;
   showLabels?: boolean;
   toolbar?: ReactNode;
+  /** 下絵（図面の画像）。系統図の座標で位置・大きさを指定する */
+  underlay?: { href: string; x: number; y: number; width: number; height: number; opacity: number } | null;
+  /** 図面の何もない所をクリックしたとき（系統図の座標で通知） */
+  onCanvasClick?: (x: number, y: number) => void;
+  /** 描かない機器（未配置の機器など）。つながる配管も描かない */
+  hiddenNodeIds?: Set<string>;
 };
 
 const MIN_ZOOM = 0.6;
@@ -141,6 +147,9 @@ export default function PipingDiagram({
   height = "70vh",
   showLabels = true,
   toolbar,
+  underlay,
+  onCanvasClick,
+  hiddenNodeIds,
 }: Props) {
   const f = graph.facility;
   const [zoom, setZoom] = useState(1);
@@ -605,9 +614,31 @@ export default function PipingDiagram({
         <svg
           viewBox={`0 0 ${f.width} ${f.height}`}
           style={{ width: `${zoom * 100}%`, minWidth: zoom * 1100 }}
-          className="block select-none"
+          className={`block select-none ${onCanvasClick ? "cursor-crosshair" : ""}`}
+          onClick={
+            onCanvasClick
+              ? (e) => {
+                  const svg = e.currentTarget;
+                  const ctm = svg.getScreenCTM();
+                  if (!ctm) return;
+                  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+                  onCanvasClick(pt.x, pt.y);
+                }
+              : undefined
+          }
         >
           <style>{CSS}</style>
+          {underlay && (
+            <image
+              href={underlay.href}
+              x={underlay.x}
+              y={underlay.y}
+              width={underlay.width}
+              height={underlay.height}
+              opacity={underlay.opacity}
+              preserveAspectRatio="none"
+            />
+          )}
           {f.areas.map((a) => (
             <g key={a.label}>
               <rect x={a.x} y={a.y} width={a.w} height={a.h} rx={12} fill="none" stroke="#a1a1aa" strokeDasharray="6 5" strokeWidth={1} />
@@ -618,7 +649,8 @@ export default function PipingDiagram({
           ))}
 
           {/* 配管（ベース） */}
-          {f.pipes.map((p) => (
+          {f.pipes.map((p) =>
+            hiddenNodeIds?.has(p.a) || hiddenNodeIds?.has(p.b) ? null : (
             <polyline
               key={p.id}
               points={pts(pipeGeom.get(p.id)!)}
@@ -627,7 +659,8 @@ export default function PipingDiagram({
               strokeWidth={pipeWidth(p.sizeA)}
               strokeLinejoin="round"
             />
-          ))}
+            )
+          )}
 
           {/* 重ね表示（運用ライン・点検範囲など） */}
           {layers.map((l) => (
@@ -677,7 +710,7 @@ export default function PipingDiagram({
           {/* マーク（リング） */}
           {Object.entries(marks).map(([id, mark]) => {
             const n = graph.nodeById.get(id);
-            if (!n) return null;
+            if (!n || hiddenNodeIds?.has(id)) return null;
             const s = MARK_STYLE[mark];
             const r = n.kind === "tank" ? (n.recovery || n.small ? 34 : 62) : n.kind === "filter" ? 25 : n.kind.includes("ump") ? 20 : 14;
             return (
@@ -697,11 +730,19 @@ export default function PipingDiagram({
 
           {/* ノード */}
           {f.nodes.map((n) => {
+            if (hiddenNodeIds?.has(n.id)) return null;
             const isClickable = !!onNodeClick && clickable.has(n.kind);
             return (
               <g
                 key={n.id}
-                onClick={isClickable ? () => onNodeClick!(n.id) : undefined}
+                onClick={
+                  isClickable
+                    ? (e) => {
+                        e.stopPropagation(); // 図面のクリック（配置）として扱わない
+                        onNodeClick!(n.id);
+                      }
+                    : undefined
+                }
                 style={isClickable ? { cursor: "pointer" } : undefined}
               >
                 {isClickable && <circle cx={n.x} cy={n.y} r={n.kind === "tank" && !n.recovery && !n.small ? 50 : 14} fill="transparent" />}

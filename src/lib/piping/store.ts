@@ -1,6 +1,7 @@
 import type { SavedPlan } from "./checklist";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
+import type { PipingLayout } from "./layout";
 
 // 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
 // 保存先は API（/api/piping）側で切り替わる：本番は Supabase の piping_store テーブル、
@@ -36,6 +37,8 @@ export type PipingStore = {
   valveOverrides: Record<string, ValveState>;
   /** 制御室の操作記録（運用入力・弁の手動変更） */
   log: ExecEvent[];
+  /** 図面の下絵に合わせた機器の配置 */
+  layout?: PipingLayout;
 };
 
 export type StoreAction =
@@ -50,7 +53,8 @@ export type StoreAction =
   | { action: "deleteExecution"; execId: string }
   | { action: "setOperations"; operations: Operation[] }
   | { action: "setValve"; id: string; label: string; state: ValveState | null }
-  | { action: "clearValveOverrides" };
+  | { action: "clearValveOverrides" }
+  | { action: "setLayout"; layout: PipingLayout };
 
 export const EMPTY_STORE: PipingStore = {
   version: 0,

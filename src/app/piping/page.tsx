@@ -25,6 +25,12 @@ const menus = [
     href: "/piping/control",
   },
   {
+    no: "図",
+    title: "図面の下絵で配置",
+    desc: "系統図のPDF・画像を下絵にして、機器を図面どおりの位置に配置します（サンプル図面あり）。",
+    href: "/piping/editor",
+  },
+  {
     no: "QR",
     title: "機器QRコード印刷",
     desc: "系統図で使っているバルブ・ドレン弁・圧力計元弁のQRコードを印刷します（既存の機器QRと同じ形式）。",
@@ -54,7 +60,7 @@ export default function PipingHome() {
           バルブ{valves}箇所、ドレン口{drains}箇所、配管区間{graph.sections.length}区間。
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
           {menus.map((m) => (
             <Link
               key={m.href}
