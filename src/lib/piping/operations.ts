@@ -69,7 +69,9 @@ export function routeOperation(g: Graph, op: Operation): OperationRoute {
     r.nodeIds.forEach((n) => nodeIds.add(n));
   }
   function fromTank(tank: string, key: "R" | "I" | "T") {
-    seg(tank, nozzle(tank, key), otherNozzles(tank, key));
+    // ノズルの逆止弁があるため、受入はノズル → タンク、払出・移送はタンク → ノズルの向きにたどる
+    if (key === "R") seg(nozzle(tank, key), tank, otherNozzles(tank, key));
+    else seg(tank, nozzle(tank, key), otherNozzles(tank, key));
   }
 
   switch (op.kind) {

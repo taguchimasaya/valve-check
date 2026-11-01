@@ -1,4 +1,4 @@
-import { connectedGroups, otherSide, shortestPath, type Graph, type Section } from "./graph";
+import { canFlow, connectedGroups, otherSide, pipeVolumeL, shortestPath, type Graph, type Section } from "./graph";
 import type { ValveState } from "./types";
 
 // 抜取範囲（遮断範囲）の算定と、液封リスクの評価。
@@ -58,10 +58,6 @@ export type IsolationResult = {
   errors: string[];
   notes: string[];
 };
-
-function isDrainable(s: Section) {
-  return s.drainIds.length > 0;
-}
 
 /** タンクノズル部・施設外接続部は抜取範囲に含められない */
 function isExpandable(s: Section) {
@@ -132,45 +128,81 @@ function regionComponents(g: Graph, region: Set<string>): string[][] {
   return comps;
 }
 
-/** ドレン口のある区間までの最小容量経路（区間グラフ上のダイクストラ） */
-function pathToDrain(g: Graph, start: string[]): string[] | null {
+/** 範囲内でドレン口へ流れ出せる配管（範囲内の弁はすべて開、逆止弁は順方向にしか流れない） */
+function drainedPipes(g: Graph, region: Set<string>): Set<string> {
+  const pipes = new Set([...region].flatMap((s) => g.sectionById.get(s)!.pipeIds));
+  const drains = [...region].flatMap((s) => g.sectionById.get(s)!.drainIds);
+  const drained = new Set<string>();
+  const seen = new Set(drains);
+  const queue = [...drains];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const { pipe, other } of g.adj.get(cur)!) {
+      if (!pipes.has(pipe.id) || drained.has(pipe.id)) continue;
+      // 燃料は other → cur（ドレン口の方）へ流れる
+      if (!canFlow(g, other, cur)) continue;
+      drained.add(pipe.id);
+      if (!seen.has(other)) {
+        seen.add(other);
+        queue.push(other);
+      }
+    }
+  }
+  return drained;
+}
+
+/**
+ * 抜き取れない配管から、燃料が流れていける方向（逆止弁を逆流しない）にたどって、
+ * ドレン口または抜き取れる配管に達するまでの最小容量経路。経路で新たに加わる区間を返す。
+ */
+function pathToDrainable(g: Graph, region: Set<string>, drained: Set<string>, undrained: string[]): string[] | null {
   const dist = new Map<string, number>();
-  const prev = new Map<string, string>();
+  const prev = new Map<string, string>(); // ノード → たどってきた配管
   const queue: string[] = [];
-  start.forEach((s) => {
-    dist.set(s, 0);
-    queue.push(s);
+  undrained.forEach((pid) => {
+    const p = g.pipeById.get(pid)!;
+    [p.a, p.b].forEach((n) => {
+      if (!dist.has(n)) {
+        dist.set(n, 0);
+        queue.push(n);
+      }
+    });
   });
   const done = new Set<string>();
-  const startSet = new Set(start);
+  const sectionsOf = (end: string, last?: string) => {
+    const out = new Set<string>();
+    if (last) out.add(g.sectionOfPipe.get(last)!);
+    let c: string | undefined = end;
+    while (c && prev.has(c)) {
+      const pid: string = prev.get(c)!;
+      out.add(g.sectionOfPipe.get(pid)!);
+      const p = g.pipeById.get(pid)!;
+      c = p.a === c ? p.b : p.a;
+    }
+    return [...out].filter((s) => !region.has(s));
+  };
   while (queue.length) {
     queue.sort((a, b) => dist.get(a)! - dist.get(b)!);
     const cur = queue.shift()!;
     if (done.has(cur)) continue;
     done.add(cur);
-    const sec = g.sectionById.get(cur)!;
-    if (!startSet.has(cur) && isDrainable(sec)) {
-      const path: string[] = [];
-      let c: string | undefined = cur;
-      while (c && !startSet.has(c)) {
-        path.push(c);
-        c = prev.get(c);
+    if (g.nodeById.get(cur)!.kind === "drain" && dist.get(cur)! > 0) return sectionsOf(cur);
+    for (const { pipe, other } of g.adj.get(cur)!) {
+      if (done.has(other) || !canFlow(g, cur, other)) continue;
+      // 抜き取れる配管へ流れ込めれば、そこから抜き取れる
+      if (drained.has(pipe.id)) return sectionsOf(cur, pipe.id);
+      const sid = g.sectionOfPipe.get(pipe.id)!;
+      if (!region.has(sid) && !isExpandable(g.sectionById.get(sid)!)) continue;
+      const on = g.nodeById.get(other)!;
+      if (on.kind === "tank" || on.kind === "source" || on.kind === "sink" || on.kind === "psv" || on.kind === "gauge") continue;
+      if (on.service) continue; // 充填ラインなどの作業用弁を越えては広げない
+      const nd = dist.get(cur)! + pipeVolumeL(pipe, g.pipeLengthM.get(pipe.id)!) + (on.volumeL ?? 0);
+      if (nd < (dist.get(other) ?? Infinity)) {
+        dist.set(other, nd);
+        prev.set(other, pipe.id);
+        queue.push(other);
       }
-      return path;
     }
-    sec.valveIds.forEach((v) => {
-      if (g.nodeById.get(v)!.service) return; // 充填ラインなどの作業用弁を越えては広げない
-      const o = otherSide(g, v, cur);
-      if (!o || done.has(o)) return;
-      const os = g.sectionById.get(o)!;
-      if (!isExpandable(os)) return;
-      const nd = dist.get(cur)! + os.volumeL;
-      if (nd < (dist.get(o) ?? Infinity)) {
-        dist.set(o, nd);
-        prev.set(o, cur);
-        queue.push(o);
-      }
-    });
   }
   return null;
 }
@@ -259,20 +291,18 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
 
   // ドレン口（抜取設備）を含むまで、最小の容量で範囲を広げる
   for (let guard = 0; opts.expandToDrain && guard < 50; guard++) {
-    const lacking = regionComponents(g, region).find(
-      (comp) => !comp.some((sid) => isDrainable(g.sectionById.get(sid)!))
-    );
-    if (!lacking) break;
-    const path = pathToDrain(g, lacking);
-    if (!path) {
+    // ドレン口へ流れ出せない配管（逆止弁の下流側など）が残っていれば、流れていける方向へ広げる
+    const drained = drainedPipes(g, region);
+    const undrained = [...region].flatMap((s) => g.sectionById.get(s)!.pipeIds).filter((p) => !drained.has(p));
+    if (!undrained.length) break;
+    const add = pathToDrainable(g, region, drained, undrained);
+    if (!add?.length) {
       errors.push("抜取設備（ドレン口）のある区間まで遮断範囲を広げられませんでした。");
       break;
     }
-    path.forEach((s) => {
-      if (!region.has(s)) {
-        region.add(s);
-        expanded.push(s);
-      }
+    add.forEach((s) => {
+      region.add(s);
+      expanded.push(s);
     });
   }
 
@@ -312,6 +342,11 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
   }
   if (region.size > 0 && drains.length === 0) {
     errors.push("抜取範囲内にドレン口がありません。抜取方法（仮設の抜取口など）を別途検討してください。");
+  } else if (region.size > 0) {
+    const drained = drainedPipes(g, region);
+    if (regionPipeIds.some((p) => !drained.has(p)) && !errors.some((e) => e.startsWith("抜取設備"))) {
+      errors.push("逆止弁の下流側など、ドレン口へ流れ出せない配管が範囲内にあります。抜取方法を別途検討してください。");
+    }
   }
 
   // 液封評価：遮断後の弁状態で、領域外の区間がタンク・安全弁に逃げられるか

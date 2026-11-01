@@ -1,5 +1,5 @@
 import type { SavedPlan } from "./checklist";
-import { shortestPath, type Graph } from "./graph";
+import { canFlow, shortestPath, type Graph } from "./graph";
 import type { ValveState } from "./types";
 
 // 工程ごとの燃料の流れ（抜取：範囲内 → ドレン口、充填：供給元 → 範囲内）を求める。
@@ -37,6 +37,8 @@ function spread(
       // ドレン口・圧力計取付口・安全弁への枝管には燃料が入るが、流れとしては描かない（起点のドレンは除く）
       const kind = g.nodeById.get(other)!.kind;
       if ((kind === "drain" || kind === "gauge" || kind === "psv") && !origins.includes(other)) continue;
+      // 逆止弁は順方向にしか流れない（抜取は other → cur、充填は cur → other へ流れる）
+      if (towardOrigin ? !canFlow(g, other, cur) : !canFlow(g, cur, other)) continue;
       directions.set(pipe.id, towardOrigin ? other : cur);
       if (!seen.has(other)) {
         seen.add(other);

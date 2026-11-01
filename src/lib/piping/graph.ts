@@ -68,6 +68,15 @@ function polylineLength(pts: [number, number][]) {
   return len;
 }
 
+/** 燃料が隣り合うノード from → to へ流れられるか（逆止弁は順方向にしか流れない） */
+export function canFlow(g: Pick<Graph, "nodeById">, from: string, to: string) {
+  const t = g.nodeById.get(to)!;
+  if (t.kind === "check" && t.dirFrom && t.dirFrom !== from) return false;
+  const f = g.nodeById.get(from)!;
+  if (f.kind === "check" && f.dirFrom && f.dirFrom === to) return false;
+  return true;
+}
+
 export function pipeVolumeL(p: Pipe, lengthM: number) {
   const d = innerDiameterM(p.sizeA);
   return (Math.PI / 4) * d * d * lengthM * 1000;

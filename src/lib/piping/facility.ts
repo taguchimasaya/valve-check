@@ -269,6 +269,8 @@ export function buildFacility(): Facility {
     setDir(c1, p1);
     const d1 = drain("D-DA1", "受入A 抜取用ストレーナー ドレン", 370, 640, area, { sizeA: 25 });
     pipe(s1, d1, 25);
+    // 逆止弁より下流（フィルター）は吸込側へ抜けないため、フィルターにもドレンを設ける
+    pipe(f1, drain("D-DA1F", "受入A 抜取用フィルター ドレン", 215, 640, area, { sizeA: 25 }), 25);
 
     // 移送系：メンテ用小型タンク → ストレーナー → ポンプ → 逆止弁 → フィルター → 送油弁 → 受入配管
     const v3 = V("V-DA3", "受入A メンテ用小型タンク 出口弁", 160, 690, "close", area);
@@ -284,6 +286,7 @@ export function buildFacility(): Facility {
     setDir(c2, p2);
     const d2 = drain("D-DA2", "受入A 移送用ストレーナー ドレン", 210, 720, area, { sizeA: 25 });
     pipe(s2, d2, 25);
+    pipe(f2, drain("D-DA2F", "受入A 移送用フィルター ドレン", 370, 720, area, { sizeA: 25 }), 25);
     recoveryOutlet = v4;
     // 受入A の安全弁・充填ヘッダー逃し弁の逃がし先をメンテ用小型タンクにする
     pendingRelief.forEach((r) => {
@@ -346,9 +349,13 @@ export function buildFacility(): Facility {
         const x = tx + l.dx;
         const v = V(`V-${no}${l.key}`, `T-${no} ${l.label}`, x, Y(l.vy), "close", area);
         const hj = J(`J-${no}${l.key}`, x, Y(l.hy), area);
+        // 受入・払出・移送の各ノズルには逆止弁を設ける（受入：タンクへ流れる向き、払出・移送：タンクから出る向き）
+        const cvName = `T-${no} ${l.label.replace("弁", "")}逆止弁`;
         if (l.key === "T") {
+          const cv = add(`CV-${no}T`, "check", x, Y(330), area, { name: cvName, compact: true });
           pipe(tank, v, l.size, [[x, Y(150)]]);
-          pipe(v, hj, l.size);
+          chain(l.size, v, cv, hj);
+          setDir(cv, v);
         } else {
           // 受入弁・払出弁には、ヘッダー側（下流）の圧力をタンク側（上流）へ逃がす逃し弁をバイパスで設ける
           const jt = J(`J-${no}${l.key}T`, x, Y(l.vy - 16), area);
@@ -359,8 +366,20 @@ export function buildFacility(): Facility {
             dirFrom: jh,
             compact: true,
           });
-          pipe(tank, jt, l.size, [[x, Y(150)]]);
-          chain(l.size, jt, v, jh, hj);
+          // 逆止弁は弁より下流側に置く（受入：タンク側、払出：ヘッダー側）。弁〜逆止弁の間も流れの向きに抜ける
+          const cv = add(`CV-${no}${l.key}`, "check", x, l.key === "R" ? Y(l.vy - 38) : Y(l.vy + 36), area, {
+            name: cvName,
+            compact: true,
+          });
+          if (l.key === "R") {
+            pipe(tank, cv, l.size, [[x, Y(150)]]);
+            chain(l.size, cv, jt, v, jh, hj);
+            setDir(cv, jt);
+          } else {
+            pipe(tank, jt, l.size, [[x, Y(150)]]);
+            chain(l.size, jt, v, jh, cv, hj);
+            setDir(cv, jh);
+          }
           pipe(jh, psv, 25, [[x - 14, Y(l.vy + 16)]]);
           pipe(psv, jt, 25, [[x - 14, Y(l.vy - 16)]]);
         }
@@ -444,7 +463,9 @@ export function buildFacility(): Facility {
         volumeL: 150,
       });
       const pump = add(`P-${k}`, "pump", 2105, Y(y), area, { name: `払出ポンプ P-${k}`, volumeL: 60 });
-      const cv = add(`CV-P${k}`, "check", 2160, Y(y), area, { name: `払出P-${k} 逆止弁` });
+      const cv = add(`CV-P${k}`, "check", 2155, Y(y), area, { name: `払出P-${k} 逆止弁` });
+      // 逆止弁〜吐出弁の間は吸込側へ抜けないため、吐出側ドレンを設ける
+      const jd = J(`J-P${k}D`, 2182, Y(y), area);
       const vd = V(`V-P${k}D`, `払出P-${k} 吐出弁`, 2205, Y(y), "open", area);
       const flt = add(`FLT-P${k}`, "filter", 2275, Y(y), area, {
         name: `払出P-${k} フィルター`,
@@ -453,7 +474,7 @@ export function buildFacility(): Facility {
       const vf = V(`V-P${k}F`, `払出P-${k} フィルター出口弁`, 2340, Y(y), "open", area);
       pipe(suction[i], vs, 200);
       chain(200, vs, str, pump);
-      chain(150, pump, cv, vd, flt, vf);
+      chain(150, pump, cv, jd, vd, flt, vf);
       pipe(vf, discharge[i], 150);
       setDir(pump, str);
       setDir(cv, pump);
@@ -461,6 +482,7 @@ export function buildFacility(): Facility {
       const df = drain(`D-P${k}F`, `払出P-${k} フィルタードレン`, 2275, Y(y + 42), area, { sizeA: 40 });
       pipe(str, ds, 25);
       pipe(flt, df, 40);
+      pipe(jd, drain(`D-P${k}D`, `払出P-${k} 吐出側ドレン`, 2182, Y(y + 30), area, { sizeA: 25 }), 25);
     });
 
     const out = J(`J-PD${n}O`, 2440, Y(250), area);
@@ -554,17 +576,38 @@ export function buildFacility(): Facility {
   const tp1 = J("J-TP1", 1580, 750, ta);
   const tp2 = J("J-TP2", 1300, 750, ta);
   chain(150, ts, tsd, tsr, tp1);
+  // ポンプ回り：吸込弁 → ストレーナー（ドレン付）→ 吸込側連成計 → ポンプ → 逆止弁 → 吐出側圧力計 → 吐出弁
   [700, 800].forEach((y, i) => {
     const k = i + 1;
-    const vs = V(`V-TP${k}S`, `移送ポンプ${k} 吸込弁`, 1530, y, "open", ta);
-    const pump = add(`TP-${k}`, "transferPump", 1460, y, ta, { name: `移送ポンプ TP-${k}`, volumeL: 30 });
-    const cv = add(`CV-TP${k}`, "check", 1400, y, ta, { name: `移送ポンプ${k} 逆止弁` });
-    const vd = V(`V-TP${k}D`, `移送ポンプ${k} 吐出弁`, 1350, y, "open", ta);
+    const vs = V(`V-TP${k}S`, `移送ポンプ${k} 吸込弁`, 1540, y, "open", ta);
+    const str = add(`STR-TP${k}`, "strainer", 1505, y, ta, { name: `移送ポンプ${k} ストレーナー`, volumeL: 80 });
+    const gs = J(`J-TP${k}GS`, 1478, y, ta);
+    const pump = add(`TP-${k}`, "transferPump", 1450, y, ta, { name: `移送ポンプ TP-${k}`, volumeL: 30 });
+    const cv = add(`CV-TP${k}`, "check", 1410, y, ta, { name: `移送ポンプ${k} 逆止弁` });
+    const gd = J(`J-TP${k}GD`, 1385, y, ta);
+    const vd = V(`V-TP${k}D`, `移送ポンプ${k} 吐出弁`, 1355, y, "open", ta);
     pipe(tp1, vs, 100, [[1580, y]]);
-    chain(100, vs, pump, cv, vd);
+    chain(100, vs, str, gs, pump, cv, gd, vd);
     pipe(vd, tp2, 100, [[1300, y]]);
-    setDir(pump, vs);
+    setDir(pump, gs);
     setDir(cv, pump);
+    const ds = drain(`D-TP${k}S`, `移送ポンプ${k} ストレーナードレン`, 1505, y + 30, ta, { sizeA: 25 });
+    pipe(str, ds, 25);
+    // 逆止弁〜吐出弁の間は吸込側へ抜けないため、吐出側にもドレンを設ける
+    const dd = drain(`D-TP${k}D`, `移送ポンプ${k} 吐出側ドレン`, 1385, y + 30, ta, { sizeA: 25 });
+    pipe(gd, dd, 25);
+    const pis = add(`PI-TP${k}S`, "gauge", 1478, y - 28, ta, {
+      name: `移送ポンプ${k} 吸込側連成計取付口`,
+      normal: "close",
+      gaugeMountable: true,
+    });
+    const pid = add(`PI-TP${k}D`, "gauge", 1385, y - 28, ta, {
+      name: `移送ポンプ${k} 吐出側圧力計取付口`,
+      normal: "close",
+      gaugeMountable: true,
+    });
+    pipe(gs, pis, 25);
+    pipe(gd, pid, 25);
   });
   const td = J("J-TD", 1240, 750, ta);
   const psvTp = add("PSV-TP", "psv", 1240, 700, ta, {
@@ -587,7 +630,10 @@ export function buildFacility(): Facility {
   const vtdm = V("V-TDM", "移送吐出主弁（→受入連絡管）", 1000, 750, "open", ta);
   // 充填ライン：移送ポンプ吐出から受入系統A・Bのストレーナー・フィルターへ
   const jfl = add("J-FL", "junction", 1100, 750, ta, { label: "", fillSource: true });
-  chain(150, tp2, td, tdg, jfl, vtdm, rx);
+  // 吐出主管の低部ドレン
+  const tdd = J("J-TDD", 1160, 750, ta);
+  pipe(tdd, drain("D-TD", "移送ポンプ吐出主管 ドレン", 1160, 790, ta, { sizeA: 40 }), 40);
+  chain(150, tp2, td, tdg, tdd, jfl, vtdm, rx);
   // 充填元弁は移送ラインからの分岐部に置く
   ([["A", fillA, 490, 700], ["B", fillB, 1010, 800]] as const).forEach(([sys, end, headerY, valveY]) => {
     const v = add(`V-FL${sys}`, "valve", 1100, valveY, "充填ライン", {
