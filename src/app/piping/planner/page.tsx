@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import PipingDiagram, { DiagramLegend, type DiagramHandle, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
+import PlanPreview from "@/components/piping/PlanPreview";
 import { normalValveState, otherSide } from "@/lib/piping/graph";
 import {
   estimateDrain,
@@ -80,6 +81,8 @@ export default function PlannerPage() {
   const [previewStep, setPreviewStep] = useState(0);
   const [focusSeal, setFocusSeal] = useState<number | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  // ② 現場点検と同じ表示で、作成中のチェックリストを確認する
+  const [previewPlan, setPreviewPlan] = useState<SavedPlan | null>(null);
   const diagramRef = useRef<DiagramHandle>(null);
 
   const storeOps = store?.operations;
@@ -985,6 +988,13 @@ export default function PlannerPage() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <button
+                    onClick={() => setPreviewPlan(buildPlan())}
+                    disabled={!rows.length}
+                    className="col-span-2 rounded-lg border border-emerald-700 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                  >
+                    プレビュー（② 現場点検と同じ表示で工程ごとに確認）
+                  </button>
+                  <button
                     onClick={save}
                     disabled={!rows.length}
                     className="col-span-2 rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
@@ -1045,6 +1055,16 @@ export default function PlannerPage() {
           </aside>
         </div>
       </div>
+      {previewPlan && (
+        <PlanPreview
+          graph={g}
+          plan={previewPlan}
+          base={baseline}
+          onClose={() => setPreviewPlan(null)}
+          startLabel=""
+          pdfHref={null}
+        />
+      )}
     </main>
   );
 }

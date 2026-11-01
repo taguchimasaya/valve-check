@@ -100,6 +100,16 @@ export default function FillSupplyPicker({ graph, plan, exec, base, act, compact
       ) : (
         <p className="mt-1 text-zinc-500">経路の弁を記録済みのため、変更できません。</p>
       )}
+      {current && !compact && (
+        <a
+          href={`/piping/print?exec=${exec.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-xs font-semibold text-sky-700 underline dark:text-sky-400"
+        >
+          この内容でPDF出力（チェックリスト・工程ごとの図面）
+        </a>
+      )}
       {error && <p className="mt-1 text-red-600">{error}</p>}
       {!compact && (
         <p className="mt-1 text-[11px] text-zinc-500">
