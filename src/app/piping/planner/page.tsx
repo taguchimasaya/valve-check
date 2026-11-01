@@ -238,7 +238,6 @@ export default function PlannerPage() {
   }
   if (isDay) {
     if (flushT) layers.push({ key: "flush-target", pipeIds: flushT.pipeIds, color: "#06b6d4", opacity: 0.5 });
-    if (isoTank) marks[isoTank] = "selected";
     const routes = dayResult?.stepRoutes ?? {};
     const route = routes[previewStep];
     const shown = route ? [route] : Object.values(routes);
@@ -255,10 +254,18 @@ export default function PlannerPage() {
         flow: !!route,
       });
     });
+    // 作業前：チェックリストの弁・ポンプすべて。各工程：開操作（緑）・閉操作（赤）・確認（水色）
     rows.forEach((r) => {
-      if (!r.nodeId || !r.states[previewStep] || !isOperateCell(r, previewStep)) return;
-      marks[r.nodeId] = r.states[previewStep] === "open" ? "internal" : "boundary";
+      if (!r.nodeId) return;
+      if (previewStep === 0) {
+        marks[r.nodeId] = "selected";
+        return;
+      }
+      const s = r.states[previewStep];
+      if (!s) return;
+      marks[r.nodeId] = !isOperateCell(r, previewStep) ? "selected" : s === "open" ? "internal" : "boundary";
     });
+    if (isoTank) marks[isoTank] = "selected";
   }
   const targetPipes = targets.filter((t) => t.type === "pipe").map((t) => t.id);
   if (targetPipes.length) layers.push({ key: "targets", pipeIds: targetPipes, color: "#06b6d4", opacity: 0.8 });
@@ -529,8 +536,9 @@ export default function PlannerPage() {
               items={isDay ? [
                 { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
                 { color: flowColor("route"), label: workType === "flush" ? "循環経路" : "移送経路（表示中の工程）" },
-                { color: "#16a34a", label: "この工程で開ける弁", kind: "ring" },
-                { color: "#dc2626", label: "この工程で閉める弁", kind: "ring" },
+                { color: "#16a34a", label: "開操作・ポンプ起動", kind: "ring" },
+                { color: "#dc2626", label: "閉操作・ポンプ停止", kind: "ring" },
+                { color: "#06b6d4", label: previewStep === 0 ? "チェックリストの弁・ポンプ" : "確認（状態変化なし）", kind: "ring" },
               ] : [
                 { color: "#06b6d4", label: "選択した対象", kind: "ring" },
                 { color: "#ef4444", label: "抜取範囲（遮断範囲）" },
