@@ -16,6 +16,8 @@ import {
 } from "@/lib/piping/operations";
 import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
 import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
+import OutagePanel from "@/components/piping/OutagePanel";
+import { OUTAGE_COLOR } from "@/lib/piping/live";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
 import { manualStepLabel, needsDayParams } from "@/lib/piping/workTypes";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
@@ -252,6 +254,10 @@ export default function ControlPage() {
               </button>
             </Panel>
 
+            <Panel title={`運用停止範囲（当日）${live.outages.length ? `：${live.outages.length}件停止中` : ""}`}>
+              <OutagePanel outages={store?.outages ?? []} act={act} conflicts={live.outageConflicts} />
+            </Panel>
+
             <Panel title={`現在の運用（${operations.length}）`}>
               {operations.length === 0 ? (
                 <p className="text-sm text-zinc-400">運用中のラインはありません（待機状態）。</p>
@@ -318,6 +324,7 @@ export default function ControlPage() {
               graph={g}
               valveState={valveState}
               layers={layers}
+              boxes={live.boxes}
               marks={marks}
               clickableKinds={["valve", "drain", "gauge"]}
               onNodeClick={handleNodeClick}
@@ -352,6 +359,7 @@ export default function ControlPage() {
                 })),
                 { color: "#ef4444", label: "点検ライン（点滅）" },
                 { color: "#0d9488", label: "充填ライン（充填工程中）" },
+                { color: OUTAGE_COLOR, label: "運用停止範囲（灰色の破線・枠）" },
                 { color: "#dc2626", label: "閉操作待ち（点滅）", kind: "blink" as const },
                 { color: "#2563eb", label: "開操作待ち（点滅）", kind: "blink" as const },
                 { color: "#f59e0b", label: "確認待ち（点滅）", kind: "blink" as const },

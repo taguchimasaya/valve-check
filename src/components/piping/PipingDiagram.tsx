@@ -28,7 +28,12 @@ export type PipeLayer = {
   opacity?: number;
   /** 配管ID → 流れの上流側ノードID（指定した配管は流れの向きに描き、矢印を付ける） */
   directions?: Map<string, string>;
+  /** 破線（運用停止範囲など） */
+  dash?: string;
 };
+
+/** 図面に重ねるラベル付きの枠（運用停止範囲など） */
+export type DiagramBox = { key: string; x: number; y: number; w: number; h: number; label: string; color: string };
 
 /** 折れ線の長さ方向の中点と、その位置の向き（度） */
 function midArrow(points: [number, number][]) {
@@ -106,6 +111,8 @@ type Props = {
   layers?: PipeLayer[];
   marks?: Record<string, NodeMark>;
   onNodeClick?: (id: string) => void;
+  /** ラベル付きの枠（運用停止範囲など） */
+  boxes?: DiagramBox[];
   onPipeClick?: (id: string) => void;
   /** クリックを受け付けるノード種別（省略時はクリック不可） */
   clickableKinds?: PNode["kind"][];
@@ -144,6 +151,7 @@ export default function PipingDiagram({
   layers = [],
   marks = {},
   onNodeClick,
+  boxes,
   onPipeClick,
   clickableKinds = [],
   height = "70vh",
@@ -664,7 +672,8 @@ export default function PipingDiagram({
                       stroke={l.color}
                       strokeWidth={l.width ?? pipeWidth(p.sizeA) + 5}
                       strokeLinejoin="round"
-                      strokeLinecap="round"
+                      strokeLinecap={l.dash ? "butt" : "round"}
+                      strokeDasharray={l.dash}
                       className={l.flow ? "piping-flow" : undefined}
                     />
                     {arrow && (
@@ -679,6 +688,17 @@ export default function PipingDiagram({
                   </g>
                 );
               })}
+            </g>
+          ))}
+
+          {/* ラベル付きの枠（運用停止範囲など） */}
+          {boxes?.map((b) => (
+            <g key={b.key} pointerEvents="none">
+              <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={10} fill={b.color} fillOpacity={0.08} stroke={b.color} strokeWidth={3} strokeDasharray="12 6" />
+              <rect x={b.x} y={b.y - 34} width={b.label.length * 22 + 20} height={34} rx={5} fill={b.color} />
+              <text x={b.x + 10} y={b.y - 10} fontSize={22} fontWeight={700} fill="#ffffff">
+                {b.label}
+              </text>
             </g>
           ))}
 

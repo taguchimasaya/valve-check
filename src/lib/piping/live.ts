@@ -1,4 +1,5 @@
-import type { NodeMark, PipeLayer } from "@/components/piping/PipingDiagram";
+import type { DiagramBox, NodeMark, PipeLayer } from "@/components/piping/PipingDiagram";
+import { outageRange, type OutageRange } from "./outages";
 import { stateAtStep, type SavedPlan } from "./checklist";
 import { execView, type ExecView } from "./execution";
 import { flowColor, stepFlow } from "./flow";
@@ -19,7 +20,14 @@ export type LiveDiagram = {
   layers: PipeLayer[];
   marks: Record<string, NodeMark>;
   views: LiveView[];
+  /** 当日の運用停止範囲 */
+  outages: (OutageRange & { at: string; note?: string })[];
+  boxes: DiagramBox[];
+  /** 運用ラインが停止範囲を通っている */
+  outageConflicts: string[];
 };
+
+export const OUTAGE_COLOR = "#475569";
 
 export function liveDiagram(g: Graph, store: PipingStore | null, hiddenExecIds: string[] = []): LiveDiagram {
   const opState = currentValveState(g, store?.operations ?? [], store?.valveOverrides ?? {});
@@ -62,5 +70,29 @@ export function liveDiagram(g: Graph, store: PipingStore | null, hiddenExecIds: 
     if (!marks[id]) marks[id] = "manual";
   });
 
-  return { opState, valveState, layers: [...inspLayers, ...opLayers], marks, views };
+  // 運用停止範囲：灰色の破線の帯（一番下）と、範囲名の枠
+  const outages = (store?.outages ?? [])
+    .map((o) => {
+      const r = outageRange(g, o.key);
+      return r ? { ...r, at: o.at, note: o.note } : null;
+    })
+    .filter((o): o is NonNullable<typeof o> => !!o);
+  const outLayers: PipeLayer[] = outages.map((o) => ({
+    key: `out-${o.def.key}`,
+    pipeIds: o.pipeIds,
+    color: OUTAGE_COLOR,
+    width: 16,
+    opacity: 0.55,
+    dash: "10 7",
+  }));
+  const boxes: DiagramBox[] = outages.map((o) => ({ key: `out-${o.def.key}`, ...o.box, label: `運用停止：${o.def.label.replace("停止", "")}`, color: OUTAGE_COLOR }));
+  const outPipes = new Map<string, string>();
+  outages.forEach((o) => o.pipeIds.forEach((p) => outPipes.set(p, o.def.label)));
+  const outageConflicts: string[] = [];
+  opState.routes.forEach((r) => {
+    const hit = [...r.pipeIds].map((p) => outPipes.get(p)).find(Boolean);
+    if (hit) outageConflicts.push(`${OPERATION_META[r.op.kind].label}の運用ラインが「${hit}」の範囲を通っています`);
+  });
+
+  return { opState, valveState, layers: [...outLayers, ...inspLayers, ...opLayers], marks, views, outages, boxes, outageConflicts };
 }

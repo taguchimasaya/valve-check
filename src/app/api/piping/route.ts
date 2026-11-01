@@ -3,6 +3,7 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
+import { OUTAGE_BY_KEY } from "@/lib/piping/outages";
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -21,6 +22,7 @@ function normalize(raw: Partial<PipingStore> | null | undefined): PipingStore {
   const store: PipingStore = { ...structuredClone(EMPTY_STORE), ...(raw ?? {}) };
   store.valveOverrides ??= {};
   store.log ??= [];
+  store.outages ??= [];
   // 工程名の変更（遮断 → ラインナップ）を、保存済みのチェックリストにも反映する
   store.plans.forEach((p) => {
     if (p.source === "planner") p.steps = p.steps.map((st) => (st === "遮断" ? "ラインナップ" : st));
@@ -199,6 +201,24 @@ function apply(store: PipingStore, a: StoreAction): string | null {
     }
     case "deleteExecution":
       store.executions = store.executions.filter((e) => e.id !== a.execId);
+      return null;
+    case "setOutage": {
+      const def = OUTAGE_BY_KEY.get(a.key);
+      if (!def) return "停止範囲が見つかりません";
+      const list = (store.outages ??= []);
+      const i = list.findIndex((o) => o.key === a.key);
+      if (a.on) {
+        if (i >= 0) list[i].note = a.note ?? list[i].note;
+        else list.push({ key: a.key, at: now, ...(a.note ? { note: a.note } : {}) });
+      } else if (i >= 0) list.splice(i, 1);
+      store.log.unshift({ at: now, type: "info", text: `制御室で「${def.label}」を${a.on ? "設定" : "解除"}しました` });
+      store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "clearOutages":
+      store.outages = [];
+      store.log.unshift({ at: now, type: "info", text: "制御室で運用停止範囲をすべて解除しました" });
+      store.log = store.log.slice(0, 100);
       return null;
     case "setOperations":
       store.operations = a.operations;

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
-import { liveDiagram } from "@/lib/piping/live";
+import { liveDiagram, OUTAGE_COLOR } from "@/lib/piping/live";
 import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 
@@ -129,7 +129,34 @@ export default function PipingHome() {
               )}
             </div>
           </div>
-          <PipingDiagram graph={graph} valveState={live.valveState} layers={live.layers} marks={live.marks} height="65vh" />
+          {live.outages.length > 0 && (
+            <div className="rounded-xl border-2 border-slate-600 bg-slate-50 p-3 text-sm dark:bg-slate-900">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">運用停止中（{live.outages.length}）</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {live.outages.map((o) => (
+                  <span key={o.def.key} title={o.def.desc} className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold text-white">
+                    {o.def.label}
+                    <span className="ml-1 font-normal opacity-80">
+                      {new Date(o.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}〜
+                    </span>
+                  </span>
+                ))}
+              </div>
+              {live.outageConflicts.map((c) => (
+                <p key={c} className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  ⚠ {c}
+                </p>
+              ))}
+            </div>
+          )}
+          <PipingDiagram
+            graph={graph}
+            valveState={live.valveState}
+            layers={live.layers}
+            boxes={live.boxes}
+            marks={live.marks}
+            height="65vh"
+          />
           <DiagramLegend
             items={[
               ...(Object.keys(OPERATION_META) as OperationKind[]).map((k) => ({
@@ -137,6 +164,7 @@ export default function PipingHome() {
                 label: `${OPERATION_META[k].label}ライン`,
               })),
               { color: "#ef4444", label: "点検範囲（点滅）" },
+              { color: OUTAGE_COLOR, label: "運用停止範囲（灰色の破線・枠）" },
               { color: "#0284c7", label: "抜取の流れ" },
               { color: "#0d9488", label: "充填の流れ" },
               { color: "#dc2626", label: "閉操作待ち", kind: "blink" as const },

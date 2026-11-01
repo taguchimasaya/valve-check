@@ -1,5 +1,6 @@
 import type { PlanRow, SavedPlan } from "./checklist";
 import { needsDayParams, type DayParams } from "./workTypes";
+import type { OutageKey } from "./outages";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { PipingLayout } from "./layout";
@@ -50,12 +51,18 @@ export type PipingStore = {
   log: ExecEvent[];
   /** 図面の下絵に合わせた機器の配置 */
   layout?: PipingLayout;
+  /** 当日の運用停止範囲（複数可） */
+  outages?: Outage[];
 };
+
+export type Outage = { key: OutageKey; at: string; note?: string };
 
 export type StoreAction =
   | { action: "savePlan"; plan: SavedPlan }
   | { action: "deletePlan"; id: string }
   | { action: "startExecution"; planId: string; id: string }
+  | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
+  | { action: "clearOutages" }
   | { action: "record"; execId: string; step: number; code: string; result: "OK" | "NG" }
   | { action: "undoRecord"; execId: string; step: number; code: string }
   | { action: "confirm"; execId: string; step: number; code: string }
