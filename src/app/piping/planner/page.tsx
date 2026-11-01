@@ -714,6 +714,9 @@ export default function PlannerPage() {
                         {p.name}
                       </button>
                       <span className="text-xs text-zinc-500">{p.summary.volumeL ? formatLiters(p.summary.volumeL) : ""}</span>
+                      <a href={`/piping/print?plan=${p.id}`} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">
+                        PDF
+                      </a>
                       <button
                         onClick={() => {
                           if (confirm(`「${p.name}」を削除しますか？（元に戻せません）`)) act({ action: "deletePlan", id: p.id });

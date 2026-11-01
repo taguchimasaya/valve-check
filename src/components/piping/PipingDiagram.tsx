@@ -118,6 +118,8 @@ type Props = {
   onCanvasClick?: (x: number, y: number) => void;
   /** 描かない機器（未配置の機器など）。つながる配管も描かない */
   hiddenNodeIds?: Set<string>;
+  /** 印刷用：この範囲（系統図の座標）だけを、拡大縮小ボタンなどなしで描く */
+  printBox?: { x: number; y: number; width: number; height: number };
 };
 
 const MIN_ZOOM = 0.6;
@@ -150,6 +152,7 @@ export default function PipingDiagram({
   underlay,
   onCanvasClick,
   hiddenNodeIds,
+  printBox,
 }: Props) {
   const f = graph.facility;
   const [zoom, setZoom] = useState(1);
@@ -589,44 +592,8 @@ export default function PipingDiagram({
     }
   }
 
-  return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
-        <button onClick={() => zoomBy(1.25)} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700" aria-label="拡大">
-          ＋
-        </button>
-        <button onClick={() => zoomBy(0.8)} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700" aria-label="縮小">
-          －
-        </button>
-        <button onClick={resetZoom} className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700">
-          全体
-        </button>
-        <span className="text-xs text-zinc-500">{Math.round(zoom * 100)}%</span>
-        <span className="hidden text-[11px] text-zinc-400 sm:inline">ホイール／ピンチで拡大縮小・ドラッグで移動</span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">{toolbar}</div>
-      </div>
-      <div
-        ref={scrollRef}
-        className="cursor-grab overflow-auto overscroll-contain"
-        style={{ height, touchAction: "pan-x pan-y" }}
-      >
-        {mounted && (
-        <svg
-          viewBox={`0 0 ${f.width} ${f.height}`}
-          style={{ width: `${zoom * 100}%`, minWidth: zoom * 1100 }}
-          className={`block select-none ${onCanvasClick ? "cursor-crosshair" : ""}`}
-          onClick={
-            onCanvasClick
-              ? (e) => {
-                  const svg = e.currentTarget;
-                  const ctm = svg.getScreenCTM();
-                  if (!ctm) return;
-                  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
-                  onCanvasClick(pt.x, pt.y);
-                }
-              : undefined
-          }
-        >
+  const body = (
+    <>
           <style>{CSS}</style>
           {underlay && (
             <image
@@ -789,6 +756,61 @@ export default function PipingDiagram({
                 </g>
               );
             })()}
+    </>
+  );
+
+  // 印刷用：指定した範囲だけを、操作部品なしでそのまま描く
+  if (printBox) {
+    return (
+      <svg
+        viewBox={`${printBox.x} ${printBox.y} ${printBox.width} ${printBox.height}`}
+        className="block h-auto w-full"
+        style={{ background: "white" }}
+      >
+        {body}
+      </svg>
+    );
+  }
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+        <button onClick={() => zoomBy(1.25)} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700" aria-label="拡大">
+          ＋
+        </button>
+        <button onClick={() => zoomBy(0.8)} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700" aria-label="縮小">
+          －
+        </button>
+        <button onClick={resetZoom} className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700">
+          全体
+        </button>
+        <span className="text-xs text-zinc-500">{Math.round(zoom * 100)}%</span>
+        <span className="hidden text-[11px] text-zinc-400 sm:inline">ホイール／ピンチで拡大縮小・ドラッグで移動</span>
+        <div className="ml-auto flex flex-wrap items-center gap-2">{toolbar}</div>
+      </div>
+      <div
+        ref={scrollRef}
+        className="cursor-grab overflow-auto overscroll-contain"
+        style={{ height, touchAction: "pan-x pan-y" }}
+      >
+        {mounted && (
+        <svg
+          viewBox={`0 0 ${f.width} ${f.height}`}
+          style={{ width: `${zoom * 100}%`, minWidth: zoom * 1100 }}
+          className={`block select-none ${onCanvasClick ? "cursor-crosshair" : ""}`}
+          onClick={
+            onCanvasClick
+              ? (e) => {
+                  const svg = e.currentTarget;
+                  const ctm = svg.getScreenCTM();
+                  if (!ctm) return;
+                  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+                  onCanvasClick(pt.x, pt.y);
+                }
+              : undefined
+          }
+        >
+          {body}
         </svg>
         )}
       </div>

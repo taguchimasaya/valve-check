@@ -317,6 +317,14 @@ export default function FieldPage() {
             >
               プレビュー
             </button>
+            <a
+              href={`/piping/print?exec=${e.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              PDF
+            </a>
             <button
               onClick={() => deleteExec(e)}
               className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-zinc-900 dark:text-red-400"
@@ -388,6 +396,14 @@ export default function FieldPage() {
                     >
                       プレビュー
                     </button>
+                    <a
+                      href={`/piping/print?plan=${p.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700"
+                    >
+                      PDF
+                    </a>
                     <button
                       onClick={() => startPlan(p.id)}
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600"
@@ -1164,6 +1180,14 @@ function PlanPreview({
           >
             {deleteLabel}
           </button>
+          <a
+            href={exec ? `/piping/print?exec=${exec.id}` : `/piping/print?plan=${plan.id}`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700"
+          >
+            PDF出力（印刷）
+          </a>
           <button onClick={onClose} className="rounded-lg border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700">
             閉じる
           </button>
