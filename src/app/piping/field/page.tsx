@@ -13,6 +13,7 @@ import {
   importPlanFromExcel,
   isOperateCell,
   newId,
+  needsFillSupply,
   ROLE_LABEL,
   stateAtStep,
   stateGlyph,
@@ -26,7 +27,8 @@ import type { ValveState } from "@/lib/piping/types";
 import { actionText, execView } from "@/lib/piping/execution";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
 import { playBeep } from "@/lib/piping/sound";
-import { recordKey, type Execution } from "@/lib/piping/store";
+import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
+import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
 import { useGraph, useLocalValue, usePipingStore } from "@/lib/piping/usePiping";
 import { isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
@@ -62,7 +64,9 @@ export default function FieldPage() {
 
 
   const exec = store?.executions.find((e) => e.id === execId) ?? null;
-  const plan = exec ? store?.plans.find((p) => p.id === exec.planId) ?? null : null;
+  // 元のチェックリスト（rawPlan）と、当日の選択（充填元など）で加えた行を重ねた点検用のチェックリスト（plan）
+  const rawPlan = exec ? store?.plans.find((p) => p.id === exec.planId) ?? null : null;
+  const plan = useMemo(() => (rawPlan && exec ? execPlan(rawPlan, exec) : null), [rawPlan, exec]);
   // 実際の弁状態の基準＝制御室で入力された運用状態（未入力なら待機状態）
   const operations = store?.operations;
   const overrides = store?.valveOverrides;
@@ -578,6 +582,16 @@ export default function FieldPage() {
           </div>
         )}
 
+        {rawPlan && needsFillSupply(rawPlan) && !completed && step <= plan.steps.indexOf("充填") && (
+          <div className="mt-2">
+            <FillSupplyPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} />
+          </div>
+        )}
+        {v.waitingSupply && (
+          <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            充填元タンク・移送ポンプを選ぶと、充填工程を完了できます。
+          </p>
+        )}
         {plan.summary.warnings.length > 0 && (
           <details className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
             <summary className="cursor-pointer font-medium">注意事項（{plan.summary.warnings.length}件）</summary>
@@ -667,7 +681,7 @@ export default function FieldPage() {
                       {actionText(r, step)}
                     </span>
                     <span className="block truncate text-xs text-zinc-500">{r.name}</span>
-                    {r.note && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
+                    {r.note && r.states[step] === "open" && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
                     {rec?.confirmedAt && <span className="text-[11px] text-green-700">制御室確認済み</span>}
                     {r.nodeId && <span className="block text-[11px] text-sky-600">📍 タップで図面上の位置を表示</span>}
                   </div>
@@ -693,7 +707,7 @@ export default function FieldPage() {
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
             <p className="text-xs text-zinc-500">{pending.name}</p>
             <p className="mt-1 text-2xl font-semibold">{pending.code}</p>
-            {pending.note && <p className="mt-1 text-sm font-medium text-amber-700">※{pending.note}</p>}
+            {pending.note && pending.states[step] === "open" && <p className="mt-1 text-sm font-medium text-amber-700">※{pending.note}</p>}
             {exec.records[recordKey(step, pending.code)]?.result === "OK" ? (
               <>
                 <p className="mt-2 text-sm text-zinc-600">記録済みです。取り消しますか？</p>

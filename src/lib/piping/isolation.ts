@@ -1,4 +1,4 @@
-import { connectedGroups, otherSide, type Graph, type Section } from "./graph";
+import { connectedGroups, otherSide, shortestPath, type Graph, type Section } from "./graph";
 import type { ValveState } from "./types";
 
 // 抜取範囲（遮断範囲）の算定と、液封リスクの評価。
@@ -480,6 +480,45 @@ export function estimateDrain(
     drums: Math.ceil(volumeL / 200),
     lorries: Math.ceil(volumeL / 16000),
   };
+}
+
+export type FillSupply = {
+  tank: string;
+  pump: string;
+  /** 経路上の弁（充填元タンクの移送弁 → … → 移送ポンプ吐出側の弁） */
+  valves: string[];
+  /** 移送ポンプの吐出側にある最初の弁（ポンプ起動の注記を付ける） */
+  pumpValve: string | null;
+  pipeIds: string[];
+  error?: string;
+};
+
+/**
+ * 充填ラインへ燃料を送る経路：充填元タンクの移送弁 → 移送ヘッダー → 移送吸込弁 → 移送ポンプ → 充填ラインの分岐点
+ */
+export function fillSupplyRoute(g: Graph, tank: string, pump: string): FillSupply {
+  const no = tank.replace("T-", "");
+  const nozzle = `V-${no}T`;
+  const source = g.facility.nodes.find((n) => n.fillSource)?.id;
+  const result: FillSupply = { tank, pump, valves: [], pumpValve: null, pipeIds: [] };
+  if (!source || !g.nodeById.has(nozzle) || !g.nodeById.has(pump)) {
+    return { ...result, error: "充填元タンクまたは移送ポンプの経路が見つかりません" };
+  }
+  const segs = [
+    shortestPath(g, tank, nozzle, new Set([`V-${no}R`, `V-${no}I`])),
+    shortestPath(g, nozzle, pump),
+    shortestPath(g, pump, source),
+  ];
+  if (segs.some((s) => !s)) return { ...result, error: `${tank} から ${pump} を通る経路が見つかりません` };
+  const nodeIds: string[] = [];
+  segs.forEach((s, i) => {
+    nodeIds.push(...(i === 0 ? s!.nodeIds : s!.nodeIds.slice(1)));
+    result.pipeIds.push(...s!.pipeIds);
+  });
+  result.valves = nodeIds.filter((n) => g.nodeById.get(n)!.kind === "valve");
+  const pumpIdx = nodeIds.indexOf(pump);
+  result.pumpValve = nodeIds.slice(pumpIdx).find((n) => g.nodeById.get(n)!.kind === "valve") ?? null;
+  return result;
 }
 
 /** 充填の標準速度（L/min）。静電気対策で初期は低流速とするための目安 */

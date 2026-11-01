@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
-import { newId } from "@/lib/piping/checklist";
+import { needsFillSupply, newId } from "@/lib/piping/checklist";
 import { planConflicts } from "@/lib/piping/execution";
 import { liveDiagram } from "@/lib/piping/live";
 import {
@@ -14,7 +14,8 @@ import {
   type Operation,
   type OperationKind,
 } from "@/lib/piping/operations";
-import { recordKey, type Execution } from "@/lib/piping/store";
+import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
+import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { isStepCompleteAudioEnabled, isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
@@ -366,7 +367,8 @@ export default function ControlPage() {
               <ul className="space-y-3">
                 {running.map((e) => {
                   const vw = views.find((x) => x.exec.id === e.id);
-                  const plan = store!.plans.find((p) => p.id === e.planId);
+                  const rawPlan = store!.plans.find((p) => p.id === e.planId);
+                  const plan = rawPlan ? execPlan(rawPlan, e) : undefined;
                   const unconfirmed = plan
                     ? plan.rows.filter((r) => {
                         const rec = e.records[recordKey(e.currentStep, r.code)];
@@ -393,6 +395,11 @@ export default function ControlPage() {
                           </p>
                         </div>
                       </div>
+                      {rawPlan && needsFillSupply(rawPlan) && e.currentStep <= rawPlan.steps.indexOf("充填") && (
+                        <div className="mt-2">
+                          <FillSupplyPicker graph={g} plan={rawPlan} exec={e} base={opState.valveState} act={act} compact />
+                        </div>
+                      )}
                       {vw && vw.conflicts.length > 0 && (
                         <ul className="mt-2 space-y-1">
                           {vw.conflicts.map((c) => (

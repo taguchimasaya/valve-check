@@ -82,7 +82,8 @@ export function stepFlow(
 
   if (name === "充填") {
     const fillPipes = plan.fillPipeIds ?? [];
-    const allowed = new Set([...region, ...fillPipes]);
+    const supplyPipes = plan.fillSupply?.pipeIds ?? [];
+    const allowed = new Set([...region, ...fillPipes, ...supplyPipes]);
     // 充填ラインがあれば供給元（移送系統の分岐点）から、無ければ微開する遮断弁から流れ込む
     const source = fillPipes
       .flatMap((pid) => {
@@ -90,7 +91,9 @@ export function stepFlow(
         return [p.a, p.b];
       })
       .find((n) => g.nodeById.get(n)?.fillSource);
-    const origins = source
+    const origins = plan.fillSupply && supplyPipes.length
+      ? [plan.fillSupply.tank]
+      : source
       ? [source]
       : plan.rows.filter((r) => r.role === "boundary" && r.nodeId && r.states[step] === "open").map((r) => r.nodeId!);
     if (!origins.length) return null;

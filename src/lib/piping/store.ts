@@ -1,4 +1,4 @@
-import type { SavedPlan } from "./checklist";
+import type { PlanRow, SavedPlan } from "./checklist";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { PipingLayout } from "./layout";
@@ -26,6 +26,10 @@ export type Execution = {
   /** key: `${stepIndex}:${code}` */
   records: Record<string, ValveRecord>;
   events: ExecEvent[];
+  /** 当日に選んだ充填元タンク・移送ポンプ（充填ラインを使う作業のみ） */
+  fillSupply?: { tank: string; pump: string; pipeIds: string[] };
+  /** 当日の選択で充填工程に加えた弁の行 */
+  extraRows?: PlanRow[];
 };
 
 export type PipingStore = {
@@ -54,7 +58,13 @@ export type StoreAction =
   | { action: "setOperations"; operations: Operation[] }
   | { action: "setValve"; id: string; label: string; state: ValveState | null }
   | { action: "clearValveOverrides" }
-  | { action: "setLayout"; layout: PipingLayout };
+  | { action: "setLayout"; layout: PipingLayout }
+  | {
+      action: "setFillSupply";
+      execId: string;
+      fillSupply: { tank: string; pump: string; pipeIds: string[] };
+      rows: PlanRow[];
+    };
 
 export const EMPTY_STORE: PipingStore = {
   version: 0,
@@ -66,6 +76,17 @@ export const EMPTY_STORE: PipingStore = {
 };
 
 export const recordKey = (step: number, code: string) => `${step}:${code}`;
+
+/** 点検で使うチェックリスト：元のチェックリストに、当日の選択で加えた行・充填元を重ねたもの */
+export function execPlan(plan: SavedPlan, exec: Execution): SavedPlan {
+  if (!exec.extraRows?.length && !exec.fillSupply) return plan;
+  const codes = new Set(plan.rows.map((r) => r.code));
+  return {
+    ...plan,
+    rows: [...plan.rows, ...(exec.extraRows ?? []).filter((r) => !codes.has(r.code))],
+    fillSupply: exec.fillSupply ?? plan.fillSupply,
+  };
+}
 
 export async function fetchStore(): Promise<PipingStore> {
   const res = await fetch("/api/piping", { cache: "no-store" });

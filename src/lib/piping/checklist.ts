@@ -5,7 +5,7 @@ import {
   type RequiredStep,
 } from "@/lib/parseProcedureChecklistFile";
 import type { Graph } from "./graph";
-import type { IsolationResult, Target } from "./isolation";
+import type { FillSupply, IsolationResult, Target } from "./isolation";
 import type { ValveState } from "./types";
 
 // 抜取計画 → 「バルブ×工程」チェックリスト。
@@ -50,6 +50,8 @@ export type SavedPlan = {
   sealPipeIds: string[];
   /** 充填に使う配管（充填工程中に図面で表示する） */
   fillPipeIds?: string[];
+  /** 充填ラインへ送る元（当日に選んだ充填元タンク・移送ポンプ）とその経路の配管。点検ごとに設定される */
+  fillSupply?: { tank: string; pump: string; pipeIds: string[] };
   steps: string[];
   rows: PlanRow[];
   /** 作成画面で再編集するための入力条件 */
@@ -132,6 +134,43 @@ export function buildPlanRows(
       row(v, "fill", [base, null, null, "open", base]);
     });
   return rows;
+}
+
+/** 充填工程で充填ラインを使うチェックリストか */
+export function needsFillSupply(plan: Pick<SavedPlan, "steps" | "fillPipeIds">) {
+  return plan.steps.includes("充填") && (plan.fillPipeIds?.length ?? 0) > 0;
+}
+
+/**
+ * 当日に選んだ充填元タンク・移送ポンプの経路の弁を、充填工程で開ける行にする。
+ * 閉じている弁は「開操作」、開いている弁は「開確認」、復旧工程で元の状態に戻す。
+ */
+export function supplyRows(
+  g: Graph,
+  plan: Pick<SavedPlan, "steps" | "rows">,
+  supply: FillSupply,
+  base: Record<string, ValveState>
+): PlanRow[] {
+  const fillIdx = plan.steps.indexOf("充填");
+  const last = plan.steps.length - 1;
+  const listed = new Set(plan.rows.map((r) => r.nodeId));
+  return supply.valves
+    .filter((v) => !listed.has(v))
+    .map((v, i) => {
+      const n = g.nodeById.get(v)!;
+      const b = base[v] ?? "close";
+      const states: (ValveState | null)[] = plan.steps.map(() => null);
+      states[0] = b;
+      states[fillIdx] = "open";
+      states[last] = b;
+      const note =
+        v === supply.pumpValve
+          ? `移送ポンプ ${supply.pump} を起動して ${supply.tank} から充填（充填完了後に停止）`
+          : i === 0
+            ? `充填元タンク ${supply.tank}`
+            : undefined;
+      return { code: n.label, nodeId: v, name: n.name, role: "fill" as const, states, ...(note ? { note } : {}) };
+    });
 }
 
 /** 既存システムの手順チェックリスト形式（Excel）として書き出す */

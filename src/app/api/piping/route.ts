@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
-import { EMPTY_STORE, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
+import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -101,9 +101,13 @@ async function updateDb(action: StoreAction): Promise<Response> {
 
 function stepTargets(store: PipingStore, execId: string, step: number) {
   const exec = store.executions.find((e) => e.id === execId);
-  const plan = exec && store.plans.find((p) => p.id === exec.planId);
-  if (!exec || !plan) return null;
-  return { exec, plan, codes: plan.rows.filter((r) => r.states[step]).map((r) => r.code) };
+  const raw = exec && store.plans.find((p) => p.id === exec.planId);
+  if (!exec || !raw) return null;
+  const plan = execPlan(raw, exec);
+  // 充填ラインを使う作業で充填元が未選択なら、充填工程は完了にしない
+  const waitingSupply =
+    plan.steps[step] === "充填" && (plan.fillPipeIds?.length ?? 0) > 0 && !exec.fillSupply;
+  return { exec, plan, waitingSupply, codes: plan.rows.filter((r) => r.states[step]).map((r) => r.code) };
 }
 
 function apply(store: PipingStore, a: StoreAction): string | null {
@@ -149,7 +153,7 @@ function apply(store: PipingStore, a: StoreAction): string | null {
             ? `${a.code} を${target === "close" ? "閉" : "開"}${verb}しました`
             : `${a.code} で異常（NG）が報告されました`,
       });
-      const done = t.codes.every((c) => t.exec.records[recordKey(a.step, c)]?.result === "OK");
+      const done = !t.waitingSupply && t.codes.every((c) => t.exec.records[recordKey(a.step, c)]?.result === "OK");
       if (done && !t.exec.events.some((e) => e.type === "step" && e.text.includes(`「${t.plan.steps[a.step]}」`))) {
         t.exec.events.unshift({ at: now, type: "step", text: `工程「${t.plan.steps[a.step]}」が完了しました` });
       }
@@ -202,6 +206,23 @@ function apply(store: PipingStore, a: StoreAction): string | null {
           : `制御室で ${a.label} の手動変更を解除しました`,
       });
       store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "setFillSupply": {
+      const exec = store.executions.find((e) => e.id === a.execId);
+      if (!exec) return "点検が見つかりません";
+      // すでに記録した経路の弁があるときは変更しない
+      const recorded = (exec.extraRows ?? []).some((r) =>
+        Object.keys(exec.records).some((k) => k.endsWith(`:${r.code}`))
+      );
+      if (recorded) return "充填元の経路の弁はすでに記録済みのため、変更できません";
+      exec.fillSupply = a.fillSupply;
+      exec.extraRows = a.rows;
+      exec.events.unshift({
+        at: now,
+        type: "info",
+        text: `充填元を ${a.fillSupply.tank}・移送ポンプ ${a.fillSupply.pump} に設定しました`,
+      });
       return null;
     }
     case "setLayout":

@@ -11,6 +11,8 @@ export type ExecView = {
   done: number;
   total: number;
   stepComplete: boolean;
+  /** 充填ラインを使う充填工程で、充填元タンク・移送ポンプがまだ選ばれていない */
+  waitingSupply: boolean;
   isLastStep: boolean;
   /** 記録をもとにした、現時点の実際の弁状態 */
   valveState: Record<string, ValveState>;
@@ -31,6 +33,7 @@ export function execView(
     });
   }
   const targets = plan.rows.filter((r) => r.states[step]);
+  const waitingSupply = plan.steps[step] === "充填" && (plan.fillPipeIds?.length ?? 0) > 0 && !exec.fillSupply;
   const marks: Record<string, NodeMark> = {};
   let done = 0;
   targets.forEach((r) => {
@@ -48,7 +51,8 @@ export function execView(
     targets,
     done,
     total: targets.length,
-    stepComplete: targets.length > 0 && done === targets.length,
+    stepComplete: targets.length > 0 && done === targets.length && !waitingSupply,
+    waitingSupply,
     isLastStep: step >= plan.steps.length - 1,
     valveState,
     marks,

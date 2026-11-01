@@ -595,6 +595,11 @@ export default function PlannerPage() {
                                 ? `充填ライン：${iso.fill.openValves.join(" → ")}（移送ポンプで送油）`
                                 : `遮断弁の微開：${iso.fill.openValves.join("・")}`}
                             </p>
+                            {iso.fill.method === "line" && (
+                              <p className="text-xs text-teal-700 dark:text-teal-400">
+                                充填元タンク・移送ポンプは、当日の運用に合わせて ② 現場点検・③ 制御室で選択します。
+                              </p>
+                            )}
                             <p className="flex items-center gap-1">
                               充填時間：<b>{formatMinutes(fillLpm > 0 ? iso.volumeL / fillLpm : null)}</b>
                               <input

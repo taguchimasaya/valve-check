@@ -4,7 +4,7 @@ import { execView, type ExecView } from "./execution";
 import { stepFlow } from "./flow";
 import type { Graph } from "./graph";
 import { currentValveState, OPERATION_META, type OperationState } from "./operations";
-import type { Execution, PipingStore } from "./store";
+import { execPlan, type Execution, type PipingStore } from "./store";
 import type { ValveState } from "./types";
 
 // 「今の状態」の系統図（制御室・トップ画面で共通）：
@@ -37,8 +37,9 @@ export function liveDiagram(g: Graph, store: PipingStore | null, hiddenExecIds: 
   const views: LiveView[] = [];
   const running = (store?.executions ?? []).filter((e) => e.status === "in_progress" && !hiddenExecIds.includes(e.id));
   for (const e of running) {
-    const plan = store!.plans.find((p) => p.id === e.planId);
-    if (!plan) continue;
+    const raw = store!.plans.find((p) => p.id === e.planId);
+    if (!raw) continue;
+    const plan = execPlan(raw, e);
     const v = execView(plan, e, valveState);
     valveState = v.valveState;
     inspLayers.push({ key: `insp-${e.id}`, pipeIds: plan.regionPipeIds, color: "#ef4444", width: 13, opacity: 0.6, blink: true });
