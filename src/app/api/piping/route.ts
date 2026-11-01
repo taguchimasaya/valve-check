@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
+import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -106,7 +107,10 @@ function stepTargets(store: PipingStore, execId: string, step: number) {
   const plan = execPlan(raw, exec);
   // 充填ラインを使う作業で充填元が未選択なら、充填工程は完了にしない
   const waitingSupply =
-    plan.steps[step] === "充填" && (plan.fillPipeIds?.length ?? 0) > 0 && !exec.fillSupply;
+    (plan.steps[step] === "充填" && (plan.fillPipeIds?.length ?? 0) > 0 && !exec.fillSupply) ||
+    (needsDayParams(plan) && !exec.dayParams) ||
+    // 循環・移送の工程は「完了」ボタンを押すまで完了にしない
+    (manualStepsOf(plan).includes(step) && !exec.manualDone?.[step]);
   return { exec, plan, waitingSupply, codes: plan.rows.filter((r) => r.states[step]).map((r) => r.code) };
 }
 
@@ -176,6 +180,10 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       const exec = store.executions.find((e) => e.id === a.execId);
       const plan = exec && store.plans.find((p) => p.id === exec.planId);
       if (!exec || !plan) return "点検が見つかりません";
+      if (needsDayParams(plan) && !exec.dayParams) return "当日のタンク・ポンプを選んでから工程を進めてください";
+      if (manualStepsOf(plan).includes(exec.currentStep) && !exec.manualDone?.[exec.currentStep]) {
+        return "「完了」の報告がまだのため、次の工程へ進めません";
+      }
       if (exec.currentStep < plan.steps.length - 1) {
         exec.currentStep += 1;
         exec.events.unshift({ at: now, type: "info", text: `工程「${plan.steps[exec.currentStep]}」を開始しました` });
@@ -206,6 +214,33 @@ function apply(store: PipingStore, a: StoreAction): string | null {
           : `制御室で ${a.label} の手動変更を解除しました`,
       });
       store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "setDayParams": {
+      const exec = store.executions.find((e) => e.id === a.execId);
+      if (!exec) return "点検が見つかりません";
+      if (Object.keys(exec.records).length) return "弁の記録があるため、当日の選択は変更できません";
+      exec.dayParams = a.params;
+      exec.extraRows = a.rows;
+      exec.stepNotes = a.stepNotes;
+      exec.stepRoutes = a.stepRoutes;
+      const text =
+        a.params.kind === "flush"
+          ? `循環経路を ${a.params.srcTank} → ${a.params.pump} → 末端部 → ${a.params.returnTank} に設定しました`
+          : `移送先を ${a.params.destTank}（払出ポンプ ${a.params.issuePump}・移送ポンプ ${a.params.transferPump}）に設定しました`;
+      exec.events.unshift({ at: now, type: "info", text });
+      return null;
+    }
+    case "markStepDone": {
+      const t = stepTargets(store, a.execId, a.step);
+      if (!t) return "点検が見つかりません";
+      t.exec.manualDone = { ...(t.exec.manualDone ?? {}), [a.step]: now };
+      const stepName = t.plan.steps[a.step];
+      const valvesDone = t.codes.every((c) => t.exec.records[recordKey(a.step, c)]?.result === "OK");
+      t.exec.events.unshift({ at: now, type: "info", text: `「${stepName}」の作業完了が報告されました` });
+      if (valvesDone && !t.exec.events.some((e) => e.type === "step" && e.text.includes(`「${stepName}」`))) {
+        t.exec.events.unshift({ at: now, type: "step", text: `工程「${stepName}」が完了しました` });
+      }
       return null;
     }
     case "setFillSupply": {

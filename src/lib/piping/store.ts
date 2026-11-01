@@ -1,4 +1,5 @@
 import type { PlanRow, SavedPlan } from "./checklist";
+import { needsDayParams, type DayParams } from "./workTypes";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { PipingLayout } from "./layout";
@@ -28,8 +29,14 @@ export type Execution = {
   events: ExecEvent[];
   /** 当日に選んだ充填元タンク・移送ポンプ（充填ラインを使う作業のみ） */
   fillSupply?: { tank: string; pump: string; pipeIds: string[] };
-  /** 当日の選択で充填工程に加えた弁の行 */
+  /** 当日の選択で充填工程に加えた弁の行（末端部作業・タンク縁切りでは当日の選択で作る行すべて） */
   extraRows?: PlanRow[];
+  /** 末端部作業・タンク縁切り：当日に選んだタンク・ポンプ */
+  dayParams?: DayParams;
+  stepNotes?: Record<number, string>;
+  stepRoutes?: Record<number, { nodeIds: string[]; pipeIds: string[] }>;
+  /** 「循環完了」「移送完了」を押した工程（工程番号 → 日時） */
+  manualDone?: Record<number, string>;
 };
 
 export type PipingStore = {
@@ -60,6 +67,15 @@ export type StoreAction =
   | { action: "clearValveOverrides" }
   | { action: "setLayout"; layout: PipingLayout }
   | {
+      action: "setDayParams";
+      execId: string;
+      params: DayParams;
+      rows: PlanRow[];
+      stepNotes: Record<number, string>;
+      stepRoutes: Record<number, { nodeIds: string[]; pipeIds: string[] }>;
+    }
+  | { action: "markStepDone"; execId: string; step: number }
+  | {
       action: "setFillSupply";
       execId: string;
       fillSupply: { tank: string; pump: string; pipeIds: string[] };
@@ -79,12 +95,16 @@ export const recordKey = (step: number, code: string) => `${step}:${code}`;
 
 /** 点検で使うチェックリスト：元のチェックリストに、当日の選択で加えた行・充填元を重ねたもの */
 export function execPlan(plan: SavedPlan, exec: Execution): SavedPlan {
-  if (!exec.extraRows?.length && !exec.fillSupply) return plan;
+  if (!exec.extraRows?.length && !exec.fillSupply && !exec.stepNotes && !exec.stepRoutes) return plan;
   const codes = new Set(plan.rows.map((r) => r.code));
+  // 末端部作業・タンク縁切りは、当日の選択で作った行がチェックリストそのものになる
+  const replace = needsDayParams(plan) && !!exec.dayParams;
   return {
     ...plan,
-    rows: [...plan.rows, ...(exec.extraRows ?? []).filter((r) => !codes.has(r.code))],
+    rows: replace ? exec.extraRows ?? [] : [...plan.rows, ...(exec.extraRows ?? []).filter((r) => !codes.has(r.code))],
     fillSupply: exec.fillSupply ?? plan.fillSupply,
+    stepNotes: { ...(plan.stepNotes ?? {}), ...(exec.stepNotes ?? {}) },
+    stepRoutes: { ...(plan.stepRoutes ?? {}), ...(exec.stepRoutes ?? {}) },
   };
 }
 

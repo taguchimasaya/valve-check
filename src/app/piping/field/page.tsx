@@ -22,13 +22,17 @@ import {
   type SavedPlan,
 } from "@/lib/piping/checklist";
 import type { Graph } from "@/lib/piping/graph";
-import { stepFlow } from "@/lib/piping/flow";
+import { flowColor, stepFlow } from "@/lib/piping/flow";
 import type { ValveState } from "@/lib/piping/types";
 import { actionText, execView } from "@/lib/piping/execution";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
 import { playBeep } from "@/lib/piping/sound";
 import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
 import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
+import DayParamsPicker from "@/components/piping/DayParamsPicker";
+import { manualStepLabel, needsDayParams, workTypeOf } from "@/lib/piping/workTypes";
+
+const volumeLabel = (p: SavedPlan) => (workTypeOf(p) === "flush" ? "末端部容量" : "抜取量");
 import { useGraph, useLocalValue, usePipingStore } from "@/lib/piping/usePiping";
 import { isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
@@ -387,7 +391,7 @@ export default function FieldPage() {
                       <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.name}</p>
                       <p className="text-xs text-zinc-500">
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
-                        {p.summary.volumeL ? ` ・ 抜取量 ${formatLiters(p.summary.volumeL)}` : ""}
+                        {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}
                       </p>
                     </div>
                     <button
@@ -494,7 +498,7 @@ export default function FieldPage() {
       key: `flow-${step}`,
       pipeIds: [...flow.directions.keys()],
       directions: flow.directions,
-      color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+      color: flowColor(flow.kind),
       width: 6,
       flow: true,
     });
@@ -511,7 +515,8 @@ export default function FieldPage() {
           <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{plan.name}</h1>
           {plan.summary.volumeL ? (
             <span className="text-xs text-zinc-500">
-              抜取量 {formatLiters(plan.summary.volumeL)} ／ 抜取時間 {formatMinutes(plan.summary.drainMinutes)}
+              {volumeLabel(plan)} {formatLiters(plan.summary.volumeL)}
+              {workTypeOf(plan) === "drain" && ` ／ 抜取時間 ${formatMinutes(plan.summary.drainMinutes)}`}
             </span>
           ) : null}
         </div>
@@ -549,6 +554,16 @@ export default function FieldPage() {
           <div className="h-2 min-w-32 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
             <div className="h-full bg-emerald-500 transition-all" style={{ width: `${v.total ? (v.done / v.total) * 100 : 0}%` }} />
           </div>
+          {!completed && v.manual && !v.manualDone && (
+            <button
+              onClick={() => act({ action: "markStepDone", execId: exec.id, step })}
+              disabled={v.waitingDay || v.done < v.total}
+              title={v.done < v.total ? "この工程の弁をすべて記録してから押してください" : undefined}
+              className="rounded-lg bg-purple-700 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-600 disabled:opacity-40"
+            >
+              {manualStepLabel(plan)}
+            </button>
+          )}
           {!completed && v.stepComplete && !v.isLastStep && (
             <button
               onClick={() => act({ action: "advanceStep", execId: exec.id })}
@@ -602,6 +617,21 @@ export default function FieldPage() {
           <div className="mt-2">
             <FillSupplyPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} />
           </div>
+        )}
+        {rawPlan && needsDayParams(rawPlan) && !completed && (
+          <div className="mt-2">
+            <DayParamsPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} />
+          </div>
+        )}
+        {!completed && plan.stepNotes?.[step] && (
+          <p className="mt-2 rounded-lg bg-purple-50 px-3 py-2 text-sm text-purple-900 dark:bg-purple-950 dark:text-purple-200">
+            {plan.stepNotes[step]}
+          </p>
+        )}
+        {v.waitingDay && (
+          <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            当日のタンク・ポンプを選んで設定すると、工程を進められます。
+          </p>
         )}
         {v.waitingSupply && (
           <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -886,6 +916,7 @@ const ROLE_MARK: Record<RowRole, NodeMark> = {
   drain: "drain",
   gauge: "gauge",
   fill: "fill",
+  route: "selected",
   imported: "selected",
 };
 
@@ -944,7 +975,7 @@ function PlanPreview({
       key: `flow-${step}`,
       pipeIds: [...flow.directions.keys()],
       directions: flow.directions,
-      color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+      color: flowColor(flow.kind),
       width: 6,
       flow: true,
     });
@@ -987,7 +1018,7 @@ function PlanPreview({
             <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-50">{plan.name}</h2>
             <p className="text-xs text-zinc-500">
               {plan.source === "excel" ? "Excel取込" : plan.purpose} ・ {plan.steps.length}工程 ・ {plan.rows.length}弁
-              {plan.summary.volumeL ? ` ・ 抜取量 ${formatLiters(plan.summary.volumeL)}` : ""}
+              {plan.summary.volumeL ? ` ・ ${volumeLabel(plan)} ${formatLiters(plan.summary.volumeL)}` : ""}
               {plan.summary.drainMinutes ? ` ・ 抜取 ${formatMinutes(plan.summary.drainMinutes)}` : ""}
               {plan.summary.fillMinutes ? ` ・ 充填 ${formatMinutes(plan.summary.fillMinutes)}` : ""}
               {exec ? ` ・ 記録 ${done}/${total}` : ""}

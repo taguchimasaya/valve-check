@@ -1,7 +1,7 @@
 import type { NodeMark, PipeLayer } from "@/components/piping/PipingDiagram";
 import { stateAtStep, type SavedPlan } from "./checklist";
 import { execView, type ExecView } from "./execution";
-import { stepFlow } from "./flow";
+import { flowColor, stepFlow } from "./flow";
 import type { Graph } from "./graph";
 import { currentValveState, OPERATION_META, type OperationState } from "./operations";
 import { execPlan, type Execution, type PipingStore } from "./store";
@@ -50,7 +50,7 @@ export function liveDiagram(g: Graph, store: PipingStore | null, hiddenExecIds: 
         key: `flow-${e.id}`,
         pipeIds: [...flow.directions.keys()],
         directions: flow.directions,
-        color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+        color: flowColor(flow.kind),
         width: 5,
         flow: true,
       });

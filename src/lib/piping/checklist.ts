@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import type { DayParams } from "./workTypes";
 import {
   buildProcedureExportWorkbook,
   parseProcedureChecklistFile,
@@ -14,7 +15,7 @@ import type { ValveState } from "./types";
 // 抜取 → （作業） → 充填 → 復旧。作業そのものは弁操作が無いため工程に含めない。
 export const PLAN_STEPS = ["作業前", "ラインナップ", "抜取", "充填", "復旧"];
 
-export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "imported";
+export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "route" | "imported";
 
 export const ROLE_LABEL: Record<RowRole, string> = {
   boundary: "遮断弁",
@@ -22,6 +23,7 @@ export const ROLE_LABEL: Record<RowRole, string> = {
   drain: "ドレン弁",
   gauge: "圧力計",
   fill: "充填弁",
+  route: "経路弁",
   imported: "取込",
 };
 
@@ -40,6 +42,17 @@ export type PlanRow = {
 export type SavedPlan = {
   id: string;
   name: string;
+  /** 作業の種類（省略時は燃料抜取） */
+  workType?: "drain" | "flush" | "tankIsolation";
+  /** 燃料末端部作業：末端部として選んだ配管 */
+  flushPipeIds?: string[];
+  /** タンク縁切り作業：開放するタンク */
+  isolationTank?: string;
+  /** 当日の選択で作られる工程ごとの説明と、燃料の流れる経路（点検ごとに重ねる） */
+  stepNotes?: Record<number, string>;
+  stepRoutes?: Record<number, { nodeIds: string[]; pipeIds: string[] }>;
+  /** 作成時に想定した当日の選択（現場・制御室の選択欄の初期値） */
+  dayDefaults?: DayParams;
   purpose: string;
   createdAt: string;
   source: "planner" | "excel";

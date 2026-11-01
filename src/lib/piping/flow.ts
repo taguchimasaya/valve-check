@@ -6,7 +6,7 @@ import type { ValveState } from "./types";
 // 図面では配管ごとに「どちらの端から流れるか」を使って矢印と流れアニメーションを描く。
 
 export type StepFlow = {
-  kind: "drain" | "fill";
+  kind: "drain" | "fill" | "route";
   /** 配管ID → 流れの上流側ノードID */
   directions: Map<string, string>;
   /** 流れの起点（抜取：ドレン口、充填：供給元） */
@@ -49,6 +49,11 @@ function spread(
   return directions;
 }
 
+/** 流れの線の色（抜取：青、充填：緑、循環・移送：紫） */
+export function flowColor(kind: StepFlow["kind"]) {
+  return kind === "drain" ? "#0284c7" : kind === "fill" ? "#0d9488" : "#9333ea";
+}
+
 export function stepFlow(
   g: Graph,
   plan: SavedPlan,
@@ -56,6 +61,13 @@ export function stepFlow(
   state: Record<string, ValveState>
 ): StepFlow | null {
   const name = plan.steps[step];
+  // 当日の選択で決まった経路（末端部の循環・タンク縁切りの移送）は、その順に流れとして描く
+  const route = plan.stepRoutes?.[step];
+  if (route?.pipeIds.length) {
+    const directions = new Map<string, string>();
+    route.pipeIds.forEach((pid, i) => directions.set(pid, route.nodeIds[i]));
+    return { kind: "route", directions, origins: [route.nodeIds[0]] };
+  }
   const region = new Set(plan.regionPipeIds);
   if (!region.size) return null;
 

@@ -1,5 +1,6 @@
 import type { NodeMark } from "@/components/piping/PipingDiagram";
 import { isOperateCell, type PlanRow, type SavedPlan } from "./checklist";
+import { manualStepsOf, needsDayParams } from "./workTypes";
 import { recordKey, type Execution } from "./store";
 import type { ValveState } from "./types";
 
@@ -13,6 +14,11 @@ export type ExecView = {
   stepComplete: boolean;
   /** 充填ラインを使う充填工程で、充填元タンク・移送ポンプがまだ選ばれていない */
   waitingSupply: boolean;
+  /** 末端部作業・タンク縁切りで、当日のタンク・ポンプがまだ選ばれていない */
+  waitingDay: boolean;
+  /** この工程は「循環完了」「移送完了」ボタンで終える */
+  manual: boolean;
+  manualDone: boolean;
   isLastStep: boolean;
   /** 記録をもとにした、現時点の実際の弁状態 */
   valveState: Record<string, ValveState>;
@@ -34,6 +40,11 @@ export function execView(
   }
   const targets = plan.rows.filter((r) => r.states[step]);
   const waitingSupply = plan.steps[step] === "充填" && (plan.fillPipeIds?.length ?? 0) > 0 && !exec.fillSupply;
+  // 末端部作業・タンク縁切り：当日のタンク・ポンプが未選択なら、どの工程も進めない
+  const waitingDay = needsDayParams(plan) && !exec.dayParams;
+  // 循環・移送の工程は「完了」ボタンで終える
+  const manual = manualStepsOf(plan).includes(step);
+  const manualDone = !!exec.manualDone?.[step];
   const marks: Record<string, NodeMark> = {};
   let done = 0;
   targets.forEach((r) => {
@@ -51,8 +62,14 @@ export function execView(
     targets,
     done,
     total: targets.length,
-    stepComplete: targets.length > 0 && done === targets.length && !waitingSupply,
+    stepComplete:
+      !waitingSupply &&
+      !waitingDay &&
+      (manual ? manualDone && done === targets.length : targets.length > 0 && done === targets.length),
     waitingSupply,
+    waitingDay,
+    manual,
+    manualDone,
     isLastStep: step >= plan.steps.length - 1,
     valveState,
     marks,

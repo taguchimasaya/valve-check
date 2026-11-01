@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import PipingDiagram, { DiagramLegend, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
 import { needsFillSupply, ROLE_LABEL, stateAtStep, stateGlyph, isOperateCell, type SavedPlan } from "@/lib/piping/checklist";
-import { stepFlow } from "@/lib/piping/flow";
+import { flowColor, stepFlow } from "@/lib/piping/flow";
 import { normalValveState, type Graph } from "@/lib/piping/graph";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
 import { stepOps, workBounds } from "@/lib/piping/print";
 import { execPlan, type Execution } from "@/lib/piping/store";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { WORK_TYPES, workTypeOf } from "@/lib/piping/workTypes";
 
 // 印刷用（PDF保存用）のページ：チェックリスト（全工程）と、工程ごとの図面。
 // ブラウザの印刷機能で「PDFに保存」を選ぶと PDF になる。
@@ -103,23 +104,48 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
     : needsFillSupply(plan)
       ? "当日の運用で選択（タンク：＿＿＿＿　移送ポンプ：＿＿＿＿）"
       : "—";
-  const info: [string, string][] = [
-    ["作業名", plan.name],
-    ["作業種別", plan.source === "excel" ? "Excel取込" : plan.purpose],
-    ["抜取対象", targetLabel(graph, plan)],
-    ["作成日", new Date(plan.createdAt).toLocaleDateString("ja-JP")],
-    ["抜取量", plan.summary.volumeL ? formatLiters(plan.summary.volumeL) : "—"],
-    ["抜取時間", formatMinutes(plan.summary.drainMinutes)],
-    ["充填時間", formatMinutes(plan.summary.fillMinutes ?? null)],
-    ["充填元", fillSource],
-  ];
-  const cautions = [...plan.summary.warnings, ...plan.summary.notes];
+  const type = workTypeOf(plan);
+  const day = exec?.dayParams;
+  const daySel =
+    type === "flush"
+      ? day?.kind === "flush"
+        ? `${day.srcTank} → ${day.pump} → 末端部 → ${day.returnTank}`
+        : "当日の運用で選択（送り元：＿＿＿　ポンプ：＿＿＿　戻り先：＿＿＿）"
+      : day?.kind === "tankIsolation"
+        ? `移送先 ${day.destTank}／払出ポンプ ${day.issuePump}／移送ポンプ ${day.transferPump}`
+        : "当日の運用で選択（移送先：＿＿＿　払出ポンプ：＿＿＿　移送ポンプ：＿＿＿）";
+  const info: [string, string][] =
+    type === "drain"
+      ? [
+          ["作業名", plan.name],
+          ["作業種別", plan.source === "excel" ? "Excel取込" : plan.purpose],
+          ["抜取対象", targetLabel(graph, plan)],
+          ["作成日", new Date(plan.createdAt).toLocaleDateString("ja-JP")],
+          ["抜取量", plan.summary.volumeL ? formatLiters(plan.summary.volumeL) : "—"],
+          ["抜取時間", formatMinutes(plan.summary.drainMinutes)],
+          ["充填時間", formatMinutes(plan.summary.fillMinutes ?? null)],
+          ["充填元", fillSource],
+        ]
+      : [
+          ["作業名", plan.name],
+          ["作業種別", plan.purpose],
+          [type === "flush" ? "末端部" : "縁切りタンク", targetLabel(graph, plan)],
+          ["作成日", new Date(plan.createdAt).toLocaleDateString("ja-JP")],
+          ...(type === "flush"
+            ? ([["末端部容量", plan.summary.volumeL ? formatLiters(plan.summary.volumeL) : "—"]] as [string, string][])
+            : []),
+          [type === "flush" ? "循環経路" : "移送", daySel],
+        ];
+  const stepNotes = day ? plan.steps.map((st, i) => (plan.stepNotes?.[i] ? `${st}：${plan.stepNotes[i]}` : "")).filter(Boolean) : [];
+  const cautions = [...plan.summary.warnings, ...stepNotes, ...plan.summary.notes];
 
   return (
     <Sheet>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-[10px] text-zinc-500">仮想空港給油施設　燃料抜取・充填 作業チェックリスト</p>
+          <p className="text-[10px] text-zinc-500">
+            仮想空港給油施設　{type === "drain" ? "燃料抜取・充填" : WORK_TYPES[type].label} 作業チェックリスト
+          </p>
           <h2 className="text-xl font-bold">{plan.name}</h2>
         </div>
         <table className="border-collapse text-center text-[10px]">
@@ -250,7 +276,7 @@ function DrawingSheets({ graph, plan }: { graph: Graph; plan: SavedPlan }) {
             key: "flow",
             pipeIds: [...flow.directions.keys()],
             directions: flow.directions,
-            color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
+            color: flowColor(flow.kind),
             width: 6,
           });
         }

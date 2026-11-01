@@ -16,6 +16,8 @@ import {
 } from "@/lib/piping/operations";
 import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
 import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
+import DayParamsPicker from "@/components/piping/DayParamsPicker";
+import { manualStepLabel, needsDayParams } from "@/lib/piping/workTypes";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { isStepCompleteAudioEnabled, isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
@@ -399,6 +401,24 @@ export default function ControlPage() {
                         <div className="mt-2">
                           <FillSupplyPicker graph={g} plan={rawPlan} exec={e} base={opState.valveState} act={act} compact />
                         </div>
+                      )}
+                      {rawPlan && needsDayParams(rawPlan) && (
+                        <div className="mt-2">
+                          <DayParamsPicker graph={g} plan={rawPlan} exec={e} base={opState.valveState} act={act} compact />
+                        </div>
+                      )}
+                      {plan?.stepNotes?.[e.currentStep] && (
+                        <p className="mt-2 rounded bg-purple-50 px-2 py-1 text-[11px] text-purple-900 dark:bg-purple-950 dark:text-purple-200">
+                          {plan.stepNotes[e.currentStep]}
+                        </p>
+                      )}
+                      {plan && vw?.v.manual && !vw.v.manualDone && !vw.v.waitingDay && vw.v.done >= vw.v.total && (
+                        <button
+                          onClick={() => act({ action: "markStepDone", execId: e.id, step: e.currentStep })}
+                          className="mt-2 rounded bg-purple-700 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-600"
+                        >
+                          {manualStepLabel(plan)}
+                        </button>
                       )}
                       {vw && vw.conflicts.length > 0 && (
                         <ul className="mt-2 space-y-1">
