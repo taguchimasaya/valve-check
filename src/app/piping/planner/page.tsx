@@ -19,7 +19,6 @@ import { flowColor, stepFlow } from "@/lib/piping/flow";
 import {
   ALL_PUMPS,
   buildDayChecklist,
-  DRAIN_SUBTYPES,
   FLUSH_STEPS,
   FLUSH_TURNOVER,
   flushPumps,
@@ -42,14 +41,13 @@ import {
   planToWorkbook,
   ROLE_LABEL,
   stateAtStep,
-  stateGlyph,
+  rowGlyph,
   type SavedPlan,
 } from "@/lib/piping/checklist";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
-const PURPOSES = DRAIN_SUBTYPES;
 const STEPS_OF: Record<WorkType, string[]> = { drain: PLAN_STEPS, flush: FLUSH_STEPS, tankIsolation: ISOLATION_STEPS };
 const yardOf = (tank: string) => tank.slice(2, 3);
 
@@ -69,7 +67,6 @@ export default function PlannerPage() {
   const [destTank, setDestTank] = useState("T-102");
   const [issuePump, setIssuePump] = useState("P-11");
   const [transferPump, setTransferPump] = useState("TP-1");
-  const [purpose, setPurpose] = useState(PURPOSES[0]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [expandToDrain, setExpandToDrain] = useState(true);
@@ -382,8 +379,8 @@ export default function PlannerPage() {
     ];
     return {
       id: editingId ?? newId(),
-      name: name.trim() || `${purpose}（${targets.map((t) => (t.type === "node" ? g.nodeById.get(t.id)!.label : "配管")).join("・")}）`,
-      purpose,
+      name: name.trim() || `燃料抜取（${targets.map((t) => (t.type === "node" ? g.nodeById.get(t.id)!.label : "配管")).join("・")}）`,
+      purpose: WORK_TYPES.drain.label,
       createdAt: new Date().toISOString(),
       source: "planner",
       targets,
@@ -435,7 +432,6 @@ export default function PlannerPage() {
     setName(p.name);
     const type = workTypeOf(p);
     setWorkType(type);
-    if (type === "drain") setPurpose(p.purpose);
     setTargets(type === "drain" ? p.targets : []);
     setFlushPipes(p.flushPipeIds ?? []);
     setIsoTank(p.isolationTank ?? null);
@@ -596,15 +592,6 @@ export default function PlannerPage() {
                 placeholder="作業名（空欄なら自動）"
                 className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
               />
-              <select
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                className={`mt-2 w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700 ${isDay ? "hidden" : ""}`}
-              >
-                {PURPOSES.map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
               {isDay ? (
                 <DayTargetPanel
                   g={g}
@@ -976,7 +963,7 @@ export default function PlannerPage() {
                                         : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"
                                   }`}
                                 >
-                                  {stateGlyph(s)}
+                                  {rowGlyph(r, s, i)}
                                 </span>
                               </td>
                             ))}

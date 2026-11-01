@@ -4,7 +4,7 @@ import { Suspense, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import PipingDiagram, { DiagramLegend, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
-import { needsFillSupply, ROLE_LABEL, stateAtStep, stateGlyph, isOperateCell, type SavedPlan } from "@/lib/piping/checklist";
+import { needsFillSupply, ROLE_LABEL, rowGlyph, stateAtStep, isOperateCell, type SavedPlan } from "@/lib/piping/checklist";
 import { flowColor, stepFlow } from "@/lib/piping/flow";
 import { normalValveState, type Graph } from "@/lib/piping/graph";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
@@ -227,8 +227,9 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
                 const operate = isOperateCell(r, i) && i > 0;
                 const glyph = (
                   <span className={!s ? "text-zinc-300" : operate ? (s === "open" ? "font-bold text-emerald-700" : "font-bold text-red-700") : "text-zinc-600"}>
-                    {stateGlyph(s)}
-                    {s && i > 0 && <span className="ml-0.5 text-[8px]">{operate ? "操作" : "確認"}</span>}
+                    {rowGlyph(r, s, i)}
+                    {s && i > 0 && r.role !== "pump" && <span className="ml-0.5 text-[8px]">{operate ? "操作" : "確認"}</span>}
+                    {s && i > 0 && r.role === "pump" && !operate && <span className="ml-0.5 text-[8px]">確認</span>}
                   </span>
                 );
                 if (i === 0)
@@ -299,7 +300,19 @@ function DrawingSheets({ graph, plan }: { graph: Graph; plan: SavedPlan }) {
               </span>
             </div>
             {step > 0 && (
-              <div className="mt-1 grid grid-cols-3 gap-2 text-[10.5px]">
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px]">
+                {ops.stopped.length > 0 && (
+                  <p>
+                    <b className="mr-1 rounded bg-zinc-700 px-1 text-white">ポンプ停止</b>
+                    {codes(ops.stopped)}
+                  </p>
+                )}
+                {ops.started.length > 0 && (
+                  <p>
+                    <b className="mr-1 rounded bg-green-700 px-1 text-white">ポンプ起動</b>
+                    {codes(ops.started)}
+                  </p>
+                )}
                 <p>
                   <b className="mr-1 rounded bg-red-600 px-1 text-white">閉操作</b>
                   {codes(ops.closed)}

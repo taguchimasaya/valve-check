@@ -16,7 +16,7 @@ import {
   needsFillSupply,
   ROLE_LABEL,
   stateAtStep,
-  stateGlyph,
+  rowGlyph,
   type PlanRow,
   type RowRole,
   type SavedPlan,
@@ -121,9 +121,9 @@ export default function FieldPage() {
     const target = row.states[exec.currentStep];
     if (state !== target) {
       playBeep("NG");
-      setChoiceError(
-        `${row.code} は${target === "close" ? "閉" : "開"}操作の対象です。${state === "close" ? "閉" : "開"}操作は選択できません。`
-      );
+      const word = (s: "open" | "close") =>
+        row.role === "pump" ? (s === "open" ? "起動" : "停止") : s === "open" ? "開操作" : "閉操作";
+      setChoiceError(`${row.code} は${word(target ?? "open")}の対象です。${word(state)}は選択できません。`);
       return;
     }
     record(row, "OK");
@@ -658,7 +658,7 @@ export default function FieldPage() {
                 valveState={v.valveState}
                 layers={layers}
                 marks={v.marks}
-                clickableKinds={["valve", "drain", "gauge"]}
+                clickableKinds={["valve", "drain", "gauge", "pump", "transferPump"]}
                 onNodeClick={(id) => handleCode(g.nodeById.get(id)!.label, false)}
                 height="62vh"
                 toolbar={
@@ -786,13 +786,13 @@ export default function FieldPage() {
                     onClick={() => choose(pending, "close")}
                     className="rounded-lg bg-red-500 py-3 text-base font-bold text-white hover:bg-red-600"
                   >
-                    閉操作
+                    {pending.role === "pump" ? "停止" : "閉操作"}
                   </button>
                   <button
                     onClick={() => choose(pending, "open")}
                     className="rounded-lg bg-emerald-600 py-3 text-base font-bold text-white hover:bg-emerald-500"
                   >
-                    開操作
+                    {pending.role === "pump" ? "起動" : "開操作"}
                   </button>
                 </div>
                 <button
@@ -883,7 +883,7 @@ function StepTable({
                                 : "bg-emerald-500 text-white"
                       } ${current && s && !rec ? "ring-2 ring-amber-400" : ""}`}
                     >
-                      {stateGlyph(s)}
+                      {rowGlyph(r, s, i)}
                       {s && i > 0 && <span>{rec?.result === "OK" ? "☑" : "☐"}</span>}
                     </button>
                   </td>
@@ -917,6 +917,7 @@ const ROLE_MARK: Record<RowRole, NodeMark> = {
   gauge: "gauge",
   fill: "fill",
   route: "selected",
+  pump: "selected",
   imported: "selected",
 };
 
@@ -985,9 +986,12 @@ function PlanPreview({
   const opened: PlanRow[] = [];
   const closed: PlanRow[] = [];
   const confirmed: PlanRow[] = [];
+  const started: PlanRow[] = [];
+  const stopped: PlanRow[] = [];
   plan.rows.forEach((r) => {
     if (!r.states[step] || step === 0) return;
     if (!isOperateCell(r, step)) confirmed.push(r);
+    else if (r.role === "pump") (r.states[step] === "open" ? started : stopped).push(r);
     else if (r.states[step] === "open") opened.push(r);
     else closed.push(r);
   });
@@ -1081,6 +1085,18 @@ function PlanPreview({
             ) : (
               <>
                 <div className="space-y-1">
+                  {stopped.length > 0 && (
+                    <p>
+                      <span className="mr-1 inline-block rounded bg-zinc-700 px-1.5 text-white">ポンプ停止</span>
+                      {codes(stopped)}
+                    </p>
+                  )}
+                  {started.length > 0 && (
+                    <p>
+                      <span className="mr-1 inline-block rounded bg-green-700 px-1.5 text-white">ポンプ起動</span>
+                      {codes(started)}
+                    </p>
+                  )}
                   <p>
                     <span className="mr-1 inline-block rounded bg-red-500 px-1.5 text-white">閉操作</span>
                     {codes(closed) || "なし"}
@@ -1191,7 +1207,7 @@ function PlanPreview({
                                     : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"
                             }`}
                           >
-                            {stateGlyph(st)}
+                            {rowGlyph(r, st, i)}
                             {exec && st && i > 0 ? (rec?.result === "OK" ? "☑" : "☐") : ""}
                           </span>
                         </td>

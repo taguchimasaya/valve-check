@@ -1,5 +1,5 @@
 import type { PlanRow, SavedPlan } from "./checklist";
-import { shortestPath, type Graph } from "./graph";
+import { routeSideValves, shortestPath, type Graph } from "./graph";
 import type { ValveState } from "./types";
 
 // チェックリストを使う作業の種類と、当日の選択（タンク・ポンプ）から作るチェックリスト。
@@ -14,14 +14,6 @@ export const WORK_TYPES: Record<WorkType, { label: string; desc: string }> = {
   flush: { label: "燃料末端部作業（循環）", desc: "通常使用しないライン（末端部）の燃料をポンプで循環させる" },
   tankIsolation: { label: "タンク縁切り作業", desc: "タンク開放のため、燃料を別タンクへ移送して縁切りする" },
 };
-
-export const DRAIN_SUBTYPES = [
-  "燃料抜取（機器点検）",
-  "燃料抜取（配管工事）",
-  "フィルターエレメント交換",
-  "ストレーナー清掃",
-  "バルブ交換",
-];
 
 export const FLUSH_STEPS = ["作業前", "ラインナップ", "循環", "復旧"];
 export const ISOLATION_STEPS = ["作業前", "払出系統で移送", "移送系統で移送", "縁切り"];
@@ -172,14 +164,92 @@ export type DayResult = {
   error?: string;
 };
 
-function row(g: Graph, id: string, states: (ValveState | null)[], note?: string): PlanRow {
+function row(g: Graph, id: string, states: (ValveState | null)[], note?: string, role: PlanRow["role"] = "route"): PlanRow {
   const n = g.nodeById.get(id)!;
-  return { code: n.label, nodeId: id, name: n.name, role: "route", states, ...(note ? { note } : {}) };
+  return { code: n.label, nodeId: id, name: n.name, role, states, ...(note ? { note } : {}) };
 }
 
 function formatMin(min: number) {
   if (!isFinite(min)) return "—";
   return min < 60 ? `約${Math.ceil(min)}分` : `約${Math.floor(min / 60)}時間${Math.ceil(min % 60)}分`;
+}
+
+/** 使うポンプ：起動する工程・停止する工程 */
+type PumpUse = { id: string; on: number; off: number; note: string };
+
+/**
+ * 工程ごとの経路から、弁とポンプの行を作る。
+ * ・経路上の弁は開、経路から枝分かれする先の弁は閉（流したい方向以外へ回り込ませない）
+ * ・前の工程で操作した弁のうち、今の工程で使わないものは作業前の状態に戻す
+ * ・最終工程では finalClose の弁を閉め、それ以外はすべて作業前の状態に戻す
+ */
+function lineupRows(
+  g: Graph,
+  nSteps: number,
+  lineups: Record<number, OrderedRoute>,
+  base: Record<string, ValveState>,
+  finalClose: string[],
+  pumps: PumpUse[],
+  notes: Record<string, string>
+): PlanRow[] {
+  const order: string[] = [];
+  const states = new Map<string, (ValveState | null)[]>();
+  const side = new Set<string>();
+  const onRoute = new Set<string>();
+  const cur = new Map<string, ValveState>();
+  const b = (v: string) => base[v] ?? "close";
+  const ensure = (v: string) => {
+    if (!states.has(v)) {
+      order.push(v);
+      const a: (ValveState | null)[] = Array(nSteps).fill(null);
+      a[0] = b(v);
+      states.set(v, a);
+    }
+    return states.get(v)!;
+  };
+  const pumpIds = new Set(pumps.map((p) => p.id));
+  for (let i = 1; i < nSteps; i++) {
+    const r = lineups[i];
+    const last = i === nSteps - 1;
+    if (!r && !last) continue;
+    const want = new Map<string, ValveState>();
+    if (r) {
+      valvesOf(g, r).forEach((v) => {
+        want.set(v, "open");
+        onRoute.add(v);
+      });
+      routeSideValves(g, r).forEach((v) => {
+        if (want.has(v)) return;
+        want.set(v, "close");
+        side.add(v);
+      });
+    }
+    if (last) finalClose.forEach((v) => want.set(v, "close"));
+    want.forEach((s, v) => {
+      ensure(v)[i] = s;
+      cur.set(v, s);
+    });
+    // 今の工程で使わない弁は、作業前の状態に戻す
+    order.forEach((v) => {
+      if (want.has(v) || (cur.get(v) ?? b(v)) === b(v)) return;
+      states.get(v)![i] = b(v);
+      cur.set(v, b(v));
+    });
+  }
+  const pumpRows = pumps.map((p) => {
+    const st: (ValveState | null)[] = Array(nSteps).fill(null);
+    st[0] = "close";
+    st[p.on] = "open";
+    if (p.off < nSteps) st[p.off] = "close";
+    return row(g, p.id, st, p.note, "pump");
+  });
+  const valveRows = order
+    .filter((v) => !pumpIds.has(v))
+    .map((v) => {
+      const onlySide = side.has(v) && !onRoute.has(v);
+      return row(g, v, states.get(v)!, notes[v] ?? (onlySide ? "経路の分岐先（燃料の回り込み防止のため閉）" : undefined));
+    });
+  return [...pumpRows, ...valveRows];
 }
 
 export function buildDayChecklist(
@@ -188,24 +258,26 @@ export function buildDayChecklist(
   params: DayParams,
   base: Record<string, ValveState>
 ): DayResult {
+  const n = plan.steps.length;
   if (params.kind === "flush") {
     const route = flushRoute(g, plan.flushPipeIds ?? [], params.srcTank, params.pump, params.returnTank);
     if (!route) return { rows: [], stepNotes: {}, stepRoutes: {}, error: "選んだタンク・ポンプでは末端部を通る経路が見つかりません" };
     const pv = pumpValve(g, route, params.pump);
-    const rows = valvesOf(g, route).map((v) => {
-      const b = base[v] ?? "close";
-      // 0 作業前 / 1 ラインナップ（開） / 2 循環（弁操作なし） / 3 復旧（閉じていた弁を閉に戻す）
-      return row(g, v, [b, "open", null, b === "close" ? "close" : null], v === pv ? `${params.pump} の吐出弁（循環工程でポンプを起動）` : undefined);
-    });
+    const notes: Record<string, string> = {};
+    if (pv) notes[pv] = `${params.pump} の吐出弁`;
+    // 0 作業前 / 1 ラインナップ / 2 循環（ポンプ起動） / 3 復旧（ポンプ停止 → 弁を元に戻す）
+    const rows = lineupRows(g, n, { 1: route }, base, [], [
+      { id: params.pump, on: 2, off: 3, note: "循環工程で起動、復旧工程の最初に停止" },
+    ], notes);
     const vol = (plan.summary.volumeL ?? 0) * FLUSH_TURNOVER;
     const lpm = pumpLpm(g, params.pump);
     return {
       rows,
       stepRoutes: { 2: route },
       stepNotes: {
-        1: `循環経路を構成します：${params.srcTank} → ${params.pump} → 末端部 → ${params.returnTank}`,
-        2: `${params.pump} を起動し、${params.srcTank} → 末端部 → ${params.returnTank} へ循環。目標：末端部の配管容量の${FLUSH_TURNOVER}倍 ${(vol / 1000).toFixed(2)} kL（${lpm} L/min で${formatMin(vol / lpm)}）。完了したら ${params.pump} を停止して「循環完了」を押してください。`,
-        3: "循環経路の弁を元の状態に戻します。",
+        1: `循環経路を構成します：${params.srcTank} → ${params.pump} → 末端部 → ${params.returnTank}（経路の分岐先の弁は閉）`,
+        2: `${params.pump} を起動し、${params.srcTank} → 末端部 → ${params.returnTank} へ循環。目標：末端部の配管容量の${FLUSH_TURNOVER}倍 ${(vol / 1000).toFixed(2)} kL（${lpm} L/min で${formatMin(vol / lpm)}）。目標に達したら「循環完了」を押してください。`,
+        3: `最初に ${params.pump} を停止し、循環経路の弁を元の状態に戻します。`,
       },
     };
   }
@@ -216,36 +288,25 @@ export function buildDayChecklist(
   if (!r1 || !r2) {
     return { rows: [], stepNotes: {}, stepRoutes: {}, error: "選んだタンク・ポンプでは移送経路が見つかりません" };
   }
-  const v1 = new Set(valvesOf(g, r1));
-  const v2 = new Set(valvesOf(g, r2));
   const nz = Object.values(nozzles(tank));
-  const all = [...new Set([...v1, ...v2, ...nz])];
+  const notes: Record<string, string> = {};
   const p1 = pumpValve(g, r1, params.issuePump);
   const p2 = pumpValve(g, r2, params.transferPump);
-  const rows = all.map((v) => {
-    const b = base[v] ?? "close";
-    // 0 作業前 / 1 払出系統で移送 / 2 移送系統で移送 / 3 縁切り
-    // 対象タンクの受入弁は最初に閉じる（受入ラインへ送った燃料が戻らないように）
-    const s1: ValveState | null = v1.has(v) ? "open" : v === nozzles(tank).R ? "close" : null;
-    const s2: ValveState | null = v2.has(v) ? "open" : v1.has(v) && b === "close" ? "close" : null;
-    const s3: ValveState | null = nz.includes(v) ? "close" : v2.has(v) && b === "close" ? "close" : null;
-    const note =
-      v === p1
-        ? `${params.issuePump} の吐出弁（払出系統で移送：ポンプ起動 → 吸えなくなったら停止）`
-        : v === p2
-          ? `${params.transferPump} の吐出弁（移送系統で移送：ポンプ起動 → 移送後に停止）`
-          : nz.includes(v)
-            ? `${tank} のノズル弁（縁切りで全閉）`
-            : undefined;
-    return row(g, v, [b, s1, s2, s3], note);
-  });
+  if (p1) notes[p1] = `${params.issuePump} の吐出弁`;
+  if (p2) notes[p2] = `${params.transferPump} の吐出弁`;
+  nz.forEach((v) => (notes[v] = `${tank} のノズル弁（縁切りで全閉）`));
+  // 0 作業前 / 1 払出系統で移送 / 2 移送系統で移送 / 3 縁切り
+  const rows = lineupRows(g, n, { 1: r1, 2: r2 }, base, nz, [
+    { id: params.issuePump, on: 1, off: 2, note: "払出系統で移送で起動、移送系統で移送の最初に停止" },
+    { id: params.transferPump, on: 2, off: 3, note: "移送系統で移送で起動、縁切りの最初に停止" },
+  ], notes);
   return {
     rows,
     stepRoutes: { 1: r1, 2: r2 },
     stepNotes: {
-      1: `${params.issuePump} を起動し、${tank} → 払出系統 → バイパス → 受入ライン → ${params.destTank} へ移送。払出配管で吸えなくなったら ${params.issuePump} を停止して「移送完了」を押してください。`,
-      2: `払出系統の弁を閉じ、${params.transferPump} を起動して ${tank} → 移送系統 → 受入ライン → ${params.destTank} へ残油を移送。終わったら ${params.transferPump} を停止して「移送完了」を押してください。`,
-      3: `${tank} の受入・払出・移送弁をすべて閉止して縁切りします（必要に応じて仕切板を挿入）。`,
+      1: `経路の弁を開け（分岐先は閉）、${params.issuePump} を起動して ${tank} → 払出系統 → バイパス → 受入ライン → ${params.destTank} へ移送。払出配管で吸えなくなったら「移送完了」を押してください。`,
+      2: `最初に ${params.issuePump} を停止。払出系統の弁を戻し、${params.transferPump} を起動して ${tank} → 移送系統 → 受入ライン → ${params.destTank} へ残油を移送。終わったら「移送完了」を押してください。`,
+      3: `最初に ${params.transferPump} を停止。${tank} の受入・払出・移送弁をすべて閉止して縁切りし（必要に応じて仕切板を挿入）、ほかの弁は元の状態に戻します。`,
     },
   };
 }

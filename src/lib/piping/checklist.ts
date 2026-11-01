@@ -15,7 +15,7 @@ import type { ValveState } from "./types";
 // 抜取 → （作業） → 充填 → 復旧。作業そのものは弁操作が無いため工程に含めない。
 export const PLAN_STEPS = ["作業前", "ラインナップ", "抜取", "充填", "復旧"];
 
-export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "route" | "imported";
+export type RowRole = "boundary" | "internal" | "drain" | "gauge" | "fill" | "route" | "pump" | "imported";
 
 export const ROLE_LABEL: Record<RowRole, string> = {
   boundary: "遮断弁",
@@ -24,6 +24,7 @@ export const ROLE_LABEL: Record<RowRole, string> = {
   gauge: "圧力計",
   fill: "充填弁",
   route: "経路弁",
+  pump: "ポンプ",
   imported: "取込",
 };
 
@@ -138,6 +139,10 @@ export function buildPlanRows(
       row(v, "drain", ["close", null, "open", "close", null], pumpNote);
     });
   });
+  // 抜取用配管の抜取ポンプ：抜取工程で起動、充填工程の最初に停止
+  [...new Set(drainIds.map((d) => g.nodeById.get(d)?.drainSystem).filter((p): p is string => !!p && g.nodeById.has(p)))].forEach(
+    (p) => row(p, "pump", ["close", null, "open", "close", null], "抜取工程で起動、充填工程の最初に停止")
+  );
   gaugeIds.forEach((d) => row(d, "gauge", ["close", "open", null, null, "close"]));
   // 遮断範囲の外側にある充填ライン上の弁（充填元弁など）
   iso.fill.openValves
@@ -167,7 +172,31 @@ export function supplyRows(
   const fillIdx = plan.steps.indexOf("充填");
   const last = plan.steps.length - 1;
   const listed = new Set(plan.rows.map((r) => r.nodeId));
-  return supply.valves
+  // 経路から枝分かれする先の弁は、充填中は閉める（移送吐出主弁・別ヤードの吸込弁など）
+  const side = (supply.sideValves ?? [])
+    .filter((v) => !listed.has(v) && !supply.valves.includes(v))
+    .map((v) => {
+      const n = g.nodeById.get(v)!;
+      const b = base[v] ?? "close";
+      const states: (ValveState | null)[] = plan.steps.map(() => null);
+      states[0] = b;
+      states[fillIdx] = "close";
+      states[last] = b;
+      return { code: n.label, nodeId: v, name: n.name, role: "fill" as const, states, note: "充填経路の分岐先（充填中は閉）" };
+    });
+  const pumpStates: (ValveState | null)[] = plan.steps.map(() => null);
+  pumpStates[0] = "close";
+  pumpStates[fillIdx] = "open";
+  pumpStates[last] = "close";
+  const pumpRow: PlanRow = {
+    code: g.nodeById.get(supply.pump)!.label,
+    nodeId: supply.pump,
+    name: g.nodeById.get(supply.pump)!.name,
+    role: "pump",
+    states: pumpStates,
+    note: "充填工程で起動、復旧工程の最初に停止",
+  };
+  return [pumpRow, ...supply.valves
     .filter((v) => !listed.has(v))
     .map((v, i) => {
       const n = g.nodeById.get(v)!;
@@ -183,7 +212,7 @@ export function supplyRows(
             ? `充填元タンク ${supply.tank}`
             : undefined;
       return { code: n.label, nodeId: v, name: n.name, role: "fill" as const, states, ...(note ? { note } : {}) };
-    });
+    }), ...side];
 }
 
 /** 既存システムの手順チェックリスト形式（Excel）として書き出す */
@@ -260,6 +289,24 @@ export function newId() {
 
 export function stateGlyph(s: ValveState | null) {
   return s === "close" ? "☓" : s === "open" ? "○" : "／";
+}
+
+/** ポンプの行か（状態の open＝運転、close＝停止） */
+export function isPumpRow(r: Pick<PlanRow, "role">) {
+  return r.role === "pump";
+}
+
+/** 表の記号：弁は ○／☓、ポンプはその工程で起動するなら 起動、運転を続けるなら 運転、止めるなら 停止 */
+export function rowGlyph(r: PlanRow, s: ValveState | null, step?: number) {
+  if (!isPumpRow(r) || !s) return stateGlyph(s);
+  if (s === "close") return "停止";
+  return step !== undefined && step > 0 && isOperateCell(r, step) ? "起動" : "運転";
+}
+
+/** 操作の呼び方：弁は 開／閉、ポンプは 起動／停止 */
+export function opWord(r: Pick<PlanRow, "role">, s: ValveState) {
+  if (isPumpRow(r)) return s === "open" ? "起動" : "停止";
+  return s === "open" ? "開" : "閉";
 }
 
 /** ある工程を終えた時点の弁状態（作業前の状態に、各工程の目標状態を順に重ねる） */

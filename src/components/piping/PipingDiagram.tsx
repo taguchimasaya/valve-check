@@ -459,17 +459,33 @@ export default function PipingDiagram({
       case "transferPump": {
         const d = o?.downstream ?? [n.x + 1, n.y];
         const ang = (Math.atan2(d[1] - n.y, d[0] - n.x) * 180) / Math.PI;
+        // 運転中（状態 open）のポンプは緑で塗り、「運転中」と表示する
+        const running = valveState[n.id] === "open";
         return (
           <g>
-            <circle cx={n.x} cy={n.y} r={15} className="fill-white dark:fill-zinc-900" stroke="#1d4ed8" strokeWidth={2} />
+            {running && <circle cx={n.x} cy={n.y} r={21} fill="#22c55e" opacity={0.35} />}
+            <circle
+              cx={n.x}
+              cy={n.y}
+              r={15}
+              className={running ? "" : "fill-white dark:fill-zinc-900"}
+              fill={running ? "#16a34a" : undefined}
+              stroke={running ? "#15803d" : "#1d4ed8"}
+              strokeWidth={2}
+            />
             <polygon
               transform={`rotate(${ang} ${n.x} ${n.y})`}
               points={`${n.x - 7},${n.y - 8} ${n.x + 9},${n.y} ${n.x - 7},${n.y + 8}`}
-              fill="#1d4ed8"
+              fill={running ? "#ffffff" : "#1d4ed8"}
             />
             <text x={n.x} y={n.y + 27} textAnchor="middle" fontSize={10} fontWeight={600} className={textCls}>
               {n.label}
             </text>
+            {running && (
+              <text x={n.x} y={n.y - 24} textAnchor="middle" fontSize={9} fontWeight={700} fill="#15803d">
+                運転中
+              </text>
+            )}
           </g>
         );
       }
@@ -716,7 +732,11 @@ export default function PipingDiagram({
                 {renderNode(n)}
                 <title>
                   {n.name}
-                  {valveState[n.id] ? `（${valveState[n.id] === "open" ? "開" : "閉"}）` : ""}
+                  {valveState[n.id]
+                    ? n.kind === "pump" || n.kind === "transferPump"
+                      ? `（${valveState[n.id] === "open" ? "運転" : "停止"}）`
+                      : `（${valveState[n.id] === "open" ? "開" : "閉"}）`
+                    : ""}
                 </title>
               </g>
             );

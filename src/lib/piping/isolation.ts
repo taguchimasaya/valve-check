@@ -1,4 +1,4 @@
-import { canFlow, connectedGroups, otherSide, pipeVolumeL, shortestPath, type Graph, type Section } from "./graph";
+import { canFlow, connectedGroups, otherSide, pipeVolumeL, routeSideValves, shortestPath, type Graph, type Section } from "./graph";
 import type { ValveState } from "./types";
 
 // 抜取範囲（遮断範囲）の算定と、液封リスクの評価。
@@ -525,6 +525,8 @@ export type FillSupply = {
   /** 移送ポンプの吐出側にある最初の弁（ポンプ起動の注記を付ける） */
   pumpValve: string | null;
   pipeIds: string[];
+  /** 経路から枝分かれする先の弁（充填中は閉める） */
+  sideValves?: string[];
   error?: string;
 };
 
@@ -551,6 +553,7 @@ export function fillSupplyRoute(g: Graph, tank: string, pump: string): FillSuppl
     result.pipeIds.push(...s!.pipeIds);
   });
   result.valves = nodeIds.filter((n) => g.nodeById.get(n)!.kind === "valve");
+  result.sideValves = routeSideValves(g, { nodeIds, pipeIds: result.pipeIds });
   const pumpIdx = nodeIds.indexOf(pump);
   result.pumpValve = nodeIds.slice(pumpIdx).find((n) => g.nodeById.get(n)!.kind === "valve") ?? null;
   return result;

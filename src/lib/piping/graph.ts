@@ -68,6 +68,34 @@ function polylineLength(pts: [number, number][]) {
   return len;
 }
 
+/**
+ * 経路から枝分かれする先で最初に当たる弁（経路外の弁）。
+ * 流したい方向以外へ燃料が回り込まないよう、作業中はこれらを閉める。
+ * ドレン口・圧力計取付口・安全弁への枝管は除く。
+ */
+export function routeSideValves(g: Graph, route: { nodeIds: string[]; pipeIds: string[] }): string[] {
+  const onRoute = new Set(route.nodeIds);
+  const routePipes = new Set(route.pipeIds);
+  const out = new Set<string>();
+  const seen = new Set<string>();
+  route.nodeIds.forEach((start) => {
+    const stack = [start];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      for (const { pipe, other } of g.adj.get(cur)!) {
+        if (routePipes.has(pipe.id) || onRoute.has(other) || seen.has(other)) continue;
+        seen.add(other);
+        const n = g.nodeById.get(other)!;
+        if (n.kind === "valve") out.add(other);
+        else if (n.kind === "drain" || n.kind === "gauge" || n.kind === "psv" || n.kind === "tank") continue;
+        else if (n.kind === "source" || n.kind === "sink") continue;
+        else stack.push(other);
+      }
+    }
+  });
+  return [...out];
+}
+
 /** 燃料が隣り合うノード from → to へ流れられるか（逆止弁は順方向にしか流れない） */
 export function canFlow(g: Pick<Graph, "nodeById">, from: string, to: string) {
   const t = g.nodeById.get(to)!;

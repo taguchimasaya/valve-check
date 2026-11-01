@@ -113,6 +113,7 @@ export function actionText(row: PlanRow, step: number) {
       break;
     }
   }
-  const verb = prev && prev === t ? "確認" : "操作";
-  return `${t === "close" ? "閉" : "開"}${verb}`;
+  const confirm = !!prev && prev === t;
+  if (row.role === "pump") return confirm ? `${t === "open" ? "運転" : "停止"}確認` : t === "open" ? "起動" : "停止";
+  return `${t === "close" ? "閉" : "開"}${confirm ? "確認" : "操作"}`;
 }

@@ -54,16 +54,17 @@ export function workBounds(g: Graph, plan: SavedPlan, base: Record<string, Valve
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
-export type StepOps = { opened: PlanRow[]; closed: PlanRow[]; confirmed: PlanRow[] };
+export type StepOps = { opened: PlanRow[]; closed: PlanRow[]; confirmed: PlanRow[]; started: PlanRow[]; stopped: PlanRow[] };
 
 /** ある工程で開操作・閉操作・確認する弁 */
 export function stepOps(plan: SavedPlan, step: number): StepOps {
-  const ops: StepOps = { opened: [], closed: [], confirmed: [] };
+  const ops: StepOps = { opened: [], closed: [], confirmed: [], started: [], stopped: [] };
   if (step === 0) return ops;
   plan.rows.forEach((r) => {
     const s = r.states[step];
     if (!s) return;
     if (!isOperateCell(r, step)) ops.confirmed.push(r);
+    else if (r.role === "pump") (s === "open" ? ops.started : ops.stopped).push(r);
     else if (s === "open") ops.opened.push(r);
     else ops.closed.push(r);
   });
