@@ -15,6 +15,7 @@ import {
 } from "@/lib/piping/isolation";
 import { currentValveState, describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
 import { planConflicts } from "@/lib/piping/execution";
+import { stepFlow } from "@/lib/piping/flow";
 import {
   buildPlanRows,
   downloadWorkbook,
@@ -108,11 +109,28 @@ export default function PlannerPage() {
 
   // ───── 図面表示 ─────
   const previewState = useMemo(() => stateAtStep(baseline, rows, previewStep), [baseline, rows, previewStep]);
+  // 燃料の抜取系統：抜取工程で燃料が流れる経路（範囲内 → ドレン口 → ドレン弁 → 抜取ポンプ → 回収先タンク）
+  const drainFlow = useMemo(() => {
+    if (!iso) return null;
+    const step = PLAN_STEPS.indexOf("抜取");
+    const plan = { steps: PLAN_STEPS, rows, regionPipeIds: iso.regionPipeIds, regionNodeIds: iso.regionNodeIds } as Parameters<typeof stepFlow>[1];
+    return stepFlow(g, plan, step, stateAtStep(baseline, rows, step));
+  }, [g, iso, rows, baseline]);
   const layers: PipeLayer[] = [];
   const marks: Record<string, NodeMark> = {};
   if (iso) {
     layers.push({ key: "region", pipeIds: iso.regionPipeIds, color: "#ef4444", opacity: 0.4 });
     layers.push({ key: "fill", pipeIds: iso.fill.pipeIds, color: "#0d9488", opacity: 0.6 });
+    if (drainFlow) {
+      layers.push({
+        key: "drain-flow",
+        pipeIds: [...drainFlow.directions.keys()],
+        directions: drainFlow.directions,
+        color: "#0284c7",
+        width: 5,
+        flow: true,
+      });
+    }
     iso.sealGroups.forEach((s, i) =>
       layers.push({
         key: `seal-${i}`,
@@ -125,6 +143,8 @@ export default function PlannerPage() {
     iso.boundaryValves.forEach((v) => (marks[v] = "boundary"));
     iso.internalValves.forEach((v) => (marks[v] = "internal"));
     drains.forEach((d) => (marks[d] = "drain"));
+    // 抜取で開ける弁（ドレン弁・抜取ポンプ側の弁）
+    rows.filter((r) => r.role === "drain" && r.nodeId).forEach((r) => (marks[r.nodeId!] = "drain"));
     activeGauges.forEach((d) => (marks[d] = "gauge"));
     iso.fill.openValves.forEach((v) => (marks[v] = "fill"));
     if (focusSeal !== null) iso.sealGroups[focusSeal]?.ventValves.forEach((v) => (marks[v] = "vent"));
@@ -330,7 +350,8 @@ export default function PlannerPage() {
                 { color: "#ef4444", label: "抜取範囲（遮断範囲）" },
                 { color: "#dc2626", label: "遮断弁（閉）", kind: "ring" },
                 { color: "#16a34a", label: "範囲内弁（開）", kind: "ring" },
-                { color: "#0284c7", label: "使用ドレン", kind: "ring" },
+                { color: "#0284c7", label: "使用ドレン・抜取で開ける弁", kind: "ring" },
+                { color: "#0284c7", label: "抜取の流れ（抜取系統）" },
                 { color: "#0d9488", label: "充填ライン・充填弁" },
                 { color: "#f59e0b", label: "液封の恐れ" },
                 { color: "#a855f7", label: "圧力計取付", kind: "ring" },
