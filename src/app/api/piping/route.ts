@@ -23,6 +23,8 @@ function normalize(raw: Partial<PipingStore> | null | undefined): PipingStore {
   store.valveOverrides ??= {};
   store.log ??= [];
   store.outages ??= [];
+  // 下絵機能の廃止前に保存された配置データは読み捨てる
+  delete (store as { layout?: unknown }).layout;
   // 工程名の変更（遮断 → ラインナップ）を、保存済みのチェックリストにも反映する
   store.plans.forEach((p) => {
     if (p.source === "planner") p.steps = p.steps.map((st) => (st === "遮断" ? "ラインナップ" : st));
@@ -280,9 +282,6 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       });
       return null;
     }
-    case "setLayout":
-      store.layout = a.layout;
-      return null;
     case "clearValveOverrides":
       store.valveOverrides = {};
       store.log.unshift({ at: now, type: "info", text: "制御室で弁の手動変更をすべて解除しました" });

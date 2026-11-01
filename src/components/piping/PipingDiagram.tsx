@@ -119,10 +119,6 @@ type Props = {
   height?: string;
   showLabels?: boolean;
   toolbar?: ReactNode;
-  /** 下絵（図面の画像）。系統図の座標で位置・大きさを指定する */
-  underlay?: { href: string; x: number; y: number; width: number; height: number; opacity: number } | null;
-  /** 図面の何もない所をクリックしたとき（系統図の座標で通知） */
-  onCanvasClick?: (x: number, y: number) => void;
   /** 描かない機器（未配置の機器など）。つながる配管も描かない */
   hiddenNodeIds?: Set<string>;
   /** 印刷用：この範囲（系統図の座標）だけを、拡大縮小ボタンなどなしで描く */
@@ -157,8 +153,6 @@ export default function PipingDiagram({
   height = "70vh",
   showLabels = true,
   toolbar,
-  underlay,
-  onCanvasClick,
   hiddenNodeIds,
   printBox,
 }: Props) {
@@ -619,17 +613,6 @@ export default function PipingDiagram({
   const body = (
     <>
           <style>{CSS}</style>
-          {underlay && (
-            <image
-              href={underlay.href}
-              x={underlay.x}
-              y={underlay.y}
-              width={underlay.width}
-              height={underlay.height}
-              opacity={underlay.opacity}
-              preserveAspectRatio="none"
-            />
-          )}
           {f.areas.map((a) => (
             <g key={a.label}>
               <rect x={a.x} y={a.y} width={a.w} height={a.h} rx={12} fill="none" stroke="#a1a1aa" strokeDasharray="6 5" strokeWidth={1} />
@@ -837,18 +820,7 @@ export default function PipingDiagram({
         <svg
           viewBox={`0 0 ${f.width} ${f.height}`}
           style={{ width: `${zoom * 100}%`, minWidth: zoom * 1100 }}
-          className={`block select-none ${onCanvasClick ? "cursor-crosshair" : ""}`}
-          onClick={
-            onCanvasClick
-              ? (e) => {
-                  const svg = e.currentTarget;
-                  const ctm = svg.getScreenCTM();
-                  if (!ctm) return;
-                  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
-                  onCanvasClick(pt.x, pt.y);
-                }
-              : undefined
-          }
+          className="block select-none"
         >
           {body}
         </svg>
