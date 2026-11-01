@@ -1,9 +1,11 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
-import PipingDiagram from "@/components/piping/PipingDiagram";
-import { normalValveState } from "@/lib/piping/graph";
-import { useGraph } from "@/lib/piping/usePiping";
+import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
+import { liveDiagram } from "@/lib/piping/live";
+import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
+import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 
 const menus = [
   {
@@ -40,6 +42,11 @@ const menus = [
 
 export default function PipingHome() {
   const graph = useGraph();
+  // 今の運用・点検状況（数秒ごとに更新）
+  const { store, error } = usePipingStore(3000);
+  const live = useMemo(() => liveDiagram(graph, store), [graph, store]);
+  const opRoutes = live.opState.routes.filter((r) => !r.error);
+  const overrideCount = Object.keys(store?.valveOverrides ?? {}).length;
   const valves = graph.facility.nodes.filter((n) => n.kind === "valve").length;
   const drains = graph.facility.nodes.filter((n) => n.kind === "drain").length;
 
@@ -76,12 +83,73 @@ export default function PipingHome() {
           ))}
         </div>
 
-        <div className="mt-6">
-          <PipingDiagram graph={graph} valveState={normalValveState(graph.facility)} height="65vh" />
-          <p className="mt-2 text-xs text-zinc-500">
-            待機時の弁状態を表示しています（緑＝開、赤＝閉）。ストレーナー・フィルターは並列、ポンプは流れ方向を三角で表示。
+        <section className="mt-6 space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">現在の運用・点検状況</h2>
+            <span className="text-xs text-zinc-500">
+              {store ? `自動更新中（${new Date().toLocaleTimeString("ja-JP")} 時点）` : "読み込み中…"}
+              {error && <span className="ml-2 text-red-600">{error}</span>}
+            </span>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="rounded-xl border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+              <p className="text-xs font-semibold text-zinc-500">運用中（{opRoutes.length}）</p>
+              {opRoutes.length === 0 ? (
+                <p className="mt-1 text-zinc-400">運用中のラインはありません（待機状態）。</p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {opRoutes.map((r) => (
+                    <li key={r.op.id} className="flex items-start gap-2">
+                      <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: OPERATION_META[r.op.kind].color }} />
+                      <span>
+                        <b>{OPERATION_META[r.op.kind].label}</b>：{describeOperation(r.op)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {overrideCount > 0 && <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">制御室で手動変更した弁：{overrideCount}箇所</p>}
+            </div>
+            <div className="rounded-xl border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+              <p className="text-xs font-semibold text-zinc-500">点検中（{live.views.length}）</p>
+              {live.views.length === 0 ? (
+                <p className="mt-1 text-zinc-400">点検中の作業はありません。</p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {live.views.map(({ exec, plan, v }) => (
+                    <li key={exec.id}>
+                      <b>{exec.planName}</b>
+                      <span className="ml-2 text-zinc-600 dark:text-zinc-400">
+                        {plan.steps[exec.currentStep]}（{v.done}/{v.total}）
+                        {v.stepComplete && <span className="ml-1 font-semibold text-emerald-600">工程完了</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          <PipingDiagram graph={graph} valveState={live.valveState} layers={live.layers} marks={live.marks} height="65vh" />
+          <DiagramLegend
+            items={[
+              ...(Object.keys(OPERATION_META) as OperationKind[]).map((k) => ({
+                color: OPERATION_META[k].color,
+                label: `${OPERATION_META[k].label}ライン`,
+              })),
+              { color: "#ef4444", label: "点検範囲（点滅）" },
+              { color: "#0284c7", label: "抜取の流れ" },
+              { color: "#0d9488", label: "充填の流れ" },
+              { color: "#dc2626", label: "閉操作待ち", kind: "blink" as const },
+              { color: "#2563eb", label: "開操作待ち", kind: "blink" as const },
+              { color: "#f59e0b", label: "確認待ち", kind: "blink" as const },
+              { color: "#22c55e", label: "操作済み", kind: "ring" as const },
+              { color: "#7c3aed", label: "手動で開閉変更", kind: "ring" as const },
+            ]}
+          />
+          <p className="text-xs text-zinc-500">
+            弁の色は今の開閉（緑＝開、赤＝閉）です。操作や確認は ② 現場点検・③ 制御室で行います（この図面は表示のみ）。
           </p>
-        </div>
+        </section>
       </div>
     </main>
   );

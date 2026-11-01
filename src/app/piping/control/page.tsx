@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
-import { newId, stateAtStep } from "@/lib/piping/checklist";
-import { stepFlow } from "@/lib/piping/flow";
-import { execView, planConflicts } from "@/lib/piping/execution";
+import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
+import { newId } from "@/lib/piping/checklist";
+import { planConflicts } from "@/lib/piping/execution";
+import { liveDiagram } from "@/lib/piping/live";
 import {
   applyOperations,
-  currentValveState,
   describeOperation,
   OPERATION_META,
   TANKS,
@@ -71,52 +70,18 @@ export default function ControlPage() {
 
   const operations = useMemo(() => store?.operations ?? [], [store?.operations]);
   const overrides = useMemo(() => store?.valveOverrides ?? {}, [store?.valveOverrides]);
-  const opState = useMemo(() => currentValveState(g, operations, overrides), [g, operations, overrides]);
   const running = (store?.executions ?? []).filter((e) => e.status === "in_progress");
-  const shown = running.filter((e) => !hidden.includes(e.id));
 
-  // ───── 図面に重ねる表示 ─────
-  // 点検ライン（太い赤・点滅）を下地に、運用ライン（細い流れ表示）を上に重ねる
-  const inspLayers: PipeLayer[] = [];
-  const opLayers: PipeLayer[] = [];
-  opState.routes.forEach((r) => {
-    if (r.error) return;
-    opLayers.push({ key: `op-${r.op.id}`, pipeIds: r.pipeIds, color: OPERATION_META[r.op.kind].color, width: 5, flow: true });
-  });
-  // 運用状態に、点検中作業の操作記録を順に重ねる
-  let valveState = opState.valveState;
-  const marks: Record<string, NodeMark> = {};
+  // ───── 図面に重ねる表示（トップ画面と共通の「今の状態」） ─────
+  const live = useMemo(() => liveDiagram(g, store, hidden), [g, store, hidden]);
+  const { opState, valveState, layers, marks } = live;
   const markOwner = new Map<string, { exec: Execution; step: number; code: string }>();
-  const views: { exec: Execution; v: ReturnType<typeof execView>; conflicts: string[] }[] = [];
-  for (const e of shown) {
-    const plan = store!.plans.find((p) => p.id === e.planId);
-    if (!plan) continue;
-    const v = execView(plan, e, valveState);
-    valveState = v.valveState;
-    inspLayers.push({ key: `insp-${e.id}`, pipeIds: plan.regionPipeIds, color: "#ef4444", width: 13, opacity: 0.6, blink: true });
-    // 抜取・充填の工程中は、燃料の流れる向き（充填：供給元→抜き取った機器）を矢印で示す
-    const flow = stepFlow(g, plan, e.currentStep, stateAtStep(opState.valveState, plan.rows, e.currentStep));
-    if (flow) {
-      opLayers.push({
-        key: `flow-${e.id}`,
-        pipeIds: [...flow.directions.keys()],
-        directions: flow.directions,
-        color: flow.kind === "drain" ? "#0284c7" : "#0d9488",
-        width: 5,
-        flow: true,
-      });
-    }
-    for (const [id, m] of Object.entries(v.marks)) {
-      marks[id] = m;
+  const views = live.views.map(({ exec: e, plan, v }) => {
+    for (const id of Object.keys(v.marks)) {
       const row = plan.rows.find((r) => r.nodeId === id);
       if (row) markOwner.set(id, { exec: e, step: e.currentStep, code: row.code });
     }
-    views.push({ exec: e, v, conflicts: planConflicts(plan, opState, (k) => OPERATION_META[k as OperationKind].label) });
-  }
-
-  const layers = [...inspLayers, ...opLayers];
-  Object.keys(overrides).forEach((id) => {
-    if (!marks[id]) marks[id] = "manual";
+    return { exec: e, v, conflicts: planConflicts(plan, opState, (k) => OPERATION_META[k as OperationKind].label) };
   });
 
   // ───── 新着の音声通知 ─────
