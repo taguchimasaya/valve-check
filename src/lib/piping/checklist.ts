@@ -43,6 +43,8 @@ export type PlanRow = {
 export type SavedPlan = {
   id: string;
   name: string;
+  /** 作成時に使った系統図の版（DBの版ID。プログラム内の仮想施設なら null） */
+  diagramVersionId?: string | null;
   /** 作業の種類（省略時は燃料抜取） */
   workType?: "drain" | "flush" | "tankIsolation";
   /** 燃料末端部作業：末端部として選んだ配管 */

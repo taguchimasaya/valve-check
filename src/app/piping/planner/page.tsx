@@ -45,7 +45,7 @@ import {
   rowGlyph,
   type SavedPlan,
 } from "@/lib/piping/checklist";
-import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
@@ -54,6 +54,7 @@ const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function PlannerPage() {
   const g = useGraph();
+  const diagramInfo = useDiagramInfo();
   const { store, act } = usePipingStore(0);
 
   const [name, setName] = useState("");
@@ -354,6 +355,7 @@ export default function PlannerPage() {
       isolationTank: flush ? undefined : isoTank!,
       createdAt: new Date().toISOString(),
       source: "planner",
+      diagramVersionId: diagramInfo.versionId,
       targets: flush ? flushPipes.map((id) => ({ type: "pipe" as const, id })) : [{ type: "node", id: isoTank! }],
       regionPipeIds: flush ? flushT!.pipeIds : [],
       regionNodeIds: flush ? [] : [isoTank!],
@@ -393,6 +395,7 @@ export default function PlannerPage() {
       purpose: WORK_TYPES.drain.label,
       createdAt: new Date().toISOString(),
       source: "planner",
+      diagramVersionId: diagramInfo.versionId,
       targets,
       regionPipeIds: iso.regionPipeIds,
       regionNodeIds: iso.regionNodeIds,

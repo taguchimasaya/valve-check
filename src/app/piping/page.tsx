@@ -5,7 +5,7 @@ import Link from "next/link";
 import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
 import { liveDiagram, OUTAGE_COLOR } from "@/lib/piping/live";
 import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
-import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 
 const menus = [
   {
@@ -36,6 +36,7 @@ const menus = [
 
 export default function PipingHome() {
   const graph = useGraph();
+  const diagramInfo = useDiagramInfo();
   // 今の運用・点検状況（数秒ごとに更新）
   const { store, error } = usePipingStore(3000);
   const live = useMemo(() => liveDiagram(graph, store), [graph, store]);
@@ -57,8 +58,14 @@ export default function PipingHome() {
           </span>
         </div>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          {graph.facility.name}：受入2系統・貯蔵タンク6基×2ヤード・払出ポンプ2系統（各3台）・移送ポンプ2台。
-          バルブ{valves}箇所、ドレン口{drains}箇所、配管区間{graph.sections.length}区間。
+          {graph.facility.name}：バルブ{valves}箇所、ドレン口{drains}箇所、配管{graph.facility.pipes.length}本、配管区間{graph.sections.length}区間。
+        </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          系統図データ：
+          {diagramInfo.source === "db"
+            ? `DB（${diagramInfo.facilityId} 第${diagramInfo.versionNo}版）`
+            : "プログラム内の仮想施設"}
+          {diagramInfo.notice && <span className="ml-1 text-amber-700 dark:text-amber-400">— {diagramInfo.notice}</span>}
         </p>
 
         <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">

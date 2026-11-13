@@ -4,13 +4,53 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { getFacility } from "./facility";
 import { buildGraph, type Graph } from "./graph";
 import { dispatch, fetchStore, type PipingStore, type StoreAction } from "./store";
+import type { DiagramPayload, DiagramSource } from "./diagramDb";
 
-let graphCache: Graph | null = null;
+// 系統図は DB（使用中の版）から読み込む。読み込むまでは、プログラム内の仮想施設（サンプルと同じ内容）で表示する。
+const BUILTIN: DiagramSource = { source: "builtin", facilityId: "virtual-airport", versionId: null, versionNo: null };
+let diagram: { graph: Graph; info: DiagramSource } | null = null;
+let diagramRequested = false;
+const diagramListeners = new Set<() => void>();
 
-/** 系統図（施設データから作る。全画面で共通） */
+function currentDiagram() {
+  if (!diagram) diagram = { graph: buildGraph(getFacility()), info: BUILTIN };
+  return diagram;
+}
+
+function loadDiagram() {
+  if (diagramRequested) return;
+  diagramRequested = true;
+  fetch("/api/piping/diagram", { cache: "no-store" })
+    .then(async (res) => {
+      if (!res.ok) throw new Error((await res.text()) || "系統図を読み込めませんでした");
+      return (await res.json()) as DiagramPayload;
+    })
+    .then(({ facility, ...info }) => {
+      diagram = { graph: info.source === "db" ? buildGraph(facility) : currentDiagram().graph, info };
+      diagramListeners.forEach((l) => l());
+    })
+    .catch((e) => {
+      diagram = { graph: currentDiagram().graph, info: { ...BUILTIN, notice: e instanceof Error ? e.message : String(e) } };
+      diagramListeners.forEach((l) => l());
+    });
+}
+
+function subscribeDiagram(cb: () => void) {
+  diagramListeners.add(cb);
+  loadDiagram();
+  return () => {
+    diagramListeners.delete(cb);
+  };
+}
+
+/** 系統図（全画面で共通） */
 export function useGraph(): Graph {
-  if (!graphCache) graphCache = buildGraph(getFacility());
-  return graphCache;
+  return useSyncExternalStore(subscribeDiagram, () => currentDiagram().graph, () => currentDiagram().graph);
+}
+
+/** 表示中の系統図がどこから来たか（DBの版 or プログラム内の仮想施設） */
+export function useDiagramInfo(): DiagramSource {
+  return useSyncExternalStore(subscribeDiagram, () => currentDiagram().info, () => currentDiagram().info);
 }
 
 /** ローカルストアを定期取得する（現場・制御室間の同期用。ローカルdevサーバー宛てのみ） */

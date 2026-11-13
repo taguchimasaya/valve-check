@@ -29,7 +29,7 @@ import PlanPreview from "@/components/piping/PlanPreview";
 import { manualStepLabel, needsDayParams, workTypeOf } from "@/lib/piping/workTypes";
 
 const volumeLabel = (p: SavedPlan) => (workTypeOf(p) === "flush" ? "末端部容量" : "抜取量");
-import { useGraph, useLocalValue, usePipingStore } from "@/lib/piping/usePiping";
+import { useDiagramInfo, useGraph, useLocalValue, usePipingStore } from "@/lib/piping/usePiping";
 import { isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
 const EXEC_KEY = "piping.field.execId";
@@ -38,6 +38,7 @@ type Flash = { type: "ok" | "err" | "info"; text: string };
 
 export default function FieldPage() {
   const g = useGraph();
+  const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1500);
   const [execId, selectExec] = useLocalValue(EXEC_KEY);
   const [view, setView] = useState<"diagram" | "table">("diagram");
@@ -389,6 +390,11 @@ export default function FieldPage() {
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
                         {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}
                       </p>
+                      {p.diagramVersionId && diagramInfo.versionId && p.diagramVersionId !== diagramInfo.versionId && (
+                        <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                          ⚠ 現在と違う版の系統図で作成されています。① で作り直してください。
+                        </p>
+                      )}
                     </div>
                     <button
                       onClick={() => setPreview({ planId: p.id })}
