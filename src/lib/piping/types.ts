@@ -77,6 +77,8 @@ export type Pipe = {
   via?: [number, number][];
   /** 実長（m）。省略時は図面上の長さ×縮尺で概算 */
   lengthM?: number;
+  /** 内径（m）。配管仕様マスターから。省略時は呼び径の Sch40 相当 */
+  innerDiameterM?: number;
 };
 
 export type AreaBox = { x: number; y: number; w: number; h: number; label: string };

@@ -63,7 +63,9 @@ export default function PipingHome() {
         <p className="mt-1 text-xs text-zinc-500">
           系統図データ：
           {diagramInfo.source === "db"
-            ? `DB（${diagramInfo.facilityId} 第${diagramInfo.versionNo}版）`
+            ? `DB（${diagramInfo.facilityId} 第${diagramInfo.versionNo}版${
+                diagramInfo.sheet ? `・図面 ${diagramInfo.sheet}${(diagramInfo.sheetCount ?? 1) > 1 ? `（全${diagramInfo.sheetCount}枚）` : ""}` : ""
+              }）`
             : "プログラム内の仮想施設"}
           {diagramInfo.notice && <span className="ml-1 text-amber-700 dark:text-amber-400">— {diagramInfo.notice}</span>}
         </p>

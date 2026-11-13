@@ -108,7 +108,7 @@ export function canFlow(g: Pick<Graph, "nodeById">, from: string, to: string) {
 }
 
 export function pipeVolumeL(p: Pipe, lengthM: number) {
-  const d = innerDiameterM(p.sizeA);
+  const d = p.innerDiameterM ?? innerDiameterM(p.sizeA);
   return (Math.PI / 4) * d * d * lengthM * 1000;
 }
 

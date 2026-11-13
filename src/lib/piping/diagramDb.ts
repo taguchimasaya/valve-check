@@ -8,7 +8,10 @@ export type DiagramSource = {
   facilityId: string;
   versionId: string | null;
   versionNo: number | null;
-  /** builtin になった理由など */
+  /** 表示している図面シート（本番想定の構造のとき）と、版のシート数 */
+  sheet?: string;
+  sheetCount?: number;
+  /** builtin になった理由、位置の無い機器など */
   notice?: string;
 };
 
@@ -98,4 +101,52 @@ export function rowsToFacility(f: FacilityRow, areas: AreaRow[], nodes: NodeRow[
       return p;
     }),
   };
+}
+
+// ───── 本番想定の構造（論理データと図面データを分けたもの） ─────
+
+export type SheetRow = { id: string; sheet_no: string; title: string; width: number; height: number; meters_per_unit: number | null };
+export type AreaRowV2 = { name: string; sheet_id: string | null; x: number | null; y: number | null; w: number | null; h: number | null; sort: number };
+export type NodeRowV2 = Omit<NodeRow, "x" | "y" | "compact"> & { rated_flow_lpm: number | null };
+export type SymbolRow = { node_code: string; x: number; y: number; show_label: boolean };
+export type PipeRowV2 = { code: string; node_a: string; node_b: string; size_a: number; pipe_spec_id: string | null; length_m: number | null; sort: number };
+export type GeometryRow = { pipe_code: string; points: [number, number][] | null };
+export type PipeSpecRow = { id: string; inner_diameter_mm: number };
+
+/**
+ * 論理データ（機器・配管）と、1枚の図面シートの図面データ（記号の位置・配管の経由点）から Facility を組み立てる。
+ * そのシートに記号が無い機器は図面の左上に置き、件数を返す（計算には使える）。
+ */
+export function rowsToFacilityV2(
+  facilityName: string,
+  sheet: SheetRow,
+  areas: AreaRowV2[],
+  nodes: NodeRowV2[],
+  symbols: SymbolRow[],
+  pipes: PipeRowV2[],
+  geometries: GeometryRow[],
+  specs: PipeSpecRow[]
+): { facility: Facility; unplaced: number } {
+  const sym = new Map(symbols.map((s) => [s.node_code, s]));
+  const geo = new Map(geometries.map((g) => [g.pipe_code, g.points]));
+  const spec = new Map(specs.map((s) => [s.id, Number(s.inner_diameter_mm) / 1000]));
+  let unplaced = 0;
+  const base = rowsToFacility(
+    { id: "", name: facilityName, width: sheet.width, height: sheet.height, meters_per_px: sheet.meters_per_unit ?? 0 },
+    areas
+      .filter((a) => a.sheet_id === sheet.id && a.x !== null && a.y !== null && a.w !== null && a.h !== null)
+      .map((a) => ({ name: a.name, x: a.x!, y: a.y!, w: a.w!, h: a.h!, sort: a.sort })),
+    nodes.map((n) => {
+      const s = sym.get(n.code);
+      if (!s) unplaced++;
+      return { ...n, x: s?.x ?? 0, y: s?.y ?? 0, compact: s ? !s.show_label : null };
+    }),
+    pipes.map((p) => ({ code: p.code, node_a: p.node_a, node_b: p.node_b, size_a: p.size_a, length_m: p.length_m, via: geo.get(p.code) ?? null, sort: p.sort }))
+  );
+  const specOf = new Map(pipes.map((p) => [p.code, p.pipe_spec_id ? spec.get(p.pipe_spec_id) : undefined]));
+  base.pipes.forEach((p) => {
+    const d = specOf.get(p.id);
+    if (d) p.innerDiameterM = d;
+  });
+  return { facility: base, unplaced };
 }
