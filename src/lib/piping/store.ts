@@ -3,6 +3,7 @@ import { needsDayParams, type DayParams } from "./workTypes";
 import type { OutageKey } from "./outages";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
+import type { ChecklistRules } from "./rules";
 
 // 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
 // 保存先は API（/api/piping）側で切り替わる：本番は Supabase の piping_store テーブル、
@@ -50,6 +51,8 @@ export type PipingStore = {
   log: ExecEvent[];
   /** 当日の運用停止範囲（複数可） */
   outages?: Outage[];
+  /** チェックリスト作成のルール（拠点ごとにユーザーが登録。未登録の項目は既定値） */
+  rules?: ChecklistRules;
 };
 
 export type Outage = { key: OutageKey; at: string; note?: string };
@@ -78,6 +81,7 @@ export type StoreAction =
       stepRoutes: Record<number, { nodeIds: string[]; pipeIds: string[] }>;
     }
   | { action: "markStepDone"; execId: string; step: number }
+  | { action: "setRules"; rules: ChecklistRules; by?: string }
   | {
       action: "setFillSupply";
       execId: string;

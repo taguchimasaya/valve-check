@@ -35,6 +35,12 @@ const menus = [
     href: "/piping/data",
   },
   {
+    no: "⑤",
+    title: "チェックリスト作成のルール",
+    desc: "消火設備機能試験の順番・使う消火栓の口数・隣接タンクの決め方など、チェックリストを自動で作るときの決まりを拠点ごとに登録します。",
+    href: "/piping/rules",
+  },
+  {
     no: "QR",
     title: "機器QRコード印刷",
     desc: "系統図で使っているバルブ・ドレン弁・圧力計元弁のQRコードを印刷します（既存の機器QRと同じ形式）。",
@@ -79,7 +85,7 @@ export default function PipingHome() {
           {diagramInfo.notice && <span className="ml-1 text-amber-700 dark:text-amber-400">— {diagramInfo.notice}</span>}
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
           {menus.map((m) => (
             <Link
               key={m.href}

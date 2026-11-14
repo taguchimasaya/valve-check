@@ -46,7 +46,8 @@ import {
   type SavedPlan,
 } from "@/lib/piping/checklist";
 import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
-import { buildFireTestChecklist, FIRE_TEST_HYDRANTS, FIRE_TEST_STEPS, fireTestTanks } from "@/lib/piping/fireTest";
+import { buildFireTestChecklist, FIRE_TEST_STEPS, fireTestTanks } from "@/lib/piping/fireTest";
+import { fireTestRulesOf, fireTestSteps } from "@/lib/piping/rules";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
@@ -106,8 +107,11 @@ export default function PlannerPage() {
     [g, baselineMode, hasCurrentState, opState]
   );
 
+  // 消火設備機能試験のルール（⑤ で拠点ごとに登録。未登録の項目は既定値）
+  const storeRules = store?.rules;
+  const fireRules = useMemo(() => fireTestRulesOf(storeRules), [storeRules]);
   const isDay = workType !== "drain";
-  const steps = STEPS_OF[workType];
+  const steps = useMemo(() => (workType === "fireTest" ? fireTestSteps(fireRules) : STEPS_OF[workType]), [workType, fireRules]);
   const iso = useMemo(
     () =>
       !isDay && (targets.length || extraSectionIds.length)
@@ -153,8 +157,8 @@ export default function PlannerPage() {
   const dayKey = JSON.stringify(dayParams);
   const fireTanks = useMemo(() => fireTestTanks(g), [g]);
   const fireResult = useMemo(
-    () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline) : null),
-    [g, workType, fireTank, baseline]
+    () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline, fireRules) : null),
+    [g, workType, fireTank, baseline, fireRules]
   );
   const dayResultOf = useMemo(() => {
     const params = JSON.parse(dayKey) as DayParams | null;
@@ -428,7 +432,7 @@ export default function PlannerPage() {
         drains: [],
         warnings: [],
         notes: [
-          `使用設備：発泡装置 ${s.foamChambers.join("・")}／隣接タンクの冷却散水 ${s.adjacent.join("・")}／消火栓（水）${s.waterHydrants.join("・")}／泡消火栓 ${s.foamHydrants.join("・")}／ポンプ ${[s.pump, s.foamPump].filter(Boolean).join("・")}`,
+          `使用設備：発泡装置 ${s.foamChambers.join("・")}／冷却散水 ${[...s.sprinklers, ...s.adjacent].join("・") || "なし"}／消火栓（水）${s.waterHydrants.join("・")}／泡消火栓 ${s.foamHydrants.join("・")}／ポンプ ${[s.pump, s.foamPump].filter(Boolean).join("・")}`,
         ],
       },
     };
@@ -543,7 +547,7 @@ export default function PlannerPage() {
             : workType === "flush"
               ? "図面上で末端部（通常使用しないライン）の配管をクリックしてください。つながっているラインのポンプで循環させる経路と操作バルブを作ります。"
               : workType === "fireTest"
-                ? `図面上で試験対象タンクをクリックしてください。対象タンクの発泡装置、隣接タンクの対象タンク側の冷却散水、近くの消火栓（水${FIRE_TEST_HYDRANTS.water}口・泡${FIRE_TEST_HYDRANTS.foam}口）を使う試験の操作バルブを作ります。`
+                ? `図面上で試験対象タンクをクリックしてください。登録したルール（⑤ チェックリスト作成のルール）に従い、発泡装置・冷却散水・近くの消火栓（泡${fireRules.foamHydrants}口・水${fireRules.waterHydrants}口）を使う試験の操作バルブを作ります。`
                 : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
         </p>
 
@@ -951,10 +955,13 @@ export default function PlannerPage() {
                       <dd>{fireResult.summary.foamChambers.join("・") || "—"}</dd>
                       <dt className="text-zinc-500">冷却散水</dt>
                       <dd>
+                        {fireResult.summary.sprinklers.length > 0 && <span className="block">試験タンク {fireResult.summary.sprinklers.join("・")}</span>}
                         隣接タンク側 {fireResult.summary.adjacent.join("・") || "—"}
-                        <span className="block text-zinc-500">
-                          試験タンクの冷却散水（{fireResult.summary.idleSprinklers.join("・") || "—"}）からは散水しません
-                        </span>
+                        {fireResult.summary.idleSprinklers.length > 0 && (
+                          <span className="block text-zinc-500">
+                            試験タンクの冷却散水（{fireResult.summary.idleSprinklers.join("・")}）からは散水しません
+                          </span>
+                        )}
                       </dd>
                       <dt className="text-zinc-500">消火栓（水）</dt>
                       <dd>{fireResult.summary.waterHydrants.join("・")}</dd>
@@ -974,7 +981,11 @@ export default function PlannerPage() {
                       )}
                     </ol>
                     <p className="mt-2 text-[11px] text-zinc-500">
-                      隣接タンクは同じヤードで上下・左右に並ぶタンクです（斜めは含みません）。消火栓は同じヤードのものを優先し、対象タンクに近い順に選んでいます。
+                      隣接タンク・消火栓の選び方、試験の順番などは{" "}
+                      <Link href="/piping/rules" className="text-sky-700 underline dark:text-sky-400">
+                        ⑤ チェックリスト作成のルール
+                      </Link>{" "}
+                      で拠点ごとに変更できます。
                     </p>
                   </>
                 ) : null}

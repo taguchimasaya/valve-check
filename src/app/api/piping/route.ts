@@ -293,6 +293,15 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       });
       return null;
     }
+    case "setRules": {
+      // 消火設備機能試験のルール：口数・文字列の型だけ確認して保存する（細かな確認は画面側）
+      const f = a.rules?.fireTest;
+      if (f && (typeof f !== "object" || Array.isArray(f))) return "ルールの形式が正しくありません";
+      store.rules = { ...a.rules, updatedAt: now };
+      store.log.unshift({ at: now, type: "info", text: `チェックリスト作成のルールを更新しました${a.by ? `（${a.by}）` : ""}` });
+      store.log = store.log.slice(0, 100);
+      return null;
+    }
     case "clearValveOverrides":
       store.valveOverrides = {};
       store.log.unshift({ at: now, type: "info", text: "制御室で弁の手動変更をすべて解除しました" });
