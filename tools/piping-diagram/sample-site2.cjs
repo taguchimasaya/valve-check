@@ -1,5 +1,5 @@
 // 第2拠点のサンプル「臨海石油基地（仮想）」を、系統図の登録シート（Excel）として書き出す。
-//   燃料：タンカー → 桟橋（ローディングアーム・緊急遮断弁）→ 陸側受入設備 → タンク4基 → 出荷ポンプ → ローリー出荷・空港向けパイプライン
+//   燃料：タンカー → 桟橋（ローディングアーム・緊急遮断弁）→ 陸側受入設備 → 第1・第2タンクヤード（各4基）→ 出荷ポンプ → ローリー出荷・空港向けパイプライン
 //   消火：海水取水口・消火用水槽 → 消火ポンプ（主・予備・補助）→ 消火用水主管 → タンクヤード周囲の消火栓ループ（水・泡）、
 //         冷却散水ヘッダー → 1タンク2系統（シリンダー弁 → 手動弁 → 冷却散水設備）
 //         泡原液タンク → 泡原液ポンプ → 泡混合器 → 泡水溶液主管 → 発泡装置ヘッダー → 1タンク2系統（シリンダー弁 → 手動弁 → タンク発泡装置）、
@@ -20,7 +20,7 @@ const pipes = [];
 const geometries = [];
 let seq = 0;
 // 図面全体を下へずらす量（タンクヤード上辺の消火栓ループの場所をあける）
-const OY = 110;
+const OY = 200;
 
 const blank = {
   label: "", equipment_code: null, normal: null, volume_l: null, drain_size_a: null, gauge_mountable: null,
@@ -50,7 +50,7 @@ const fuel = { system: "燃料", fluid: "fuel" };
 const water = { system: "消火", fluid: "water" };
 const foam = { system: "消火", fluid: "foam" };
 const sol = { system: "消火", fluid: "foamSolution" };
-const JT = "桟橋", RC = "受入設備（陸側）", YD = "タンクヤード", SH = "出荷設備", FP = "消火ポンプ室", FM = "消火配管";
+const JT = "桟橋", RC = "受入設備（陸側）", YD = "第1タンクヤード", YD2 = "第2タンクヤード", SH = "出荷設備", FP = "消火ポンプ室", FM = "消火配管";
 
 // ═════ 燃料 ═════
 // 桟橋：タンカーからローディングアーム2基で荷揚げ → 桟橋ヘッダー → 緊急遮断弁 → 桟橋配管
@@ -77,7 +77,8 @@ D("D-JR", "受入ストレーナー ドレン", RC, 680, 275, 50, fuel);
 V("V-JS2", "受入ストレーナー 出口弁", RC, 760, 230, "open", fuel);
 J("J-RH", RC, 840, 330, fuel);
 pipe("J-JD", "V-JS1", 300);
-chain(300, "V-JS1", "STR-JR", "V-JS2");
+J("J-RY", RC, 720, 230, fuel);
+chain(300, "V-JS1", "STR-JR", "J-RY", "V-JS2");
 pipe("STR-JR", "D-JR", 50);
 pipe("V-JS2", "J-RH", 300, [[840, 230]]);
 
@@ -291,8 +292,8 @@ pipe("J-CWHE", "D-CWH", 50);
 
 // 出荷設備の消火栓と主管の末端
 J("J-WH1", FM, 1800, 700, water);
-V("V-WH1", "消火栓 No.1 開閉弁", FM, 1800, 650, "close", water);
-node("WH-1", "hydrant", "消火栓 No.1（出荷設備）", FM, 1800, 615, { ...water, label: "WH-1" });
+V("V-WH1", "消火栓 No.1 開閉弁", FM, 1800, 745, "close", water);
+node("WH-1", "hydrant", "消火栓 No.1（出荷設備）", FM, 1800, 785, { ...water, label: "WH-1" });
 pipe("J-CWH0", "J-WH1", 300);
 chain(80, "J-WH1", "V-WH1", "WH-1");
 J("J-FME", FM, 1900, 700, water);
@@ -396,19 +397,203 @@ let prevJ = "J-JF";
 D("D-JF", "桟橋泡配管 末端ドレン", JT, 120, 590, 25, sol);
 pipe(prevJ, "D-JF", 25);
 
+// ═════ 第2タンクヤード（第1タンクヤードと同じ構成。出荷設備の右側、x を +1700 ずらす） ═════
+const DX = 1700;
+const TANKS2 = [["501", 1000 + DX], ["502", 1200 + DX], ["503", 1400 + DX], ["504", 1600 + DX]];
+
+// 受入：陸側受入設備のストレーナー出口から分岐し、図面上部（y=-150）を回して第2ヤードへ
+V("V-RY2", "第2タンクヤード 受入元弁", RC, 720, 150, "open", fuel);
+J("J-RY1", RC, 720, -150, fuel);
+J("J-RY2", YD2, 2420, -150, fuel);
+J("J-R2H", YD2, 2420, 330, fuel);
+pipe("J-RY", "V-RY2", 250);
+pipe("V-RY2", "J-RY1", 250);
+pipe("J-RY1", "J-RY2", 250);
+// 第2ヤードへの受入配管の低部ドレン
+J("J-RYD", YD2, 2420, 100, fuel);
+D("D-RY2", "第2ヤード受入配管 低部ドレン", YD2, 2385, 100, 50, fuel);
+pipe("J-RY2", "J-RYD", 250);
+pipe("J-RYD", "J-R2H", 250);
+pipe("J-RYD", "D-RY2", 50);
+
+const rJ2 = [];
+const iJ2 = [];
+TANKS2.forEach(([no, x]) => {
+  node(`T-${no}`, "tank", `T-${no} 貯蔵タンク（浮き屋根）`, YD2, x, 120, { ...fuel, capacity_kl: 10000 });
+  node(`CV-${no}R`, "check", `T-${no} 受入逆止弁`, YD2, x - 20, 180, { ...fuel, dir_from: `J-${no}RT` });
+  J(`J-${no}RT`, YD2, x - 20, 210, fuel);
+  V(`V-${no}R`, `T-${no} 受入弁`, YD2, x - 20, 260, "close", fuel);
+  J(`J-${no}R`, YD2, x - 20, 330, fuel);
+  pipe(`T-${no}`, `CV-${no}R`, 300, [[x - 20, 140]]);
+  chain(300, `CV-${no}R`, `J-${no}RT`, `V-${no}R`, `J-${no}R`);
+  V(`V-${no}I`, `T-${no} 出荷弁`, YD2, x + 20, 260, "close", fuel);
+  node(`CV-${no}I`, "check", `T-${no} 出荷逆止弁`, YD2, x + 20, 300, { ...fuel, dir_from: `V-${no}I` });
+  J(`J-${no}I`, YD2, x + 20, 400, fuel);
+  pipe(`T-${no}`, `V-${no}I`, 250, [[x + 20, 140]]);
+  chain(250, `V-${no}I`, `CV-${no}I`, `J-${no}I`);
+  rJ2.push(`J-${no}R`);
+  iJ2.push(`J-${no}I`);
+});
+V("V-R2H1", "第2ヤード受入ヘッダー 区分弁（T-502／T-503間）", YD2, 1300 + DX, 330, "open", fuel);
+J("J-R2HE", YD2, 1680 + DX, 330, fuel);
+D("D-R2H", "第2ヤード受入ヘッダー 末端ドレン", YD2, 1680 + DX, 370, 50, fuel);
+chain(300, "J-R2H", rJ2[0], rJ2[1], "V-R2H1", rJ2[2], rJ2[3], "J-R2HE");
+pipe("J-R2HE", "D-R2H", 50);
+// 出荷：第2ヤード出荷ヘッダー → 出荷設備の下（y=620）を回して出荷ポンプの吸込へ
+J("J-I2W", YD2, 2440, 400, fuel);
+D("D-I2H", "第2ヤード出荷ヘッダー 始端ドレン", YD2, 2470, 440, 50, fuel);
+J("J-I2D", YD2, 2470, 400, fuel);
+chain(250, "J-I2W", "J-I2D", iJ2[0], iJ2[1], iJ2[2], iJ2[3]);
+pipe("J-I2D", "D-I2H", 50);
+J("J-I2S", SH, 2440, 620, fuel);
+V("V-I2", "第2タンクヤード 出荷元弁", SH, 2100, 620, "open", fuel);
+J("J-I2P", SH, 1780, 620, fuel);
+pipe("J-I2W", "J-I2S", 250);
+pipe("J-I2S", "V-I2", 250);
+pipe("V-I2", "J-I2P", 250);
+pipe("J-I2P", "J-SP42", 250);
+
+// 消火用水主管・泡水溶液主管を東へ延長
+J("J-LPF2", FM, 880 + DX, 700, water);
+J("J-CWH20", FM, 920 + DX, 700, water);
+J("J-FME2", FM, 1900 + DX, 700, water);
+D("D-FME2", "消火用水主管（第2ヤード側）末端ドレン", FM, 1900 + DX, 740, 50, water);
+chain(300, "J-FME", "J-LPF2", "J-CWH20");
+pipe("J-CWH20", "J-FME2", 250);
+pipe("J-FME2", "D-FME2", 50);
+J("J-FRF2", FM, 860 + DX, 1020, sol);
+J("J-FCH20", FM, 920 + DX, 1020, sol);
+J("J-FSE2", FM, 1900 + DX, 1020, sol);
+D("D-FSE2", "泡水溶液主管（第2ヤード側）末端ドレン", FM, 1900 + DX, 1060, 50, sol);
+chain(200, "J-FSE", "J-FRF2", "J-FCH20");
+pipe("J-FCH20", "J-FSE2", 150);
+pipe("J-FSE2", "D-FSE2", 50);
+
+// 第2ヤード周囲の消火栓ループ（水・泡）。第1ヤードと同じ形で x を +1700
+function hydrantRing({ feed, feedValve, feedValveName, ring, drain, drainName, hydrants, fluid, prefix, nameHead, inner }) {
+  const [fx, fy] = feedValve;
+  V(`V-${prefix}F`, feedValveName, FM, fx, fy, "open", fluid);
+  ring.forEach(([code, x, y]) => J(code, YD2, x, y, fluid));
+  pipe(feed, `V-${prefix}F`, 200);
+  pipe(`V-${prefix}F`, ring[0][0], 200);
+  ring.forEach(([code], i) => pipe(code, ring[(i + 1) % ring.length][0], 200));
+  D(drain[0], drainName, YD2, drain[1], drain[2], 50, fluid);
+  pipe(drain[3], drain[0], 50);
+  hydrants.forEach(([k, j, dx, dy]) => {
+    const [, x, y] = ring.find((r) => r[0] === j);
+    const vOff = inner ? 45 : 25;
+    const hOff = inner ? 85 : 65;
+    V(`V-${prefix}${k}`, `${nameHead} No.${k} 開閉弁`, YD2, x + dx * vOff, y + dy * vOff, "close", fluid);
+    node(`${prefix}-${k}`, "hydrant", `${nameHead} No.${k}`, YD2, x + dx * hOff, y + dy * hOff, { ...fluid, label: `${prefix}-${k}` });
+    chain(80, j, `V-${prefix}${k}`, `${prefix}-${k}`);
+  });
+}
+hydrantRing({
+  feed: "J-LPF2",
+  feedValve: [880 + DX, 610],
+  feedValveName: "第2タンクヤード消火栓ループ 元弁",
+  ring: [
+    ["J-LP21", 880 + DX, 500],
+    ["J-YH27", 880 + DX, 440],
+    ["J-YH28", 880 + DX, 110],
+    ["J-LP22", 880 + DX, 10],
+    ["J-YH29", 1100 + DX, 10],
+    ["J-YH210", 1500 + DX, 10],
+    ["J-LP23", 1730 + DX, 10],
+    ["J-YH211", 1730 + DX, 150],
+    ["J-YH212", 1730 + DX, 260],
+    ["J-LP24", 1730 + DX, 500],
+    ["J-LP2D", 1150 + DX, 500],
+  ],
+  drain: ["D-LP2", 1150 + DX, 530, "J-LP2D"],
+  drainName: "第2タンクヤード消火栓ループ 低部ドレン",
+  hydrants: [["7", "J-YH27", -1, 0], ["8", "J-YH28", -1, 0], ["9", "J-YH29", 0, -1], ["10", "J-YH210", 0, -1], ["11", "J-YH211", 1, 0], ["12", "J-YH212", 1, 0]],
+  fluid: water,
+  prefix: "YH",
+  nameHead: "第2タンクヤード消火栓",
+  inner: true,
+});
+hydrantRing({
+  feed: "J-FRF2",
+  feedValve: [860 + DX, 930],
+  feedValveName: "第2タンクヤード泡消火栓ループ 元弁",
+  ring: [
+    ["J-FR21", 860 + DX, 520],
+    ["J-FY27", 860 + DX, 480],
+    ["J-FY28", 860 + DX, 60],
+    ["J-FR22", 860 + DX, -10],
+    ["J-FY29", 1300 + DX, -10],
+    ["J-FY210", 1650 + DX, -10],
+    ["J-FR23", 1750 + DX, -10],
+    ["J-FY211", 1750 + DX, 80],
+    ["J-FY212", 1750 + DX, 205],
+    ["J-FR24", 1750 + DX, 520],
+    ["J-FR2D", 1200 + DX, 520],
+  ],
+  drain: ["D-FR2", 1200 + DX, 550, "J-FR2D"],
+  drainName: "第2タンクヤード泡消火栓ループ 低部ドレン",
+  hydrants: [["7", "J-FY27", -1, 0], ["8", "J-FY28", -1, 0], ["9", "J-FY29", 0, -1], ["10", "J-FY210", 0, -1], ["11", "J-FY211", 1, 0], ["12", "J-FY212", 1, 0]],
+  fluid: sol,
+  prefix: "FY",
+  nameHead: "第2タンクヤード泡消火栓",
+  inner: false,
+});
+
+// 冷却散水ヘッダー・発泡装置ヘッダー：1タンク2系統（シリンダー弁 → 手動弁）
+V("V-CWH2", "第2ヤード冷却散水ヘッダー 元弁", FM, 920 + DX, 670, "open", water);
+J("J-CWH2", FM, 920 + DX, 640, water);
+chain(250, "J-CWH20", "V-CWH2", "J-CWH2");
+V("V-FCH2", "第2ヤード発泡装置ヘッダー 元弁", FM, 920 + DX, 990, "open", sol);
+J("J-FCH2", FM, 920 + DX, 960, sol);
+chain(200, "J-FCH20", "V-FCH2", "J-FCH2");
+const LINES2 = [];
+TANKS2.forEach(([no, x]) => {
+  LINES2.push({ no, sys: "A", wx: x - 90, wy: 95, fx: x + 70, fy: 95 });
+  LINES2.push({ no, sys: "B", wx: x - 70, wy: 150, fx: x + 90, fy: 150 });
+});
+let prevC2 = "J-CWH2";
+LINES2.forEach(({ no, sys, wx, wy }) => {
+  const j = J(`J-CW${no}${sys}`, FM, wx, 640, water);
+  V(`CY-CW${no}${sys}`, `T-${no} 冷却散水 ${sys}系 シリンダー弁（遠隔操作）`, FM, wx, 595, "close", { ...water, label: `CY-CW${no}${sys}` });
+  V(`V-CW${no}${sys}`, `T-${no} 冷却散水 ${sys}系 手動弁`, YD2, wx, 545, "open", water);
+  node(`SP-${no}${sys}`, "sprinkler", `T-${no} 冷却散水設備 ${sys}系`, YD2, wx, wy, { ...water, label: `SP-${no}${sys}` });
+  pipe(prevC2, j, 250);
+  chain(100, j, `CY-CW${no}${sys}`, `V-CW${no}${sys}`, `SP-${no}${sys}`);
+  prevC2 = j;
+});
+J("J-CWH2E", FM, 1720 + DX, 640, water);
+D("D-CWH2", "第2ヤード冷却散水ヘッダー 末端ドレン", FM, 1760 + DX, 640, 50, water);
+pipe(prevC2, "J-CWH2E", 250);
+pipe("J-CWH2E", "D-CWH2", 50);
+let prevF2 = "J-FCH2";
+[...LINES2].sort((a, b) => a.fx - b.fx).forEach(({ no, sys, fx, fy }) => {
+  const j = J(`J-FC${no}${sys}`, FM, fx, 960, sol);
+  V(`CY-FC${no}${sys}`, `T-${no} 発泡装置 ${sys}系 シリンダー弁（遠隔操作）`, FM, fx, 915, "close", { ...sol, label: `CY-FC${no}${sys}` });
+  V(`V-FC${no}${sys}`, `T-${no} 発泡装置 ${sys}系 手動弁`, FM, fx, 870, "open", sol);
+  node(`FC-${no}${sys}`, "foamChamber", `T-${no} タンク発泡装置 ${sys}系（固定泡放出口）`, YD2, fx, fy, { ...sol, label: `FC-${no}${sys}` });
+  pipe(prevF2, j, 200);
+  chain(80, j, `CY-FC${no}${sys}`, `V-FC${no}${sys}`, `FC-${no}${sys}`);
+  prevF2 = j;
+});
+J("J-FCH2E", FM, 1720 + DX, 960, sol);
+D("D-FCH2", "第2ヤード発泡装置ヘッダー 末端ドレン", FM, 1760 + DX, 960, 25, sol);
+pipe(prevF2, "J-FCH2E", 200);
+pipe("J-FCH2E", "D-FCH2", 25);
+
 const sch40 = [[25, 34.0, 26.6], [40, 48.6, 40.9], [50, 60.5, 52.7], [80, 89.1, 78.1], [100, 114.3, 102.3], [150, 165.2, 154.1], [200, 216.3, 202.7], [250, 267.4, 254.5], [300, 318.5, 304.8]];
 const data = {
   facility_id: "virtual-site-2",
   facility_name: "臨海石油基地（仮想・第2拠点）",
-  note: "サンプル：臨海石油基地。タンクの冷却散水・発泡装置をヘッダーから1タンク2系統（シリンダー弁＋手動弁）に分岐、タンクヤード周囲に消火栓ループ（水・泡）を追加",
-  sheets: [{ sheet_no: "S1", title: "全体系統図（燃料・消火）", width: 2400, height: 1300, meters_per_unit: 0.25, source_doc_no: null }],
+  note: "サンプル：臨海石油基地。タンクヤード2か所（各タンク4基）。冷却散水・発泡装置はヘッダーから1タンク2系統（シリンダー弁＋手動弁）、各ヤード周囲に消火栓ループ（水・泡）",
+  sheets: [{ sheet_no: "S1", title: "全体系統図（燃料・消火）", width: 3560, height: 1390, meters_per_unit: 0.25, source_doc_no: null }],
   areas: [
     { name: JT, sheet_no: "S1", x: 30, y: 110 + OY, w: 490, h: 520 },
     { name: RC, sheet_no: "S1", x: 560, y: 180 + OY, w: 300, h: 200 },
     { name: YD, sheet_no: "S1", x: 780, y: -100 + OY, w: 1000, h: 670 },
+    { name: YD2, sheet_no: "S1", x: 780 + DX, y: -100 + OY, w: 1000, h: 670 },
     { name: SH, sheet_no: "S1", x: 1760, y: 300 + OY, w: 610, h: 300 },
     { name: FP, sheet_no: "S1", x: 30, y: 640 + OY, w: 680, h: 470 },
-    { name: FM, sheet_no: "S1", x: 730, y: 560 + OY, w: 1380, h: 600 },
+    { name: FM, sheet_no: "S1", x: 730, y: 560 + OY, w: 2740, h: 600 },
   ],
   nodes,
   symbols,
