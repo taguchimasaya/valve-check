@@ -10,7 +10,6 @@ import {
   formatLiters,
   formatMinutes,
   DEFAULT_FILL_LPM,
-  GRAVITY_LPM,
   planIsolation,
   type Target,
 } from "@/lib/piping/isolation";
@@ -21,7 +20,6 @@ import {
   ALL_PUMPS,
   buildDayChecklist,
   FLUSH_STEPS,
-  FLUSH_TURNOVER,
   flushPumps,
   flushTarget,
   ISOLATION_STEPS,
@@ -47,7 +45,19 @@ import {
 } from "@/lib/piping/checklist";
 import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { buildFireTestChecklist, FIRE_TEST_STEPS, fireTestTanks } from "@/lib/piping/fireTest";
-import { fireTestRulesOf, fireTestSteps } from "@/lib/piping/rules";
+import {
+  blockMethodOf,
+  blocksOf,
+  customStepsOf,
+  drainRulesOf,
+  fireTestRulesOf,
+  fireTestSteps,
+  flushRulesOf,
+  isolationRulesOf,
+  type CustomWorkType,
+} from "@/lib/piping/rules";
+import { applyBlocks, buildCustomChecklist } from "@/lib/piping/ruleBlocks";
+import { unionRoute } from "@/lib/piping/fireTest";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
@@ -56,14 +66,29 @@ const STEPS_OF: Record<WorkType, string[]> = {
   flush: FLUSH_STEPS,
   tankIsolation: ISOLATION_STEPS,
   fireTest: FIRE_TEST_STEPS,
+  custom: [],
 };
-const TYPE_TAG: Record<WorkType, string> = { drain: "抜取", flush: "末端部", tankIsolation: "縁切り", fireTest: "消火試験" };
+const TYPE_TAG: Record<WorkType, string> = {
+  drain: "抜取",
+  flush: "末端部",
+  tankIsolation: "縁切り",
+  fireTest: "消火試験",
+  custom: "独自",
+};
 const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function PlannerPage() {
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act } = usePipingStore(0);
+  // チェックリスト作成のルール（⑤ で拠点ごとに登録。未登録の項目は既定値）
+  const storeRules = store?.rules;
+  const fireRules = useMemo(() => fireTestRulesOf(storeRules), [storeRules]);
+  const drainRules = useMemo(() => drainRulesOf(storeRules), [storeRules]);
+  const flushRules = useMemo(() => flushRulesOf(storeRules), [storeRules]);
+  const isoRules = useMemo(() => isolationRulesOf(storeRules), [storeRules]);
+  const blockMethod = useMemo(() => blockMethodOf(storeRules), [storeRules]);
+  const customTypes = useMemo(() => storeRules?.customTypes ?? [], [storeRules]);
 
   const [name, setName] = useState("");
   const [workType, setWorkType] = useState<WorkType>("drain");
@@ -72,6 +97,10 @@ export default function PlannerPage() {
   const [isoTank, setIsoTank] = useState<string | null>(null);
   // 消火設備機能試験：試験対象タンク
   const [fireTank, setFireTank] = useState<string | null>(null);
+  // ユーザー定義の作業：選んだ作業・対象（保存済みを開いたときは、その時点の定義も持つ）
+  const [customId, setCustomId] = useState<string | null>(null);
+  const [customTarget, setCustomTarget] = useState<string | null>(null);
+  const [loadedCustom, setLoadedCustom] = useState<CustomWorkType | null>(null);
   // 当日の選択の例（保存すると現場・制御室の選択欄の初期値になる）
   const [flushSrc, setFlushSrc] = useState("T-101");
   const [flushRet, setFlushRet] = useState("T-102");
@@ -81,13 +110,21 @@ export default function PlannerPage() {
   const [transferPump, setTransferPump] = useState("TP-1");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
-  const [expandToDrain, setExpandToDrain] = useState(true);
+  const [expandToDrainS, setExpandToDrain] = useState<boolean | null>(null);
   const [baselineMode, setBaselineMode] = useState<"normal" | "operation">("normal");
   const [extraSectionIds, setExtraSectionIds] = useState<string[]>([]);
   const [excludedDrains, setExcludedDrains] = useState<string[]>([]);
   const [gaugeIds, setGaugeIds] = useState<string[]>([]);
-  const [portableLpm, setPortableLpm] = useState(300);
-  const [fillLpm, setFillLpm] = useState(DEFAULT_FILL_LPM);
+  const [portableLpmS, setPortableLpm] = useState<number | null>(null);
+  const [fillLpmS, setFillLpm] = useState<number | null>(null);
+  // 未入力ならルールの値
+  const expandToDrain = expandToDrainS ?? drainRules.expandToDrain;
+  const portableLpm = portableLpmS ?? drainRules.portableLpm;
+  const fillLpm = fillLpmS ?? drainRules.fillLpm;
+  const gravity = useMemo(
+    () => Object.fromEntries(Object.entries(drainRules.gravityLpm).map(([k, v]) => [Number(k), v])) as Record<number, number>,
+    [drainRules]
+  );
   const [mode, setMode] = useState<"target" | "expand">("target");
   const [previewStep, setPreviewStep] = useState(0);
   const [focusSeal, setFocusSeal] = useState<number | null>(null);
@@ -107,11 +144,13 @@ export default function PlannerPage() {
     [g, baselineMode, hasCurrentState, opState]
   );
 
-  // 消火設備機能試験のルール（⑤ で拠点ごとに登録。未登録の項目は既定値）
-  const storeRules = store?.rules;
-  const fireRules = useMemo(() => fireTestRulesOf(storeRules), [storeRules]);
+  const customDef = customTypes.find((t) => t.id === customId) ?? (loadedCustom?.id === customId ? loadedCustom : null);
   const isDay = workType !== "drain";
-  const steps = useMemo(() => (workType === "fireTest" ? fireTestSteps(fireRules) : STEPS_OF[workType]), [workType, fireRules]);
+  const steps = useMemo(
+    () =>
+      workType === "fireTest" ? fireTestSteps(fireRules) : workType === "custom" ? (customDef ? customStepsOf(customDef) : ["作業前"]) : STEPS_OF[workType],
+    [workType, fireRules, customDef]
+  );
   const iso = useMemo(
     () =>
       !isDay && (targets.length || extraSectionIds.length)
@@ -157,8 +196,8 @@ export default function PlannerPage() {
   const dayKey = JSON.stringify(dayParams);
   const fireTanks = useMemo(() => fireTestTanks(g), [g]);
   const fireResult = useMemo(
-    () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline, fireRules) : null),
-    [g, workType, fireTank, baseline, fireRules]
+    () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline, fireRules, blockMethod) : null),
+    [g, workType, fireTank, baseline, fireRules, blockMethod]
   );
   const dayResultOf = useMemo(() => {
     const params = JSON.parse(dayKey) as DayParams | null;
@@ -172,10 +211,15 @@ export default function PlannerPage() {
         summary: { volumeL: flushT?.volumeL ?? null, drainMinutes: null, drains: [], warnings: [], notes: [] },
       },
       params,
-      baseline
+      baseline,
+      { flush: flushRules, tankIsolation: isoRules, blockMethod }
     );
-  }, [g, dayKey, steps, flushPipes, isoTank, flushT, baseline]);
-  const dayResult = workType === "fireTest" ? fireResult : dayResultOf;
+  }, [g, dayKey, steps, flushPipes, isoTank, flushT, baseline, flushRules, isoRules, blockMethod]);
+  const customResult = useMemo(
+    () => (workType === "custom" && customDef ? buildCustomChecklist(g, customDef, customTarget, baseline) : null),
+    [g, workType, customDef, customTarget, baseline]
+  );
+  const dayResult = workType === "fireTest" ? fireResult : workType === "custom" ? customResult : dayResultOf;
   const dayError =
     workType === "flush" && flushT && !effFlushPump
       ? "送り元・戻り先タンクから末端部へ届くポンプがありません"
@@ -195,11 +239,46 @@ export default function PlannerPage() {
   }, [iso, gaugeIds]);
 
   const drainRows = useMemo(
-    () => (iso ? buildPlanRows(g, iso, baseline, drains, activeGauges) : []),
-    [g, iso, baseline, drains, activeGauges]
+    () => {
+      if (!iso) return { rows: [], warnings: [] as string[] };
+      const warnings: string[] = [];
+      const rows = buildPlanRows(g, iso, baseline, drains, activeGauges, {
+        openInternal: drainRules.openInternal,
+        crackFillWithoutLine: drainRules.crackFillWithoutLine,
+        blockMethod,
+        warnings,
+      });
+      return { rows, warnings };
+    },
+    [g, iso, baseline, drains, activeGauges, drainRules, blockMethod]
   );
   const dayRows = dayResult?.rows;
-  const rows = useMemo(() => (isDay ? dayRows ?? [] : drainRows), [isDay, dayRows, drainRows]);
+  const rawRows = useMemo(() => (isDay ? dayRows ?? [] : drainRows.rows), [isDay, dayRows, drainRows]);
+  // 作業種別ごとの追加ルール（ブロック）を当てはめる（ユーザー定義の作業は作成時に当てはめ済み）
+  const builtinBlocks = useMemo(() => (workType === "custom" ? [] : blocksOf(storeRules, workType)), [workType, storeRules]);
+  const blockTarget =
+    workType === "fireTest"
+      ? fireTank
+      : workType === "tankIsolation"
+        ? isoTank
+        : workType === "drain"
+          ? targets.find((t) => t.type === "node")?.id ?? null
+          : null;
+  const dayRoutes = dayResult?.stepRoutes;
+  const blockApplied = useMemo(() => {
+    if (!builtinBlocks.length || !rawRows.length) return { rows: rawRows, warnings: [] as string[] };
+    const routes = Object.values(dayRoutes ?? {});
+    const route =
+      workType === "drain" && iso
+        ? { nodeIds: iso.regionNodeIds, pipeIds: iso.regionPipeIds }
+        : routes.length
+          ? unionRoute(routes)
+          : null;
+    return applyBlocks(g, rawRows, steps, builtinBlocks, { target: blockTarget, route, base: baseline });
+  }, [g, rawRows, steps, builtinBlocks, blockTarget, dayRoutes, workType, iso, baseline]);
+  const rows = blockApplied.rows;
+  const ruleWarnings = [...(isDay ? [] : drainRows.warnings), ...blockApplied.warnings, ...(customResult?.warnings ?? [])];
+  const appliedRules = { flush: flushRules, tankIsolation: isoRules, blocks: builtinBlocks, blockMethod };
   // 制御室で入力中の運用との干渉
   const conflicts = useMemo(
     () =>
@@ -209,8 +288,8 @@ export default function PlannerPage() {
     [iso, rows, hasCurrentState, opState]
   );
   const estimate = useMemo(
-    () => (iso ? estimateDrain(g, drains, iso.volumeL, portableLpm) : null),
-    [g, iso, drains, portableLpm]
+    () => (iso ? estimateDrain(g, drains, iso.volumeL, portableLpm, gravity) : null),
+    [g, iso, drains, portableLpm, gravity]
   );
   const equipmentVolume = useMemo(
     () => (iso ? iso.regionNodeIds.reduce((a, id) => a + (g.nodeById.get(id)!.volumeL ?? 0), 0) : 0),
@@ -290,6 +369,7 @@ export default function PlannerPage() {
     });
     if (isoTank && workType === "tankIsolation") marks[isoTank] = "selected";
     if (fireTank && workType === "fireTest") marks[fireTank] = "selected";
+    if (customTarget && workType === "custom") marks[customTarget] = "selected";
   }
   const targetPipes = targets.filter((t) => t.type === "pipe").map((t) => t.id);
   if (targetPipes.length) layers.push({ key: "targets", pipeIds: targetPipes, color: "#06b6d4", opacity: 0.8 });
@@ -311,6 +391,11 @@ export default function PlannerPage() {
     }
     if (workType === "fireTest") {
       if (fireTanks.includes(id)) setFireTank(id);
+      return;
+    }
+    if (workType === "custom") {
+      if (customDef?.target === "tank" ? n.kind === "tank" : customDef?.target === "equipment" && TARGET_KINDS.includes(n.kind))
+        setCustomTarget(id);
       return;
     }
     if (workType === "flush") return;
@@ -358,6 +443,7 @@ export default function PlannerPage() {
     setFlushPipes([]);
     setIsoTank(null);
     setFireTank(null);
+    setCustomTarget(null);
     setExtraSectionIds([]);
     setExcludedDrains([]);
     setGaugeIds([]);
@@ -367,6 +453,7 @@ export default function PlannerPage() {
 
   function buildDayPlan(): SavedPlan | null {
     if (workType === "fireTest") return buildFirePlan();
+    if (workType === "custom") return buildCustomPlan();
     if (!dayResult || dayResult.error || !dayParams || !rows.length) return null;
     const flush = workType === "flush";
     const auto = flush
@@ -381,6 +468,7 @@ export default function PlannerPage() {
       isolationTank: flush ? undefined : isoTank!,
       createdAt: new Date().toISOString(),
       source: "planner",
+      appliedRules,
       diagramVersionId: diagramInfo.versionId,
       targets: flush ? flushPipes.map((id) => ({ type: "pipe" as const, id })) : [{ type: "node", id: isoTank! }],
       regionPipeIds: flush ? flushT!.pipeIds : [],
@@ -404,6 +492,33 @@ export default function PlannerPage() {
     };
   }
 
+  function buildCustomPlan(): SavedPlan | null {
+    if (!customDef || !customResult || customResult.error || !rows.length) return null;
+    const t = customTarget ? g.nodeById.get(customTarget) : null;
+    return {
+      id: editingId ?? newId(),
+      name: name.trim() || `${customDef.name}${t ? `（${t.label}）` : ""}`,
+      workType: "custom",
+      purpose: customDef.name,
+      customType: customDef,
+      customTarget,
+      createdAt: new Date().toISOString(),
+      source: "planner",
+      appliedRules,
+      diagramVersionId: diagramInfo.versionId,
+      targets: customTarget ? [{ type: "node", id: customTarget }] : [],
+      regionPipeIds: customResult.route?.pipeIds ?? [],
+      regionNodeIds: customTarget ? [customTarget] : [],
+      sealPipeIds: [],
+      steps,
+      rows,
+      stepNotes: customResult.stepNotes,
+      stepRoutes: customResult.stepRoutes,
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
+      summary: { volumeL: null, drainMinutes: null, drains: [], warnings: customResult.warnings, notes: customDef.desc ? [customDef.desc] : [] },
+    };
+  }
+
   function buildFirePlan(): SavedPlan | null {
     if (!fireResult || fireResult.error || !fireTank || !rows.length) return null;
     const tankLabel = g.nodeById.get(fireTank)?.label ?? fireTank;
@@ -416,6 +531,7 @@ export default function PlannerPage() {
       fireTestTank: fireTank,
       createdAt: new Date().toISOString(),
       source: "planner",
+      appliedRules,
       diagramVersionId: diagramInfo.versionId,
       targets: [{ type: "node", id: fireTank }],
       regionPipeIds: [],
@@ -455,6 +571,7 @@ export default function PlannerPage() {
       purpose: WORK_TYPES.drain.label,
       createdAt: new Date().toISOString(),
       source: "planner",
+      appliedRules,
       diagramVersionId: diagramInfo.versionId,
       targets,
       regionPipeIds: iso.regionPipeIds,
@@ -509,6 +626,11 @@ export default function PlannerPage() {
     setFlushPipes(p.flushPipeIds ?? []);
     setIsoTank(p.isolationTank ?? null);
     setFireTank(p.fireTestTank ?? null);
+    if (type === "custom" && p.customType) {
+      setLoadedCustom(p.customType);
+      setCustomId(p.customType.id);
+      setCustomTarget(p.customTarget ?? null);
+    }
     const d = p.dayDefaults;
     if (d?.kind === "flush") {
       setFlushSrc(d.srcTank);
@@ -546,6 +668,10 @@ export default function PlannerPage() {
             ? "図面上で抜取対象の機器・配管をクリックしてください。ドレン口のある区間まで遮断範囲を自動算定し、操作バルブ・液封リスク・抜取量を表示します。"
             : workType === "flush"
               ? "図面上で末端部（通常使用しないライン）の配管をクリックしてください。つながっているラインのポンプで循環させる経路と操作バルブを作ります。"
+              : workType === "custom"
+                ? `${customDef?.name ?? "ユーザー定義の作業"}：${
+                    customDef?.target === "tank" ? "図面上で対象のタンクをクリックしてください。" : customDef?.target === "equipment" ? "図面上で対象の機器をクリックしてください。" : ""
+                  }⑤ で組み立てた工程とルールでチェックリストを作ります。${customDef?.desc ? `（${customDef.desc}）` : ""}`
               : workType === "fireTest"
                 ? `図面上で試験対象タンクをクリックしてください。登録したルール（⑤ チェックリスト作成のルール）に従い、発泡装置・冷却散水・近くの消火栓（泡${fireRules.foamHydrants}口・水${fireRules.waterHydrants}口）を使う試験の操作バルブを作ります。`
                 : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
@@ -560,9 +686,21 @@ export default function PlannerPage() {
               layers={layers}
               marks={marks}
               onNodeClick={handleNodeClick}
-              onPipeClick={workType === "tankIsolation" || workType === "fireTest" ? undefined : handlePipeClick}
+              onPipeClick={workType === "tankIsolation" || workType === "fireTest" || workType === "custom" ? undefined : handlePipeClick}
               clickableKinds={
-                workType === "flush" ? [] : workType === "tankIsolation" || workType === "fireTest" ? ["tank"] : mode === "expand" ? ["valve"] : TARGET_KINDS
+                workType === "flush"
+                  ? []
+                  : workType === "custom"
+                    ? customDef?.target === "tank"
+                      ? ["tank"]
+                      : customDef?.target === "equipment"
+                        ? TARGET_KINDS
+                        : []
+                    : workType === "tankIsolation" || workType === "fireTest"
+                      ? ["tank"]
+                      : mode === "expand"
+                        ? ["valve"]
+                        : TARGET_KINDS
               }
               height="74vh"
               toolbar={
@@ -603,8 +741,8 @@ export default function PlannerPage() {
             />
             <DiagramLegend
               items={isDay ? [
-                { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : workType === "fireTest" ? "試験対象タンク" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
-                { color: flowColor("route"), label: workType === "flush" ? "循環経路" : workType === "fireTest" ? "放水・泡放射の経路（表示中の工程）" : "移送経路（表示中の工程）" },
+                { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : workType === "fireTest" ? "試験対象タンク" : workType === "custom" ? "対象" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
+                { color: flowColor("route"), label: workType === "flush" ? "循環経路" : workType === "fireTest" ? "放水・泡放射の経路（表示中の工程）" : workType === "custom" ? "作業の経路（表示中の工程）" : "移送経路（表示中の工程）" },
                 { color: "#16a34a", label: "開操作・ポンプ起動", kind: "ring" },
                 { color: "#dc2626", label: "閉操作・ポンプ停止", kind: "ring" },
                 { color: "#06b6d4", label: previewStep === 0 ? "チェックリストの弁・ポンプ" : "確認（状態変化なし）", kind: "ring" },
@@ -644,9 +782,9 @@ export default function PlannerPage() {
               <div className="mb-2 grid grid-cols-3 gap-1">
                 {(Object.keys(WORK_TYPES) as WorkType[])
                   // 末端部作業・タンク縁切りはタンク・ポンプの番号の付け方に合わせて作ってあるため、仮想施設だけ。
-                  // 消火設備機能試験は、冷却散水・発泡装置の付いたタンクがある拠点だけ
+                  // 消火設備機能試験は、冷却散水・発泡装置の付いたタンクがある拠点だけ。ユーザー定義の作業は下に並べる
                   .filter((t) =>
-                    t === "drain" ? true : t === "fireTest" ? fireTanks.length > 0 : diagramInfo.facilityId === DEFAULT_FACILITY
+                    t === "custom" ? false : t === "drain" ? true : t === "fireTest" ? fireTanks.length > 0 : diagramInfo.facilityId === DEFAULT_FACILITY
                   )
                   .map((t) => (
                   <button
@@ -668,14 +806,56 @@ export default function PlannerPage() {
                     {WORK_TYPES[t].label}
                   </button>
                 ))}
+                {customTypes.map((c) => (
+                  <button
+                    key={c.id}
+                    title={c.desc || "⑤ で作ったユーザー定義の作業"}
+                    onClick={() => {
+                      if (workType === "custom" && customId === c.id) return;
+                      setWorkType("custom");
+                      setCustomId(c.id);
+                      setCustomTarget(null);
+                      setEditingId(null);
+                      setPreviewStep(0);
+                      setMode("target");
+                    }}
+                    className={`rounded-lg border border-dashed px-2 py-1.5 text-xs leading-tight ${
+                      workType === "custom" && customId === c.id
+                        ? "border-cyan-600 bg-cyan-600 font-semibold text-white"
+                        : "border-zinc-400 hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-900"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
               </div>
+              <p className="mb-2 text-right text-[11px]">
+                <Link href="/piping/rules" className="text-sky-700 hover:underline dark:text-sky-400">
+                  ⑤ ルールの変更・作業の追加
+                </Link>
+              </p>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="作業名（空欄なら自動）"
                 className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
               />
-              {isDay ? (
+              {workType === "custom" ? (
+                <div className="mt-3">
+                  <p className="text-xs font-medium text-zinc-500">
+                    対象（{customDef?.target === "tank" ? "図面のタンクをクリック" : customDef?.target === "equipment" ? "図面の機器をクリック" : "選択不要"}）
+                  </p>
+                  <p className="mt-1 text-sm">
+                    {customTarget ? (
+                      <span className="rounded-full bg-cyan-100 px-2.5 py-0.5 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200">
+                        {g.nodeById.get(customTarget)?.label}（{g.nodeById.get(customTarget)?.name}）
+                      </span>
+                    ) : (
+                      <span className="text-zinc-400">{customDef?.target === "none" ? "—" : "未選択"}</span>
+                    )}
+                  </p>
+                </div>
+              ) : isDay ? (
                 <DayTargetPanel
                   g={g}
                   workType={workType}
@@ -872,7 +1052,7 @@ export default function PlannerPage() {
                             </td>
                             <td title={n.name}>{d}</td>
                             <td>{n.drainPumpLpm ? "抜取ポンプ" : `自然流下 ${n.drainSizeA}A`}</td>
-                            <td className="text-right">{n.drainPumpLpm ?? GRAVITY_LPM[n.drainSizeA ?? 50]} L/min</td>
+                            <td className="text-right">{n.drainPumpLpm ?? gravity[n.drainSizeA ?? 50]} L/min</td>
                           </tr>
                         );
                       })}
@@ -992,7 +1172,38 @@ export default function PlannerPage() {
               </Panel>
             )}
 
-            {isDay && workType !== "fireTest" && (
+            {workType === "custom" && customResult && (customResult.error || Object.keys(customResult.stepNotes).length > 0) && (
+              <Panel title="作業の内容">
+                {customResult.error ? (
+                  <p className="rounded bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">{customResult.error}</p>
+                ) : (
+                  <ol className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    {steps.map((st, i) =>
+                      customResult.stepNotes[i] ? (
+                        <li key={st}>
+                          <b className="text-zinc-800 dark:text-zinc-200">{st}：</b>
+                          {customResult.stepNotes[i]}
+                        </li>
+                      ) : null
+                    )}
+                  </ol>
+                )}
+              </Panel>
+            )}
+
+            {ruleWarnings.length > 0 && (
+              <Panel title="ルールの注意">
+                <ul className="space-y-1">
+                  {ruleWarnings.map((w) => (
+                    <li key={w} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+            )}
+
+            {isDay && workType !== "fireTest" && workType !== "custom" && (
               <Panel title="当日の運用（例）">
                 {workType === "flush" ? (
                   <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1030,8 +1241,8 @@ export default function PlannerPage() {
                 </p>
                 {workType === "flush" && flushT && (
                   <p className="mt-2 text-sm">
-                    末端部の容量 <b>{formatLiters(flushT.volumeL)}</b> ／ 循環量の目安（{FLUSH_TURNOVER}倍）
-                    <b> {formatLiters(flushT.volumeL * FLUSH_TURNOVER)}</b>
+                    末端部の容量 <b>{formatLiters(flushT.volumeL)}</b> ／ 循環量の目安（{flushRules.turnover}倍）
+                    <b> {formatLiters(flushT.volumeL * flushRules.turnover)}</b>
                   </p>
                 )}
                 {dayError && (

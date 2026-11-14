@@ -98,6 +98,58 @@ export function routeSideValves(g: Graph, route: { nodeIds: string[]; pipeIds: s
   return [...out];
 }
 
+/**
+ * 2ブロック目の弁（ダブルブロック）：1ブロック目の弁の外側の区間を囲むほかの弁と、その区間のドレン口（ブリード用）。
+ * inside は作業側の区間（抜取範囲・経路の区間）。外側の区間がタンクに接していて2ブロック目が取れない場合は missing に入れる。
+ */
+export function secondBlock(
+  g: Graph,
+  firstValves: string[],
+  inside: Set<string>
+): { valves: string[]; bleeds: string[]; missing: string[]; ofValve: Map<string, string> } {
+  const firstSet = new Set(firstValves);
+  const valves = new Set<string>();
+  const bleeds = new Set<string>();
+  const missing: string[] = [];
+  // 2ブロック目の弁 → どの1ブロック目の弁の外側か（注記用）
+  const ofValve = new Map<string, string>();
+  firstValves.forEach((v) => {
+    const outer = (g.valveSides.get(v) ?? []).filter((s) => !inside.has(s));
+    let found = false;
+    // 外側の区間がタンク・施設外に直接つながっていると、そちら側は1ブロックのまま
+    let open = false;
+    outer.forEach((sid) => {
+      const s = g.sectionById.get(sid);
+      if (!s) return;
+      s.valveIds
+        .filter((o) => o !== v && !firstSet.has(o))
+        .forEach((o) => {
+          found = true;
+          valves.add(o);
+          if (!ofValve.has(o)) ofValve.set(o, v);
+        });
+      s.drainIds.forEach((d) => bleeds.add(d));
+      if (s.tankIds.length || s.external) open = true;
+    });
+    if (outer.length && (!found || open)) missing.push(v);
+  });
+  return { valves: [...valves], bleeds: [...bleeds], missing, ofValve };
+}
+
+/** 経路（ノード・配管）が通る区間 */
+export function routeSections(g: Graph, route: { nodeIds: string[]; pipeIds: string[] }) {
+  const out = new Set<string>();
+  route.pipeIds.forEach((p) => {
+    const s = g.sectionOfPipe.get(p);
+    if (s) out.add(s);
+  });
+  route.nodeIds.forEach((n) => {
+    const s = g.sectionOfNode.get(n);
+    if (s) out.add(s);
+  });
+  return out;
+}
+
 /** 燃料が隣り合うノード from → to へ流れられるか（逆止弁は順方向にしか流れない） */
 export function canFlow(g: Pick<Graph, "nodeById">, from: string, to: string) {
   const t = g.nodeById.get(to)!;

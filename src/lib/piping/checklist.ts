@@ -8,6 +8,8 @@ import {
 import type { Graph } from "./graph";
 import type { FillSupply, IsolationResult, Target } from "./isolation";
 import type { ValveState } from "./types";
+import type { BlockMethod, CustomWorkType, FlushRules, IsolationRules, RuleBlock } from "./rules";
+import { secondBlock } from "./graph";
 
 // 抜取計画 → 「バルブ×工程」チェックリスト。
 // 既存システムの手順チェックリスト（Excel取込形式）と同じ構造で持ち、同じ形式で書き出せるようにする。
@@ -46,13 +48,18 @@ export type SavedPlan = {
   /** 作成時に使った系統図の版（DBの版ID。プログラム内の仮想施設なら null） */
   diagramVersionId?: string | null;
   /** 作業の種類（省略時は燃料抜取） */
-  workType?: "drain" | "flush" | "tankIsolation" | "fireTest";
+  workType?: "drain" | "flush" | "tankIsolation" | "fireTest" | "custom";
   /** 燃料末端部作業：末端部として選んだ配管 */
   flushPipeIds?: string[];
   /** タンク縁切り作業：開放するタンク */
   isolationTank?: string;
   /** 消火設備機能試験：試験対象タンク */
   fireTestTank?: string;
+  /** ユーザー定義の作業：作成時の作業の定義（その後ルールを変えても、このチェックリストは変わらない）と対象 */
+  customType?: CustomWorkType;
+  customTarget?: string | null;
+  /** 作成時に使ったルール（当日の選択で作り直すときにも同じルールを使う） */
+  appliedRules?: { flush?: FlushRules; tankIsolation?: IsolationRules; blocks?: RuleBlock[]; blockMethod?: BlockMethod };
   /** 当日の選択で作られる工程ごとの説明と、燃料の流れる経路（点検ごとに重ねる） */
   stepNotes?: Record<number, string>;
   stepRoutes?: Record<number, { nodeIds: string[]; pipeIds: string[] }>;
@@ -97,8 +104,19 @@ export function buildPlanRows(
   iso: IsolationResult,
   baseline: Record<string, ValveState>,
   drainIds: string[],
-  gaugeIds: string[]
+  gaugeIds: string[],
+  /** ルール（⑤ で登録）：範囲内の弁を開けるか、充填ラインが無いとき遮断弁を微開して充填するか */
+  opts: {
+    openInternal?: boolean;
+    crackFillWithoutLine?: boolean;
+    /** 仕切り方（拠点共通）。2ブロックなら遮断弁の外側の弁も閉める */
+    blockMethod?: BlockMethod;
+    /** 2ブロック目が取れない遮断弁などの注意を入れる */
+    warnings?: string[];
+  } = {}
 ): PlanRow[] {
+  const openInternal = opts.openInternal ?? true;
+  const crackFill = opts.crackFillWithoutLine ?? true;
   // 工程：0 作業前 / 1 ラインナップ（遮断弁を閉め、抜取範囲を構成する） / 2 抜取 / 3 充填 / 4 復旧
   const rows: PlanRow[] = [];
   const row = (id: string, role: RowRole, states: (ValveState | null)[], note?: string) => {
@@ -112,7 +130,7 @@ export function buildPlanRows(
   iso.boundaryValves.forEach((v) => {
     if (drainRouteValves.has(v)) return;
     const base = baseline[v] ?? "close";
-    if (!fillOpen.has(v)) {
+    if (!fillOpen.has(v) || (!isFillValve(v) && !crackFill)) {
       row(v, "boundary", [base, "close", null, null, base]);
     } else if (isFillValve(v)) {
       row(v, "fill", [base, "close", null, "open", base]);
@@ -123,7 +141,8 @@ export function buildPlanRows(
   });
   iso.internalValves.forEach((v) => {
     const base = baseline[v] ?? "close";
-    row(v, "internal", base === "open" ? ["open", "open", null, null, null] : ["close", "open", null, null, "close"]);
+    if (!openInternal && base !== "open") row(v, "internal", [base, base, null, null, null], "ルールにより開けない（閉を確認）");
+    else row(v, "internal", base === "open" ? ["open", "open", null, null, null] : ["close", "open", null, null, "close"]);
   });
   const added = new Set<string>();
   drainIds.forEach((d) => {
@@ -148,9 +167,42 @@ export function buildPlanRows(
     (p) => row(p, "pump", ["close", null, "open", "close", null], "抜取工程で起動、充填工程の最初に停止")
   );
   gaugeIds.forEach((d) => row(d, "gauge", ["close", "open", null, null, "close"]));
+  // 2ブロック（ダブルブロック）：遮断弁の外側の区間を囲む弁も閉める（充填に使う遮断弁の外側は、充填工程で開ける）
+  if (opts.blockMethod?.blocks === 2) {
+    const firsts = iso.boundaryValves.filter((v) => !drainRouteValves.has(v));
+    const sb = secondBlock(g, firsts, new Set(iso.regionSectionIds));
+    const done = new Set(rows.map((r) => r.nodeId));
+    sb.valves.forEach((v) => {
+      if (done.has(v) || iso.fill.openValves.includes(v)) return;
+      const first = sb.ofValve.get(v)!;
+      const base = baseline[v] ?? "close";
+      const viaFill = fillOpen.has(first) && (isFillValve(first) || crackFill);
+      row(v, "boundary", [base, "close", null, viaFill ? "open" : null, base], `2ブロック目（${g.nodeById.get(first)!.label} の外側）`);
+      done.add(v);
+    });
+    if (opts.blockMethod.bleed) {
+      sb.bleeds.forEach((d) => {
+        if (done.has(d)) return;
+        row(d, "drain", ["close", "open", null, "close", null], "ブリード：2ブロックの間を抜いて漏れを確認（充填前に閉）");
+        done.add(d);
+      });
+    }
+    // 外側の区間がヘッダーなどで弁が多い場合は、閉める範囲が広くなることを知らせる
+    const perFirst = new Map<string, number>();
+    sb.ofValve.forEach((f) => perFirst.set(f, (perFirst.get(f) ?? 0) + 1));
+    perFirst.forEach((n, f) => {
+      if (n > 3 && opts.warnings)
+        opts.warnings.push(`2ブロック目：${g.nodeById.get(f)!.label} の外側は弁が多いため、${n}個の弁を閉めます（運用への影響を確認してください）`);
+    });
+    if (sb.missing.length && opts.warnings) {
+      opts.warnings.push(
+        `2ブロックにできない遮断弁があります：${sb.missing.map((v) => g.nodeById.get(v)!.label).join("・")}（外側がタンク・施設外に直接つながっています）`
+      );
+    }
+  }
   // 遮断範囲の外側にある充填ライン上の弁（充填元弁など）
   iso.fill.openValves
-    .filter((v) => !iso.boundaryValves.includes(v))
+    .filter((v) => !iso.boundaryValves.includes(v) && (crackFill || isFillValve(v)))
     .forEach((v) => {
       const base = baseline[v] ?? "close";
       row(v, "fill", [base, null, null, "open", base]);

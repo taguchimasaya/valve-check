@@ -1,6 +1,6 @@
 import type { PlanRow } from "./checklist";
-import { routeSideValves, shortestPath, type Graph, type Route } from "./graph";
-import { DEFAULT_FIRE_TEST_RULES, fireTestSteps, type FireTestRules } from "./rules";
+import { routeSections, routeSideValves, secondBlock, shortestPath, type Graph, type Route } from "./graph";
+import { DEFAULT_BLOCK_METHOD, DEFAULT_FIRE_TEST_RULES, fireTestSteps, type BlockMethod, type FireTestRules } from "./rules";
 import type { PNode, ValveState } from "./types";
 
 // 消火設備の機能試験チェックリスト。試験対象タンクを選ぶと、拠点ごとに登録したルール（rules.ts）に従って弁・ポンプの行を作る。
@@ -47,7 +47,7 @@ function cylinderTest(keywords: string) {
 }
 
 /** タンクに付いている放出口（冷却散水設備・タンク発泡装置）。名称の先頭のタンク番号で判定する */
-function tankOutlets(g: Graph, tank: PNode) {
+export function tankOutlets(g: Graph, tank: PNode) {
   return g.facility.nodes.filter(
     (n) =>
       (n.kind === "sprinkler" || n.kind === "foamChamber") &&
@@ -61,7 +61,7 @@ export function fireTestTanks(g: Graph) {
 }
 
 /** 放出口からヘッダー（分岐点）まで遡った枝の弁（放出口側から順に） */
-function branchValves(g: Graph, outlet: string) {
+export function branchValves(g: Graph, outlet: string) {
   const valves: string[] = [];
   let prev = "";
   let cur = outlet;
@@ -77,7 +77,7 @@ function branchValves(g: Graph, outlet: string) {
 }
 
 /** 経路を足し合わせる（配管ごとに上流側のノードを持つ） */
-function unionRoute(routes: Route[]): Route {
+export function unionRoute(routes: Route[]): Route {
   const up = new Map<string, string>();
   routes.forEach((r) => r.pipeIds.forEach((p, i) => up.has(p) || up.set(p, r.nodeIds[i])));
   return { pipeIds: [...up.keys()], nodeIds: [...up.values()] };
@@ -89,7 +89,8 @@ export function buildFireTestChecklist(
   g: Graph,
   tankId: string,
   base: Record<string, ValveState>,
-  rules: FireTestRules = DEFAULT_FIRE_TEST_RULES
+  rules: FireTestRules = DEFAULT_FIRE_TEST_RULES,
+  method: BlockMethod = DEFAULT_BLOCK_METHOD
 ): FireTestResult {
   const fail = (error: string): FireTestResult => ({ rows: [], stepNotes: {}, stepRoutes: {}, error });
   const steps = fireTestSteps(rules);
@@ -327,11 +328,27 @@ export function buildFireTestChecklist(
   // 試験範囲外への分岐：普段閉の弁は閉を確認、（ルールにより）普段開の弁は閉めて仕切る
   const sideOf = (r: Route) =>
     routeSideValves(g, r).filter((v) => !rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area);
-  [...sideOf(waterRoute), ...sideOf(foamRoute)].forEach((v) => {
-    if (special.has(v) || waterSet.has(v)) return;
+  const firstSides = [...new Set([...sideOf(waterRoute), ...sideOf(foamRoute)])].filter((v) => !special.has(v) && !waterSet.has(v));
+  firstSides.forEach((v) => {
     if (b(v) !== "open") set(v, "試験範囲外との仕切り（閉を確認）", { [S.lineup]: "close" });
     else if (rules.isolateOutside) set(v, "試験範囲外との仕切り（復旧で開）", { [S.lineup]: "close", [S.restore]: "open" });
   });
+  // 2ブロック：仕切り弁の外側の弁も閉める（ブリードならその間のドレン口を開けて確認）
+  if (method.blocks === 2 && rules.isolateOutside && firstSides.length) {
+    const inside = new Set([...routeSections(g, waterRoute), ...routeSections(g, foamRoute)]);
+    const sb = secondBlock(g, firstSides, inside);
+    sb.valves
+      .filter((v) => !special.has(v) && !waterSet.has(v) && (!rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area))
+      .forEach((v) => {
+        const what = `2ブロック目（${label(sb.ofValve.get(v)!)} の外側）`;
+        if (b(v) !== "open") set(v, `${what}：閉を確認`, { [S.lineup]: "close" });
+        else set(v, `${what}：復旧で開`, { [S.lineup]: "close", [S.restore]: "open" });
+      });
+    if (method.bleed)
+      sb.bleeds
+        .filter((d) => !rules.keepPumpArea || g.nodeById.get(d)!.area !== pump.area)
+        .forEach((d) => set(d, "ブリード：2ブロックの間を抜いて漏れを確認", { [S.lineup]: "open", [S.restore]: b(d) }));
+  }
 
   const order: Record<string, number> = {};
   const rank = (v: string) => {

@@ -17,6 +17,8 @@ import {
   workTypeOf,
   type DayParams,
 } from "@/lib/piping/workTypes";
+import { applyBlocks } from "@/lib/piping/ruleBlocks";
+import { unionRoute } from "@/lib/piping/fireTest";
 
 // 燃料末端部作業・タンク縁切りの「当日のタンク・ポンプ」を選ぶ欄（現場点検・制御室で共通）。
 // 選ぶと、その経路の弁でチェックリストが作り直される（弁を記録した後は変更できない）。
@@ -87,10 +89,20 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
   async function apply() {
     setError(null);
     if (!params) return;
-    const r = buildDayChecklist(g, plan, params, base);
+    // 作成時のルール（⑤）で作り直す
+    const r = buildDayChecklist(g, plan, params, base, plan.appliedRules ?? {});
     if (r.error) {
       setError(r.error);
       return;
+    }
+    const blocks = plan.appliedRules?.blocks ?? [];
+    if (blocks.length) {
+      const routes = Object.values(r.stepRoutes);
+      r.rows = applyBlocks(g, r.rows, plan.steps, blocks, {
+        target: plan.isolationTank ?? null,
+        route: routes.length ? unionRoute(routes) : null,
+        base,
+      }).rows;
     }
     setSaving(true);
     try {

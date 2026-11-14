@@ -1,6 +1,7 @@
 import type { PlanRow, SavedPlan } from "./checklist";
-import { routeSideValves, shortestPath, type Graph } from "./graph";
+import { routeSections, routeSideValves, secondBlock, shortestPath, type Graph } from "./graph";
 import type { ValveState } from "./types";
+import { DEFAULT_BLOCK_METHOD, DEFAULT_FLUSH_RULES, DEFAULT_ISOLATION_RULES, type BlockMethod, type FlushRules, type IsolationRules } from "./rules";
 
 // チェックリストを使う作業の種類と、当日の選択（タンク・ポンプ）から作るチェックリスト。
 //  1. 燃料抜取（機器点検・交換等）     … 作業前 → ラインナップ → 抜取 → 充填 → 復旧
@@ -8,12 +9,13 @@ import type { ValveState } from "./types";
 //  3. タンク縁切り作業（タンク開放のため）… 作業前 → 払出系統で移送 → 移送系統で移送 → 縁切り
 //  4. 消火設備機能試験 … ラインナップ → シリンダー弁開（制御室）→ ポンプ起動 → 泡系統試験 → 水系統試験 → 試験終了 → 復旧（fireTest.ts）
 
-export type WorkType = "drain" | "flush" | "tankIsolation" | "fireTest";
+export type WorkType = "drain" | "flush" | "tankIsolation" | "fireTest" | "custom";
 
 export const WORK_TYPES: Record<WorkType, { label: string; desc: string }> = {
   drain: { label: "燃料抜取（機器点検・交換等）", desc: "機器・配管の燃料を抜き取り、作業後に充填する" },
   flush: { label: "燃料末端部作業（循環）", desc: "通常使用しないライン（末端部）の燃料をポンプで循環させる" },
   tankIsolation: { label: "タンク縁切り作業", desc: "タンク開放のため、燃料を別タンクへ移送して縁切りする" },
+  custom: { label: "ユーザー定義の作業", desc: "⑤ でユーザーが工程とルールを組み立てた作業" },
   fireTest: { label: "消火設備機能試験", desc: "試験対象タンクの発泡装置、隣接タンクの冷却散水、近くの消火栓（泡・水）で放射・放水試験をする" },
 };
 
@@ -23,9 +25,9 @@ export const ISOLATION_STEPS = ["作業前", "払出系統で移送", "移送系
 /** 循環量の目安：末端部の配管容量の何倍を流すか */
 export const FLUSH_TURNOVER = 3;
 
-/** ポンプ能力の目安（L/min）。時間の試算用 */
-export function pumpLpm(g: Graph, pump: string) {
-  return g.nodeById.get(pump)?.kind === "transferPump" ? 1000 : 2000;
+/** ポンプ能力の目安（L/min）。時間の試算用（⑤ のルールで変更できる） */
+export function pumpLpm(g: Graph, pump: string, r: Pick<FlushRules, "pumpLpm" | "transferPumpLpm"> = DEFAULT_FLUSH_RULES) {
+  return g.nodeById.get(pump)?.kind === "transferPump" ? r.transferPumpLpm : r.pumpLpm;
 }
 
 export function workTypeOf(plan: Pick<SavedPlan, "workType">): WorkType {
@@ -193,7 +195,11 @@ function lineupRows(
   base: Record<string, ValveState>,
   finalClose: string[],
   pumps: PumpUse[],
-  notes: Record<string, string>
+  notes: Record<string, string>,
+  /** 経路から分岐する先の弁を閉めるか（⑤ のルール） */
+  closeSide = true,
+  /** 仕切り方（拠点共通）。2ブロックなら分岐先の弁の外側の弁も閉める */
+  method: BlockMethod = DEFAULT_BLOCK_METHOD
 ): PlanRow[] {
   const order: string[] = [];
   const states = new Map<string, (ValveState | null)[]>();
@@ -221,11 +227,28 @@ function lineupRows(
         want.set(v, "open");
         onRoute.add(v);
       });
-      routeSideValves(g, r).forEach((v) => {
+      const sides = closeSide ? routeSideValves(g, r) : [];
+      sides.forEach((v) => {
         if (want.has(v)) return;
         want.set(v, "close");
         side.add(v);
       });
+      // 2ブロック：分岐先の弁の外側の弁も閉める（ブリードならその間のドレン口を開ける）
+      if (method.blocks === 2 && sides.length) {
+        const sb = secondBlock(g, sides, routeSections(g, r));
+        sb.valves.forEach((v) => {
+          if (want.has(v)) return;
+          want.set(v, "close");
+          side.add(v);
+          notes[v] ??= `2ブロック目（${g.nodeById.get(sb.ofValve.get(v)!)!.label} の外側）`;
+        });
+        if (method.bleed)
+          sb.bleeds.forEach((d) => {
+            if (want.has(d)) return;
+            want.set(d, "open");
+            notes[d] ??= "ブリード：2ブロックの間を抜いて漏れを確認";
+          });
+      }
     }
     if (last) finalClose.forEach((v) => want.set(v, "close"));
     want.forEach((s, v) => {
@@ -259,8 +282,12 @@ export function buildDayChecklist(
   g: Graph,
   plan: Pick<SavedPlan, "steps" | "flushPipeIds" | "isolationTank" | "summary">,
   params: DayParams,
-  base: Record<string, ValveState>
+  base: Record<string, ValveState>,
+  rules: { flush?: FlushRules; tankIsolation?: IsolationRules; blockMethod?: BlockMethod } = {}
 ): DayResult {
+  const bm = rules.blockMethod ?? DEFAULT_BLOCK_METHOD;
+  const fr = rules.flush ?? DEFAULT_FLUSH_RULES;
+  const ir = rules.tankIsolation ?? DEFAULT_ISOLATION_RULES;
   const n = plan.steps.length;
   if (params.kind === "flush") {
     const route = flushRoute(g, plan.flushPipeIds ?? [], params.srcTank, params.pump, params.returnTank);
@@ -271,15 +298,15 @@ export function buildDayChecklist(
     // 0 作業前 / 1 ラインナップ / 2 循環（ポンプ起動） / 3 復旧（ポンプ停止 → 弁を元に戻す）
     const rows = lineupRows(g, n, { 1: route }, base, [], [
       { id: params.pump, on: 2, off: 3, note: "循環工程で起動、復旧工程の最初に停止" },
-    ], notes);
-    const vol = (plan.summary.volumeL ?? 0) * FLUSH_TURNOVER;
-    const lpm = pumpLpm(g, params.pump);
+    ], notes, fr.closeSide, bm);
+    const vol = (plan.summary.volumeL ?? 0) * fr.turnover;
+    const lpm = pumpLpm(g, params.pump, fr);
     return {
       rows,
       stepRoutes: { 2: route },
       stepNotes: {
-        1: `循環経路を構成します：${params.srcTank} → ${params.pump} → 末端部 → ${params.returnTank}（経路の分岐先の弁は閉）`,
-        2: `${params.pump} を起動し、${params.srcTank} → 末端部 → ${params.returnTank} へ循環。目標：末端部の配管容量の${FLUSH_TURNOVER}倍 ${(vol / 1000).toFixed(2)} kL（${lpm} L/min で${formatMin(vol / lpm)}）。目標に達したら「循環完了」を押してください。`,
+        1: `循環経路を構成します：${params.srcTank} → ${params.pump} → 末端部 → ${params.returnTank}${fr.closeSide ? "（経路の分岐先の弁は閉）" : ""}`,
+        2: `${params.pump} を起動し、${params.srcTank} → 末端部 → ${params.returnTank} へ循環。目標：末端部の配管容量の${fr.turnover}倍 ${(vol / 1000).toFixed(2)} kL（${lpm} L/min で${formatMin(vol / lpm)}）。目標に達したら「循環完了」を押してください。`,
         3: `最初に ${params.pump} を停止し、循環経路の弁を元の状態に戻します。`,
       },
     };
@@ -302,21 +329,22 @@ export function buildDayChecklist(
   const rows = lineupRows(g, n, { 1: r1, 2: r2 }, base, nz, [
     { id: params.issuePump, on: 1, off: 2, note: "払出系統で移送で起動、移送系統で移送の最初に停止" },
     { id: params.transferPump, on: 2, off: 3, note: "移送系統で移送で起動、縁切りの最初に停止" },
-  ], notes);
+  ], notes, ir.closeSide, bm);
   return {
     rows,
     stepRoutes: { 1: r1, 2: r2 },
     stepNotes: {
-      1: `経路の弁を開け（分岐先は閉）、${params.issuePump} を起動して ${tank} → 払出系統 → バイパス → 受入ライン → ${params.destTank} へ移送。払出配管で吸えなくなったら「移送完了」を押してください。`,
+      1: `経路の弁を開け${ir.closeSide ? "（分岐先は閉）" : ""}、${params.issuePump} を起動して ${tank} → 払出系統 → バイパス → 受入ライン → ${params.destTank} へ移送。払出配管で吸えなくなったら「移送完了」を押してください。`,
       2: `最初に ${params.issuePump} を停止。払出系統の弁を戻し、${params.transferPump} を起動して ${tank} → 移送系統 → 受入ライン → ${params.destTank} へ残油を移送。終わったら「移送完了」を押してください。`,
-      3: `最初に ${params.transferPump} を停止。${tank} の受入・払出・移送弁をすべて閉止して縁切りし（必要に応じて仕切板を挿入）、ほかの弁は元の状態に戻します。`,
+      3: `最初に ${params.transferPump} を停止。${tank} の受入・払出・移送弁をすべて閉止して縁切りし${ir.blindNote ? "（必要に応じて仕切板を挿入）" : ""}、ほかの弁は元の状態に戻します。`,
     },
   };
 }
 
 /** 弁の記録に加えて「完了」ボタンで終える工程（循環・移送・放水試験） */
-export function manualStepsOf(plan: Pick<SavedPlan, "workType">): number[] {
+export function manualStepsOf(plan: Pick<SavedPlan, "workType" | "customType">): number[] {
   const t = workTypeOf(plan);
+  if (t === "custom") return (plan.customType?.steps ?? []).flatMap((s, i) => (s.manual ? [i + 1] : []));
   if (t === "flush") return [2];
   if (t === "tankIsolation") return [1, 2];
   if (t === "fireTest") return [4, 5];
@@ -325,5 +353,5 @@ export function manualStepsOf(plan: Pick<SavedPlan, "workType">): number[] {
 
 export function manualStepLabel(plan: Pick<SavedPlan, "workType">) {
   const t = workTypeOf(plan);
-  return t === "flush" ? "循環完了" : t === "fireTest" ? "試験完了" : "移送完了";
+  return t === "flush" ? "循環完了" : t === "fireTest" ? "試験完了" : t === "custom" ? "工程完了" : "移送完了";
 }

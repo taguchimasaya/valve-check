@@ -491,12 +491,14 @@ export function estimateDrain(
   g: Graph,
   drainIds: string[],
   volumeL: number,
-  portableLpm: number
+  portableLpm: number,
+  /** 自然流下の能力（口径別。省略時は既定値） */
+  gravity: Record<number, number> = GRAVITY_LPM
 ): DrainEstimate {
   const perDrain = drainIds.map((id) => {
     const n = g.nodeById.get(id)!;
     if (n.drainPumpLpm) return { id, method: "pump" as const, rateLpm: n.drainPumpLpm };
-    return { id, method: "gravity" as const, rateLpm: GRAVITY_LPM[n.drainSizeA ?? 50] ?? 100 };
+    return { id, method: "gravity" as const, rateLpm: gravity[n.drainSizeA ?? 50] ?? GRAVITY_LPM[n.drainSizeA ?? 50] ?? 100 };
   });
   // 同じ抜取ポンプにつながるドレン口が複数あっても、ポンプの能力は1台分
   const pumpSystems = new Map<string, number>();
