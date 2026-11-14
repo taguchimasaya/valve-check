@@ -30,7 +30,10 @@ function builtin(notice: string): DiagramPayload {
 }
 
 export async function GET(request: Request) {
-  const facilityId = new URL(request.url).searchParams.get("facility") ?? DEFAULT_FACILITY;
+  const params = new URL(request.url).searchParams;
+  const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
+  // version を指定すると、その版（下書き・保管を含む）を返す（④ 系統図データ管理のプレビュー用）
+  const versionParam = params.get("version");
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (process.env.PIPING_DIAGRAM === "builtin" || !url || !key) {
@@ -38,12 +41,11 @@ export async function GET(request: Request) {
   }
   const db = createClient(url, key, { auth: { persistSession: false } });
   try {
-    const { data: version, error: vErr } = await db
-      .from("piping_diagram_versions")
-      .select("id, version_no")
-      .eq("facility_id", facilityId)
-      .eq("status", "active")
-      .maybeSingle();
+    const base = db.from("piping_diagram_versions").select("id, version_no");
+    const { data: version, error: vErr } = await (versionParam
+      ? base.eq("id", versionParam)
+      : base.eq("facility_id", facilityId).eq("status", "active")
+    ).maybeSingle();
     if (vErr) {
       if (isMissingTable(vErr.code)) {
         return Response.json(
