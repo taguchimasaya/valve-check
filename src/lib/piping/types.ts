@@ -23,7 +23,8 @@ export type NodeKind =
   | "hydrant" // 消火栓
   | "monitor" // 放水銃・泡モニター
   | "sprinkler" // 散水ヘッド・スプリンクラー
-  | "proportioner"; // 泡混合器
+  | "proportioner" // 泡混合器
+  | "foamChamber"; // タンク発泡装置（固定泡放出口）
 
 /** 配管・機器の中の流体 */
 export type Fluid = "fuel" | "water" | "foam" | "foamSolution" | "other";
@@ -38,7 +39,7 @@ export const FLUID_LABEL: Record<Fluid, string> = {
 
 /** 系統の出口（施設外・放出口）。ここで配管が終わり、遮断範囲には含めない */
 export function isOutlet(kind: NodeKind) {
-  return kind === "sink" || kind === "hydrant" || kind === "monitor" || kind === "sprinkler";
+  return kind === "sink" || kind === "hydrant" || kind === "monitor" || kind === "sprinkler" || kind === "foamChamber";
 }
 
 export type PNode = {

@@ -103,6 +103,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   monitor: "放水銃・泡モニター",
   sprinkler: "散水ヘッド",
   proportioner: "泡混合器",
+  foamChamber: "タンク発泡装置",
 };
 
 const FLUID_BY_LABEL = new Map<string, Fluid>(

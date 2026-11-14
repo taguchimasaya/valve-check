@@ -589,3 +589,15 @@ alter table piping_facilities add column if not exists note text;
 
 -- 拠点ごとの点検・運用データは piping_store の行を拠点ごとに分けて持つ
 -- （id = 'main' は仮想施設 virtual-airport、ほかの拠点は id = 施設ID の行。アプリが必要なときに作る）
+
+-- ───── タンク発泡装置（supabase/piping_diagram_v4.sql と同じ内容） ─────
+alter table piping_nodes drop constraint if exists piping_nodes_kind_check;
+alter table piping_nodes add constraint piping_nodes_kind_check check (kind in (
+  'junction', 'valve', 'check', 'tank', 'pump', 'transferPump', 'strainer', 'filter',
+  'psv', 'drain', 'gauge', 'source', 'sink',
+  'hydrant',       -- 消火栓（泡消火栓を含む）
+  'monitor',       -- 放水銃・泡モニター
+  'sprinkler',     -- 散水ヘッド・冷却散水設備
+  'proportioner',  -- 泡混合器
+  'foamChamber'    -- タンク発泡装置（固定泡放出口）
+));

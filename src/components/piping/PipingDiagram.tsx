@@ -510,7 +510,8 @@ export default function PipingDiagram({
       case "hydrant":
       case "monitor":
       case "sprinkler":
-      case "proportioner": {
+      case "proportioner":
+      case "foamChamber": {
         // 消火設備：赤い記号（消火栓＝丸に「栓」、放水銃＝三角、散水ヘッド＝小さな丸と放射線、泡混合器＝ひし形）
         const red = "#dc2626";
         const shape =
@@ -523,6 +524,13 @@ export default function PipingDiagram({
             </>
           ) : n.kind === "monitor" ? (
             <polygon points={`${n.x - 10},${n.y + 9} ${n.x + 10},${n.y + 9} ${n.x},${n.y - 11}`} fill={red} />
+          ) : n.kind === "foamChamber" ? (
+            <>
+              <rect x={n.x - 12} y={n.y - 9} width={24} height={18} rx={3} fill={red} />
+              <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="#ffffff">
+                泡
+              </text>
+            </>
           ) : n.kind === "sprinkler" ? (
             <>
               <circle cx={n.x} cy={n.y} r={5} fill={red} />
