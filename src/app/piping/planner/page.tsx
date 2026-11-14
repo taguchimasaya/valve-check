@@ -428,7 +428,7 @@ export default function PlannerPage() {
         drains: [],
         warnings: [],
         notes: [
-          `使用設備：冷却散水 ${[...s.sprinklers, ...s.adjacent].join("・")}／発泡装置 ${s.foamChambers.join("・")}／消火栓（水）${s.waterHydrants.join("・")}／泡消火栓 ${s.foamHydrants.join("・")}／ポンプ ${[s.pump, s.foamPump].filter(Boolean).join("・")}`,
+          `使用設備：発泡装置 ${s.foamChambers.join("・")}／隣接タンクの冷却散水 ${s.adjacent.join("・")}／消火栓（水）${s.waterHydrants.join("・")}／泡消火栓 ${s.foamHydrants.join("・")}／ポンプ ${[s.pump, s.foamPump].filter(Boolean).join("・")}`,
         ],
       },
     };
@@ -543,7 +543,7 @@ export default function PlannerPage() {
             : workType === "flush"
               ? "図面上で末端部（通常使用しないライン）の配管をクリックしてください。つながっているラインのポンプで循環させる経路と操作バルブを作ります。"
               : workType === "fireTest"
-                ? `図面上で試験対象タンクをクリックしてください。対象タンクの冷却散水・発泡装置、隣接タンクの対象側の冷却散水、近くの消火栓（水${FIRE_TEST_HYDRANTS.water}口・泡${FIRE_TEST_HYDRANTS.foam}口）を使う試験の操作バルブを作ります。`
+                ? `図面上で試験対象タンクをクリックしてください。対象タンクの発泡装置、隣接タンクの対象タンク側の冷却散水、近くの消火栓（水${FIRE_TEST_HYDRANTS.water}口・泡${FIRE_TEST_HYDRANTS.foam}口）を使う試験の操作バルブを作ります。`
                 : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
         </p>
 
@@ -947,15 +947,15 @@ export default function PlannerPage() {
                 ) : fireResult?.summary ? (
                   <>
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                      <dt className="text-zinc-500">冷却散水</dt>
-                      <dd>
-                        {fireResult.summary.sprinklers.join("・")}
-                        {fireResult.summary.adjacent.length > 0 && (
-                          <span className="text-zinc-500">（隣接タンク側：{fireResult.summary.adjacent.join("・")}）</span>
-                        )}
-                      </dd>
                       <dt className="text-zinc-500">発泡装置</dt>
                       <dd>{fireResult.summary.foamChambers.join("・") || "—"}</dd>
+                      <dt className="text-zinc-500">冷却散水</dt>
+                      <dd>
+                        隣接タンク側 {fireResult.summary.adjacent.join("・") || "—"}
+                        <span className="block text-zinc-500">
+                          試験タンクの冷却散水（{fireResult.summary.idleSprinklers.join("・") || "—"}）からは散水しません
+                        </span>
+                      </dd>
                       <dt className="text-zinc-500">消火栓（水）</dt>
                       <dd>{fireResult.summary.waterHydrants.join("・")}</dd>
                       <dt className="text-zinc-500">泡消火栓</dt>
@@ -974,7 +974,7 @@ export default function PlannerPage() {
                       )}
                     </ol>
                     <p className="mt-2 text-[11px] text-zinc-500">
-                      隣接タンクは同じヤードで横に並ぶタンクです。消火栓は同じヤードのものを優先し、対象タンクに近い順に選んでいます。
+                      隣接タンクは同じヤードで上下・左右に並ぶタンクです（斜めは含みません）。消火栓は同じヤードのものを優先し、対象タンクに近い順に選んでいます。
                     </p>
                   </>
                 ) : null}
