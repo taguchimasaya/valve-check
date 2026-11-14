@@ -259,9 +259,13 @@ export default function PlanPreview({
               { color: "#22c55e", label: "開操作", kind: "ring" },
               { color: "#dc2626", label: "閉操作", kind: "ring" },
               { color: "#06b6d4", label: "確認（状態変化なし）", kind: "ring" },
-              { color: "#0284c7", label: "抜取の流れ" },
-              { color: "#0d9488", label: "充填の流れ" },
-              { color: "#ef4444", label: "点検範囲" },
+              ...(workTypeOf(plan) === "drain"
+                ? [
+                    { color: "#0284c7", label: "抜取の流れ" },
+                    { color: "#0d9488", label: "充填の流れ" },
+                    { color: "#ef4444", label: "点検範囲" },
+                  ]
+                : [{ color: flowColor("route"), label: workTypeOf(plan) === "fireTest" ? "放水・泡放射の流れ" : "循環・移送の流れ" }]),
             ]}
           />
           <div className="overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">

@@ -512,12 +512,13 @@ export default function PipingDiagram({
       case "sprinkler":
       case "proportioner":
       case "foamChamber": {
-        // 消火設備：赤い記号（消火栓＝丸に「栓」、放水銃＝三角、散水ヘッド＝小さな丸と放射線、泡混合器＝ひし形）
+        // 消火設備の記号（消火栓＝丸に「栓」で水系統は青・泡系統は紫、ほかは赤。放水銃＝三角、散水ヘッド＝小さな丸と放射線、泡混合器＝ひし形）
         const red = "#dc2626";
         const shape =
           n.kind === "hydrant" ? (
             <>
-              <circle cx={n.x} cy={n.y} r={11} fill={red} />
+              {/* 消火栓の色：泡系統（泡原液・泡水溶液）は紫、それ以外（水系統）は青 */}
+              <circle cx={n.x} cy={n.y} r={11} fill={n.fluid === "foam" || n.fluid === "foamSolution" ? "#9333ea" : "#0284c7"} />
               <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="#ffffff">
                 栓
               </text>

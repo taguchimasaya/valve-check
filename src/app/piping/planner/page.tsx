@@ -46,10 +46,17 @@ import {
   type SavedPlan,
 } from "@/lib/piping/checklist";
 import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { buildFireTestChecklist, FIRE_TEST_HYDRANTS, FIRE_TEST_STEPS, fireTestTanks } from "@/lib/piping/fireTest";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
-const STEPS_OF: Record<WorkType, string[]> = { drain: PLAN_STEPS, flush: FLUSH_STEPS, tankIsolation: ISOLATION_STEPS };
+const STEPS_OF: Record<WorkType, string[]> = {
+  drain: PLAN_STEPS,
+  flush: FLUSH_STEPS,
+  tankIsolation: ISOLATION_STEPS,
+  fireTest: FIRE_TEST_STEPS,
+};
+const TYPE_TAG: Record<WorkType, string> = { drain: "抜取", flush: "末端部", tankIsolation: "縁切り", fireTest: "消火試験" };
 const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function PlannerPage() {
@@ -62,6 +69,8 @@ export default function PlannerPage() {
   // 燃料末端部作業：末端部として選んだ配管、タンク縁切り：対象タンク
   const [flushPipes, setFlushPipes] = useState<string[]>([]);
   const [isoTank, setIsoTank] = useState<string | null>(null);
+  // 消火設備機能試験：試験対象タンク
+  const [fireTank, setFireTank] = useState<string | null>(null);
   // 当日の選択の例（保存すると現場・制御室の選択欄の初期値になる）
   const [flushSrc, setFlushSrc] = useState("T-101");
   const [flushRet, setFlushRet] = useState("T-102");
@@ -142,7 +151,12 @@ export default function PlannerPage() {
         ? { kind: "tankIsolation", destTank: effDest, issuePump: effIssuePump, transferPump: effTransferPump }
         : null;
   const dayKey = JSON.stringify(dayParams);
-  const dayResult = useMemo(() => {
+  const fireTanks = useMemo(() => fireTestTanks(g), [g]);
+  const fireResult = useMemo(
+    () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline) : null),
+    [g, workType, fireTank, baseline]
+  );
+  const dayResultOf = useMemo(() => {
     const params = JSON.parse(dayKey) as DayParams | null;
     if (!params) return null;
     return buildDayChecklist(
@@ -157,6 +171,7 @@ export default function PlannerPage() {
       baseline
     );
   }, [g, dayKey, steps, flushPipes, isoTank, flushT, baseline]);
+  const dayResult = workType === "fireTest" ? fireResult : dayResultOf;
   const dayError =
     workType === "flush" && flushT && !effFlushPump
       ? "送り元・戻り先タンクから末端部へ届くポンプがありません"
@@ -269,7 +284,8 @@ export default function PlannerPage() {
       if (!s) return;
       marks[r.nodeId] = !isOperateCell(r, previewStep) ? "selected" : s === "open" ? "internal" : "boundary";
     });
-    if (isoTank) marks[isoTank] = "selected";
+    if (isoTank && workType === "tankIsolation") marks[isoTank] = "selected";
+    if (fireTank && workType === "fireTest") marks[fireTank] = "selected";
   }
   const targetPipes = targets.filter((t) => t.type === "pipe").map((t) => t.id);
   if (targetPipes.length) layers.push({ key: "targets", pipeIds: targetPipes, color: "#06b6d4", opacity: 0.8 });
@@ -287,6 +303,10 @@ export default function PlannerPage() {
     const n = g.nodeById.get(id)!;
     if (workType === "tankIsolation") {
       if (n.kind === "tank" && TANKS.includes(id)) setIsoTank(id);
+      return;
+    }
+    if (workType === "fireTest") {
+      if (fireTanks.includes(id)) setFireTank(id);
       return;
     }
     if (workType === "flush") return;
@@ -333,6 +353,7 @@ export default function PlannerPage() {
     setTargets([]);
     setFlushPipes([]);
     setIsoTank(null);
+    setFireTank(null);
     setExtraSectionIds([]);
     setExcludedDrains([]);
     setGaugeIds([]);
@@ -341,6 +362,7 @@ export default function PlannerPage() {
   }
 
   function buildDayPlan(): SavedPlan | null {
+    if (workType === "fireTest") return buildFirePlan();
     if (!dayResult || dayResult.error || !dayParams || !rows.length) return null;
     const flush = workType === "flush";
     const auto = flush
@@ -373,6 +395,40 @@ export default function PlannerPage() {
         warnings: [],
         notes: [
           "タンク・ポンプは当日の運用に合わせて ② 現場点検・③ 制御室で選び直します（ここで選んだものは初期値）。",
+        ],
+      },
+    };
+  }
+
+  function buildFirePlan(): SavedPlan | null {
+    if (!fireResult || fireResult.error || !fireTank || !rows.length) return null;
+    const tankLabel = g.nodeById.get(fireTank)?.label ?? fireTank;
+    const s = fireResult.summary!;
+    return {
+      id: editingId ?? newId(),
+      name: name.trim() || `消火設備機能試験（${tankLabel}）`,
+      workType: "fireTest",
+      purpose: WORK_TYPES.fireTest.label,
+      fireTestTank: fireTank,
+      createdAt: new Date().toISOString(),
+      source: "planner",
+      diagramVersionId: diagramInfo.versionId,
+      targets: [{ type: "node", id: fireTank }],
+      regionPipeIds: [],
+      regionNodeIds: [fireTank],
+      sealPipeIds: [],
+      steps,
+      rows,
+      stepNotes: fireResult.stepNotes,
+      stepRoutes: fireResult.stepRoutes,
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
+      summary: {
+        volumeL: null,
+        drainMinutes: null,
+        drains: [],
+        warnings: [],
+        notes: [
+          `使用設備：冷却散水 ${[...s.sprinklers, ...s.adjacent].join("・")}／発泡装置 ${s.foamChambers.join("・")}／消火栓（水）${s.waterHydrants.join("・")}／泡消火栓 ${s.foamHydrants.join("・")}／ポンプ ${[s.pump, s.foamPump].filter(Boolean).join("・")}`,
         ],
       },
     };
@@ -448,6 +504,7 @@ export default function PlannerPage() {
     setTargets(type === "drain" ? p.targets : []);
     setFlushPipes(p.flushPipeIds ?? []);
     setIsoTank(p.isolationTank ?? null);
+    setFireTank(p.fireTestTank ?? null);
     const d = p.dayDefaults;
     if (d?.kind === "flush") {
       setFlushSrc(d.srcTank);
@@ -485,7 +542,9 @@ export default function PlannerPage() {
             ? "図面上で抜取対象の機器・配管をクリックしてください。ドレン口のある区間まで遮断範囲を自動算定し、操作バルブ・液封リスク・抜取量を表示します。"
             : workType === "flush"
               ? "図面上で末端部（通常使用しないライン）の配管をクリックしてください。つながっているラインのポンプで循環させる経路と操作バルブを作ります。"
-              : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
+              : workType === "fireTest"
+                ? `図面上で試験対象タンクをクリックしてください。対象タンクの冷却散水・発泡装置、隣接タンクの対象側の冷却散水、近くの消火栓（水${FIRE_TEST_HYDRANTS.water}口・泡${FIRE_TEST_HYDRANTS.foam}口）を使う試験の操作バルブを作ります。`
+                : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
         </p>
 
         <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_440px]">
@@ -497,9 +556,9 @@ export default function PlannerPage() {
               layers={layers}
               marks={marks}
               onNodeClick={handleNodeClick}
-              onPipeClick={workType === "tankIsolation" ? undefined : handlePipeClick}
+              onPipeClick={workType === "tankIsolation" || workType === "fireTest" ? undefined : handlePipeClick}
               clickableKinds={
-                workType === "flush" ? [] : workType === "tankIsolation" ? ["tank"] : mode === "expand" ? ["valve"] : TARGET_KINDS
+                workType === "flush" ? [] : workType === "tankIsolation" || workType === "fireTest" ? ["tank"] : mode === "expand" ? ["valve"] : TARGET_KINDS
               }
               height="74vh"
               toolbar={
@@ -540,8 +599,8 @@ export default function PlannerPage() {
             />
             <DiagramLegend
               items={isDay ? [
-                { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
-                { color: flowColor("route"), label: workType === "flush" ? "循環経路" : "移送経路（表示中の工程）" },
+                { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : workType === "fireTest" ? "試験対象タンク" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
+                { color: flowColor("route"), label: workType === "flush" ? "循環経路" : workType === "fireTest" ? "放水・泡放射の経路（表示中の工程）" : "移送経路（表示中の工程）" },
                 { color: "#16a34a", label: "開操作・ポンプ起動", kind: "ring" },
                 { color: "#dc2626", label: "閉操作・ポンプ停止", kind: "ring" },
                 { color: "#06b6d4", label: previewStep === 0 ? "チェックリストの弁・ポンプ" : "確認（状態変化なし）", kind: "ring" },
@@ -580,8 +639,11 @@ export default function PlannerPage() {
             <Panel title="作業内容">
               <div className="mb-2 grid grid-cols-3 gap-1">
                 {(Object.keys(WORK_TYPES) as WorkType[])
-                  // 末端部作業・タンク縁切りはタンク・ポンプの番号の付け方に合わせて作ってあるため、仮想施設だけ
-                  .filter((t) => t === "drain" || diagramInfo.facilityId === DEFAULT_FACILITY)
+                  // 末端部作業・タンク縁切りはタンク・ポンプの番号の付け方に合わせて作ってあるため、仮想施設だけ。
+                  // 消火設備機能試験は、冷却散水・発泡装置の付いたタンクがある拠点だけ
+                  .filter((t) =>
+                    t === "drain" ? true : t === "fireTest" ? fireTanks.length > 0 : diagramInfo.facilityId === DEFAULT_FACILITY
+                  )
                   .map((t) => (
                   <button
                     key={t}
@@ -616,7 +678,7 @@ export default function PlannerPage() {
                   flushPipes={flushPipes}
                   setFlushPipes={setFlushPipes}
                   flushT={flushT}
-                  isoTank={isoTank}
+                  isoTank={workType === "fireTest" ? fireTank : isoTank}
                   pipeLabel={(id) => targetLabel({ type: "pipe", id })}
                 />
               ) : (
@@ -878,7 +940,48 @@ export default function PlannerPage() {
             )}
 
 
-            {isDay && (
+            {workType === "fireTest" && fireTank && (
+              <Panel title="試験の内容">
+                {fireResult?.error ? (
+                  <p className="rounded bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">{fireResult.error}</p>
+                ) : fireResult?.summary ? (
+                  <>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                      <dt className="text-zinc-500">冷却散水</dt>
+                      <dd>
+                        {fireResult.summary.sprinklers.join("・")}
+                        {fireResult.summary.adjacent.length > 0 && (
+                          <span className="text-zinc-500">（隣接タンク側：{fireResult.summary.adjacent.join("・")}）</span>
+                        )}
+                      </dd>
+                      <dt className="text-zinc-500">発泡装置</dt>
+                      <dd>{fireResult.summary.foamChambers.join("・") || "—"}</dd>
+                      <dt className="text-zinc-500">消火栓（水）</dt>
+                      <dd>{fireResult.summary.waterHydrants.join("・")}</dd>
+                      <dt className="text-zinc-500">泡消火栓</dt>
+                      <dd>{fireResult.summary.foamHydrants.join("・")}</dd>
+                      <dt className="text-zinc-500">ポンプ</dt>
+                      <dd>{[fireResult.summary.pump, fireResult.summary.foamPump].filter(Boolean).join("・")}</dd>
+                    </dl>
+                    <ol className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                      {steps.map((st, i) =>
+                        fireResult.stepNotes[i] ? (
+                          <li key={st}>
+                            <b className="text-zinc-800 dark:text-zinc-200">{st}：</b>
+                            {fireResult.stepNotes[i]}
+                          </li>
+                        ) : null
+                      )}
+                    </ol>
+                    <p className="mt-2 text-[11px] text-zinc-500">
+                      隣接タンクは同じヤードで横に並ぶタンクです。消火栓は同じヤードのものを優先し、対象タンクに近い順に選んでいます。
+                    </p>
+                  </>
+                ) : null}
+              </Panel>
+            )}
+
+            {isDay && workType !== "fireTest" && (
               <Panel title="当日の運用（例）">
                 {workType === "flush" ? (
                   <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1033,7 +1136,7 @@ export default function PlannerPage() {
                   {plannerPlans.map((p) => (
                     <li key={p.id} className="flex items-center gap-2 text-sm">
                       <span className="shrink-0 rounded bg-zinc-100 px-1.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                        {workTypeOf(p) === "drain" ? "抜取" : workTypeOf(p) === "flush" ? "末端部" : "縁切り"}
+                        {TYPE_TAG[workTypeOf(p)]}
                       </span>
                       <button onClick={() => loadPlan(p)} className="flex-1 truncate text-left hover:underline" title={p.name}>
                         {p.name}
@@ -1122,10 +1225,12 @@ function DayTargetPanel({
   isoTank: string | null;
   pipeLabel: (id: string) => string;
 }) {
-  if (workType === "tankIsolation") {
+  if (workType === "tankIsolation" || workType === "fireTest") {
     return (
       <div className="mt-3">
-        <p className="text-xs font-medium text-zinc-500">縁切りするタンク（図面のタンクをクリック）</p>
+        <p className="text-xs font-medium text-zinc-500">
+          {workType === "fireTest" ? "試験対象タンク" : "縁切りするタンク"}（図面のタンクをクリック）
+        </p>
         <p className="mt-1 text-sm">
           {isoTank ? (
             <span className="rounded-full bg-cyan-100 px-2.5 py-0.5 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200">

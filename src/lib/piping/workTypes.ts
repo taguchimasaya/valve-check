@@ -6,13 +6,15 @@ import type { ValveState } from "./types";
 //  1. 燃料抜取（機器点検・交換等）     … 作業前 → ラインナップ → 抜取 → 充填 → 復旧
 //  2. 燃料末端部作業（不使用ラインの循環）… 作業前 → ラインナップ → 循環 → 復旧
 //  3. タンク縁切り作業（タンク開放のため）… 作業前 → 払出系統で移送 → 移送系統で移送 → 縁切り
+//  4. 消火設備機能試験 … ラインナップ → シリンダー弁開（制御室）→ ポンプ起動 → 水系統試験 → 泡系統試験 → 試験終了 → 復旧（fireTest.ts）
 
-export type WorkType = "drain" | "flush" | "tankIsolation";
+export type WorkType = "drain" | "flush" | "tankIsolation" | "fireTest";
 
 export const WORK_TYPES: Record<WorkType, { label: string; desc: string }> = {
   drain: { label: "燃料抜取（機器点検・交換等）", desc: "機器・配管の燃料を抜き取り、作業後に充填する" },
   flush: { label: "燃料末端部作業（循環）", desc: "通常使用しないライン（末端部）の燃料をポンプで循環させる" },
   tankIsolation: { label: "タンク縁切り作業", desc: "タンク開放のため、燃料を別タンクへ移送して縁切りする" },
+  fireTest: { label: "消火設備機能試験", desc: "試験対象タンクの冷却散水・発泡装置と、近くの消火栓（水・泡）で放水・放射試験をする" },
 };
 
 export const FLUSH_STEPS = ["作業前", "ラインナップ", "循環", "復旧"];
@@ -30,9 +32,10 @@ export function workTypeOf(plan: Pick<SavedPlan, "workType">): WorkType {
   return plan.workType ?? "drain";
 }
 
-/** 当日のタンク・ポンプ選択が必要な作業か（燃料抜取は充填ラインを使う場合のみ・別扱い） */
+/** 当日のタンク・ポンプ選択が必要な作業か（燃料抜取は充填ラインを使う場合のみ・別扱い。消火設備機能試験は不要） */
 export function needsDayParams(plan: Pick<SavedPlan, "workType">) {
-  return workTypeOf(plan) !== "drain";
+  const t = workTypeOf(plan);
+  return t === "flush" || t === "tankIsolation";
 }
 
 export type OrderedRoute = { nodeIds: string[]; pipeIds: string[] };
@@ -311,14 +314,16 @@ export function buildDayChecklist(
   };
 }
 
-/** 弁の記録に加えて「完了」ボタンで終える工程（循環・移送） */
+/** 弁の記録に加えて「完了」ボタンで終える工程（循環・移送・放水試験） */
 export function manualStepsOf(plan: Pick<SavedPlan, "workType">): number[] {
   const t = workTypeOf(plan);
   if (t === "flush") return [2];
   if (t === "tankIsolation") return [1, 2];
+  if (t === "fireTest") return [4, 5];
   return [];
 }
 
 export function manualStepLabel(plan: Pick<SavedPlan, "workType">) {
-  return workTypeOf(plan) === "flush" ? "循環完了" : "移送完了";
+  const t = workTypeOf(plan);
+  return t === "flush" ? "循環完了" : t === "fireTest" ? "試験完了" : "移送完了";
 }

@@ -46,11 +46,13 @@ export type SavedPlan = {
   /** 作成時に使った系統図の版（DBの版ID。プログラム内の仮想施設なら null） */
   diagramVersionId?: string | null;
   /** 作業の種類（省略時は燃料抜取） */
-  workType?: "drain" | "flush" | "tankIsolation";
+  workType?: "drain" | "flush" | "tankIsolation" | "fireTest";
   /** 燃料末端部作業：末端部として選んだ配管 */
   flushPipeIds?: string[];
   /** タンク縁切り作業：開放するタンク */
   isolationTank?: string;
+  /** 消火設備機能試験：試験対象タンク */
+  fireTestTank?: string;
   /** 当日の選択で作られる工程ごとの説明と、燃料の流れる経路（点検ごとに重ねる） */
   stepNotes?: Record<number, string>;
   stepRoutes?: Record<number, { nodeIds: string[]; pipeIds: string[] }>;

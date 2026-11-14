@@ -107,7 +107,9 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
   const type = workTypeOf(plan);
   const day = exec?.dayParams;
   const daySel =
-    type === "flush"
+    type === "fireTest"
+      ? ""
+      : type === "flush"
       ? day?.kind === "flush"
         ? `${day.srcTank} → ${day.pump} → 末端部 → ${day.returnTank}`
         : "当日の運用で選択（送り元：＿＿＿　ポンプ：＿＿＿　戻り先：＿＿＿）"
@@ -129,14 +131,14 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
       : [
           ["作業名", plan.name],
           ["作業種別", plan.purpose],
-          [type === "flush" ? "末端部" : "縁切りタンク", targetLabel(graph, plan)],
+          [type === "flush" ? "末端部" : type === "fireTest" ? "試験対象タンク" : "縁切りタンク", targetLabel(graph, plan)],
           ["作成日", new Date(plan.createdAt).toLocaleDateString("ja-JP")],
           ...(type === "flush"
             ? ([["末端部容量", plan.summary.volumeL ? formatLiters(plan.summary.volumeL) : "—"]] as [string, string][])
             : []),
-          [type === "flush" ? "循環経路" : "移送", daySel],
+          ...(type === "fireTest" ? [] : ([[type === "flush" ? "循環経路" : "移送", daySel]] as [string, string][])),
         ];
-  const stepNotes = day ? plan.steps.map((st, i) => (plan.stepNotes?.[i] ? `${st}：${plan.stepNotes[i]}` : "")).filter(Boolean) : [];
+  const stepNotes = day || type === "fireTest" ? plan.steps.map((st, i) => (plan.stepNotes?.[i] ? `${st}：${plan.stepNotes[i]}` : "")).filter(Boolean) : [];
   const cautions = [...plan.summary.warnings, ...stepNotes, ...plan.summary.notes];
 
   return (
@@ -144,7 +146,7 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-[10px] text-zinc-500">
-            仮想空港給油施設　{type === "drain" ? "燃料抜取・充填" : WORK_TYPES[type].label} 作業チェックリスト
+            {graph.facility.name}　{type === "drain" ? "燃料抜取・充填" : WORK_TYPES[type].label} 作業チェックリスト
           </p>
           <h2 className="text-xl font-bold">{plan.name}</h2>
         </div>
