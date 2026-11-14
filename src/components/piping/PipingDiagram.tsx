@@ -12,7 +12,7 @@ import {
   type Ref,
 } from "react";
 import { pipePoints, type Graph } from "@/lib/piping/graph";
-import type { Fluid, PNode, ValveState } from "@/lib/piping/types";
+import { FLUID_LABEL, type Fluid, type PNode, type ValveState } from "@/lib/piping/types";
 
 // 配管系統図（SVG）。図面データ（Graph）と、各画面が重ねたい表示（レイヤー・マーク）を受け取って描く。
 
@@ -629,7 +629,7 @@ export default function PipingDiagram({
                 {n.label}
               </text>
               <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
-                {n.recovery ? "回収タンク" : "メンテ用タンク"}
+                {n.recovery ? "回収タンク" : n.fluid && n.fluid !== "fuel" ? FLUID_LABEL[n.fluid] : "メンテ用タンク"}
               </text>
             </g>
           );
