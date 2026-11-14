@@ -45,7 +45,7 @@ import {
   rowGlyph,
   type SavedPlan,
 } from "@/lib/piping/checklist";
-import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
 
 const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
@@ -579,7 +579,10 @@ export default function PlannerPage() {
 
             <Panel title="作業内容">
               <div className="mb-2 grid grid-cols-3 gap-1">
-                {(Object.keys(WORK_TYPES) as WorkType[]).map((t) => (
+                {(Object.keys(WORK_TYPES) as WorkType[])
+                  // 末端部作業・タンク縁切りはタンク・ポンプの番号の付け方に合わせて作ってあるため、仮想施設だけ
+                  .filter((t) => t === "drain" || diagramInfo.facilityId === DEFAULT_FACILITY)
+                  .map((t) => (
                   <button
                     key={t}
                     title={WORK_TYPES[t].desc}

@@ -1,10 +1,10 @@
-import type { AreaBox, Facility, NodeKind, Pipe, PNode, ValveState } from "./types";
+import type { AreaBox, Facility, Fluid, NodeKind, Pipe, PNode, ValveState } from "./types";
 
 // DBの系統図テーブル（piping_facilities / piping_diagram_*）の行と、画面で使う Facility の相互変換。
 
 export type DiagramSource = {
-  /** db：DBの使用中の版 / builtin：プログラム内の仮想施設（DB未設定・テーブル未作成のとき） */
-  source: "db" | "builtin";
+  /** db：DBの使用中の版 / builtin：プログラム内の仮想施設（DB未設定・テーブル未作成のとき）/ none：その拠点に使用中の版が無い */
+  source: "db" | "builtin" | "none";
   facilityId: string;
   versionId: string | null;
   versionNo: number | null;
@@ -44,6 +44,9 @@ export type NodeRow = {
   compact: boolean | null;
   capacity_kl: number | null;
   set_pressure_mpa: number | null;
+  /** 消火設備などの追加項目（DBに列が無い版では undefined） */
+  fluid?: Fluid | null;
+  system?: string | null;
   sort: number;
 };
 export type PipeRow = {
@@ -53,6 +56,7 @@ export type PipeRow = {
   size_a: number;
   length_m: number | null;
   via: [number, number][] | null;
+  fluid?: Fluid | null;
   sort: number;
 };
 
@@ -92,12 +96,15 @@ export function rowsToFacility(f: FacilityRow, areas: AreaRow[], nodes: NodeRow[
       set("compact", flag(r.compact));
       set("capacityKL", num(r.capacity_kl));
       set("setPressureMPa", num(r.set_pressure_mpa));
+      set("fluid", r.fluid ?? undefined);
+      set("system", r.system ?? undefined);
       return n;
     }),
     pipes: bySort(pipes).map((r) => {
       const p: Pipe = { id: r.code, a: r.node_a, b: r.node_b, sizeA: Number(r.size_a) };
       if (r.length_m !== null && r.length_m !== undefined) p.lengthM = Number(r.length_m);
       if (r.via?.length) p.via = r.via.map(([x, y]) => [Number(x), Number(y)] as [number, number]);
+      if (r.fluid) p.fluid = r.fluid;
       return p;
     }),
   };
@@ -109,7 +116,16 @@ export type SheetRow = { id: string; sheet_no: string; title: string; width: num
 export type AreaRowV2 = { name: string; sheet_id: string | null; x: number | null; y: number | null; w: number | null; h: number | null; sort: number };
 export type NodeRowV2 = Omit<NodeRow, "x" | "y" | "compact"> & { rated_flow_lpm: number | null };
 export type SymbolRow = { node_code: string; x: number; y: number; show_label: boolean };
-export type PipeRowV2 = { code: string; node_a: string; node_b: string; size_a: number; pipe_spec_id: string | null; length_m: number | null; sort: number };
+export type PipeRowV2 = {
+  code: string;
+  node_a: string;
+  node_b: string;
+  size_a: number;
+  pipe_spec_id: string | null;
+  length_m: number | null;
+  fluid?: Fluid | null;
+  sort: number;
+};
 export type GeometryRow = { pipe_code: string; points: [number, number][] | null };
 export type PipeSpecRow = { id: string; inner_diameter_mm: number };
 
@@ -141,7 +157,16 @@ export function rowsToFacilityV2(
       if (!s) unplaced++;
       return { ...n, x: s?.x ?? 0, y: s?.y ?? 0, compact: s ? !s.show_label : null };
     }),
-    pipes.map((p) => ({ code: p.code, node_a: p.node_a, node_b: p.node_b, size_a: p.size_a, length_m: p.length_m, via: geo.get(p.code) ?? null, sort: p.sort }))
+    pipes.map((p) => ({
+      code: p.code,
+      node_a: p.node_a,
+      node_b: p.node_b,
+      size_a: p.size_a,
+      length_m: p.length_m,
+      via: geo.get(p.code) ?? null,
+      fluid: p.fluid ?? null,
+      sort: p.sort,
+    }))
   );
   const specOf = new Map(pipes.map((p) => [p.code, p.pipe_spec_id ? spec.get(p.pipe_spec_id) : undefined]));
   base.pipes.forEach((p) => {

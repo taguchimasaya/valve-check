@@ -18,7 +18,28 @@ export type NodeKind =
   | "drain" // ドレン口（抜取口。ドレン弁つき）
   | "gauge" // 圧力計取付口（元弁つき）
   | "source" // 受入口（施設外）
-  | "sink"; // ハイドラント（施設外）
+  | "sink" // ハイドラント（施設外）
+  // 消火設備
+  | "hydrant" // 消火栓
+  | "monitor" // 放水銃・泡モニター
+  | "sprinkler" // 散水ヘッド・スプリンクラー
+  | "proportioner"; // 泡混合器
+
+/** 配管・機器の中の流体 */
+export type Fluid = "fuel" | "water" | "foam" | "foamSolution" | "other";
+
+export const FLUID_LABEL: Record<Fluid, string> = {
+  fuel: "燃料",
+  water: "消火用水",
+  foam: "泡原液",
+  foamSolution: "泡水溶液",
+  other: "その他",
+};
+
+/** 系統の出口（施設外・放出口）。ここで配管が終わり、遮断範囲には含めない */
+export function isOutlet(kind: NodeKind) {
+  return kind === "sink" || kind === "hydrant" || kind === "monitor" || kind === "sprinkler";
+}
 
 export type PNode = {
   id: string;
@@ -65,6 +86,10 @@ export type PNode = {
   capacityKL?: number;
   /** 安全弁の設定圧力（MPa） */
   setPressureMPa?: number;
+  /** 流体（省略時は燃料） */
+  fluid?: Fluid;
+  /** 系統名（例：燃料、消火） */
+  system?: string;
 };
 
 export type Pipe = {
@@ -79,6 +104,8 @@ export type Pipe = {
   lengthM?: number;
   /** 内径（m）。配管仕様マスターから。省略時は呼び径の Sch40 相当 */
   innerDiameterM?: number;
+  /** 流体（省略時は両端の機器から、それも無ければ燃料） */
+  fluid?: Fluid;
 };
 
 export type AreaBox = { x: number; y: number; w: number; h: number; label: string };

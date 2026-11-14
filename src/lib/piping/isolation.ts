@@ -1,5 +1,5 @@
 import { canFlow, connectedGroups, otherSide, pipeVolumeL, routeSideValves, shortestPath, type Graph, type Section } from "./graph";
-import type { ValveState } from "./types";
+import { isOutlet, type ValveState } from "./types";
 
 // 抜取範囲（遮断範囲）の算定と、液封リスクの評価。
 
@@ -78,7 +78,7 @@ export function targetSections(g: Graph, targets: Target[], errors: string[]): s
       errors.push(`${n.label}：タンク本体は対象外です（タンク抜油は別手順）。配管・機器を選択してください。`);
       return;
     }
-    if (n.kind === "source" || n.kind === "sink") {
+    if (n.kind === "source" || isOutlet(n.kind)) {
       errors.push(`${n.label}：施設外の設備は対象外です。`);
       return;
     }
@@ -194,7 +194,7 @@ function pathToDrainable(g: Graph, region: Set<string>, drained: Set<string>, un
       const sid = g.sectionOfPipe.get(pipe.id)!;
       if (!region.has(sid) && !isExpandable(g.sectionById.get(sid)!)) continue;
       const on = g.nodeById.get(other)!;
-      if (on.kind === "tank" || on.kind === "source" || on.kind === "sink" || on.kind === "psv" || on.kind === "gauge") continue;
+      if (on.kind === "tank" || on.kind === "source" || isOutlet(on.kind) || on.kind === "psv" || on.kind === "gauge") continue;
       if (on.service) continue; // 充填ラインなどの作業用弁を越えては広げない
       const nd = dist.get(cur)! + pipeVolumeL(pipe, g.pipeLengthM.get(pipe.id)!) + (on.volumeL ?? 0);
       if (nd < (dist.get(other) ?? Infinity)) {

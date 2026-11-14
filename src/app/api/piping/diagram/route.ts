@@ -54,7 +54,22 @@ export async function GET(request: Request) {
       }
       throw new Error(vErr.message);
     }
-    if (!version) return Response.json(builtin(`施設「${facilityId}」に使用中の系統図の版がありません`));
+    if (!version) {
+      if (facilityId === DEFAULT_FACILITY && !versionParam) {
+        return Response.json(builtin(`施設「${facilityId}」に使用中の系統図の版がありません`));
+      }
+      // ほかの拠点：使用中の版が無ければ空の図面（④ 系統図データ管理で取り込んで使用中にする）
+      const { data: fac } = await db.from("piping_facilities").select("name").eq("id", facilityId).maybeSingle();
+      const empty: DiagramPayload = {
+        source: "none",
+        facilityId,
+        versionId: null,
+        versionNo: null,
+        notice: "この拠点には使用中の系統図がありません。④ 系統図データ管理で取り込んで「使用中にする」を押してください。",
+        facility: { name: fac?.name ?? facilityId, width: 1200, height: 700, metersPerPx: 0, nodes: [], pipes: [], areas: [] },
+      };
+      return Response.json(empty);
+    }
 
     const { data: facility, error: fErr } = await db
       .from("piping_facilities")
@@ -85,12 +100,10 @@ export async function GET(request: Request) {
       const sheet = sheets[0];
       const [areas, nodes, symbols, pipes, geometries] = await Promise.all([
         all<AreaRowV2>("piping_areas", "name, sheet_id, x, y, w, h, sort"),
-        all<NodeRowV2>(
-          "piping_nodes",
-          "code, kind, label, name, area, normal, volume_l, drain_size_a, gauge_mountable, service, fill_line, fill_source, drain_pump_lpm, drain_route, drain_target, drain_system, dir_from, small, recovery, rated_flow_lpm, capacity_kl, set_pressure_mpa, sort"
-        ),
+        // 追加の列（流体・系統など）があっても無くても読めるよう、すべての列を読む
+        all<NodeRowV2>("piping_nodes", "*"),
         all<SymbolRow>("piping_node_symbols", "node_code, x, y, show_label", { col: "sheet_id", value: sheet.id }, "node_code"),
-        all<PipeRowV2>("piping_pipes", "code, node_a, node_b, size_a, pipe_spec_id, length_m, sort"),
+        all<PipeRowV2>("piping_pipes", "*"),
         all<GeometryRow>("piping_pipe_geometries", "pipe_code, points", { col: "sheet_id", value: sheet.id }, "pipe_code"),
       ]);
       const { data: specs, error: sErr } = await db.from("piping_pipe_specs").select("id, inner_diameter_mm");

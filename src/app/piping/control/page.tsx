@@ -17,10 +17,11 @@ import {
 import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
 import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
 import OutagePanel from "@/components/piping/OutagePanel";
+import { outageDefsFor } from "@/lib/piping/outages";
 import { OUTAGE_COLOR } from "@/lib/piping/live";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
 import { manualStepLabel, needsDayParams } from "@/lib/piping/workTypes";
-import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { isStepCompleteAudioEnabled, isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
 type Draft = {
@@ -65,6 +66,7 @@ function draftToOperation(d: Draft): Operation {
 
 export default function ControlPage() {
   const g = useGraph();
+  const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1000);
   const [draft, setDraft] = useState<Draft>(INITIAL_DRAFT);
   const [hidden, setHidden] = useState<string[]>([]);
@@ -161,101 +163,114 @@ export default function ControlPage() {
         <div className="mt-3 grid gap-3 xl:grid-cols-[320px_1fr_360px]">
           {/* 運用入力 */}
           <aside className="space-y-3">
-            <Panel title="運用の入力">
-              <div className="grid grid-cols-4 gap-1">
-                {(Object.keys(OPERATION_META) as OperationKind[]).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setDraft({ ...draft, kind: k, pumps: k === "transfer" ? [1] : draft.pumps })}
-                    className={`rounded-md py-1.5 text-xs font-medium ${draft.kind === k ? "text-white" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"}`}
-                    style={draft.kind === k ? { background: OPERATION_META[k].color } : undefined}
-                  >
-                    {OPERATION_META[k].label}
-                  </button>
-                ))}
-              </div>
+            {diagramInfo.facilityId === DEFAULT_FACILITY ? (
+              <Panel title="運用の入力">
+                <div className="grid grid-cols-4 gap-1">
+                  {(Object.keys(OPERATION_META) as OperationKind[]).map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => setDraft({ ...draft, kind: k, pumps: k === "transfer" ? [1] : draft.pumps })}
+                      className={`rounded-md py-1.5 text-xs font-medium ${draft.kind === k ? "text-white" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"}`}
+                      style={draft.kind === k ? { background: OPERATION_META[k].color } : undefined}
+                    >
+                      {OPERATION_META[k].label}
+                    </button>
+                  ))}
+                </div>
 
-              <div className="mt-3 space-y-2 text-sm">
-                {draft.kind === "receive" && (
-                  <>
-                    <Field label="受入系統">
-                      <Seg options={["A", "B"]} value={draft.system} onChange={(s) => setDraft({ ...draft, system: s as "A" | "B" })} />
-                    </Field>
-                    <Field label="受入タンク">
-                      <TankSelect value={draft.tank} onChange={(t) => setDraft({ ...draft, tank: t })} />
-                    </Field>
-                    <Field label="ストレーナー">
-                      <Checks options={[1, 2]} value={draft.strainers} onChange={(n) => setDraft({ ...draft, strainers: toggle(draft.strainers, n) })} />
-                    </Field>
-                    <Field label="フィルター">
-                      <Checks options={[1, 2, 3]} value={draft.filters} onChange={(n) => setDraft({ ...draft, filters: toggle(draft.filters, n) })} />
-                    </Field>
-                  </>
-                )}
-                {draft.kind === "issue" && (
-                  <>
-                    <Field label="払出タンク">
-                      <div className="grid grid-cols-6 gap-1">
-                        {TANKS.map((t) => (
-                          <button
-                            key={t}
-                            onClick={() =>
-                              setDraft({
-                                ...draft,
-                                tanks: draft.tanks.includes(t) ? draft.tanks.filter((x) => x !== t) : [...draft.tanks, t],
-                              })
-                            }
-                            className={`rounded py-1 text-[11px] ${draft.tanks.includes(t) ? "bg-green-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}
-                          >
-                            {t.slice(2)}
-                          </button>
-                        ))}
-                      </div>
-                    </Field>
-                    <Field label="払出系統">
-                      <Seg options={["1", "2"]} value={String(draft.pumpSystem)} onChange={(s) => setDraft({ ...draft, pumpSystem: Number(s) as 1 | 2 })} />
-                    </Field>
-                    <Field label="払出ポンプ">
-                      <Checks options={[1, 2, 3]} value={draft.pumps} onChange={(n) => setDraft({ ...draft, pumps: toggle(draft.pumps, n) })} prefix={`P-${draft.pumpSystem}`} />
-                    </Field>
-                  </>
-                )}
-                {(draft.kind === "transfer" || draft.kind === "bypass") && (
-                  <>
-                    <Field label={draft.kind === "transfer" ? "移送元タンク" : "払出元タンク"}>
-                      <TankSelect value={draft.fromTank} onChange={(t) => setDraft({ ...draft, fromTank: t })} />
-                    </Field>
-                    <Field label={draft.kind === "transfer" ? "移送先タンク" : "返油先タンク"}>
-                      <TankSelect value={draft.toTank} onChange={(t) => setDraft({ ...draft, toTank: t })} />
-                    </Field>
-                    {draft.kind === "bypass" && (
+                <div className="mt-3 space-y-2 text-sm">
+                  {draft.kind === "receive" && (
+                    <>
+                      <Field label="受入系統">
+                        <Seg options={["A", "B"]} value={draft.system} onChange={(s) => setDraft({ ...draft, system: s as "A" | "B" })} />
+                      </Field>
+                      <Field label="受入タンク">
+                        <TankSelect value={draft.tank} onChange={(t) => setDraft({ ...draft, tank: t })} />
+                      </Field>
+                      <Field label="ストレーナー">
+                        <Checks options={[1, 2]} value={draft.strainers} onChange={(n) => setDraft({ ...draft, strainers: toggle(draft.strainers, n) })} />
+                      </Field>
+                      <Field label="フィルター">
+                        <Checks options={[1, 2, 3]} value={draft.filters} onChange={(n) => setDraft({ ...draft, filters: toggle(draft.filters, n) })} />
+                      </Field>
+                    </>
+                  )}
+                  {draft.kind === "issue" && (
+                    <>
+                      <Field label="払出タンク">
+                        <div className="grid grid-cols-6 gap-1">
+                          {TANKS.map((t) => (
+                            <button
+                              key={t}
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  tanks: draft.tanks.includes(t) ? draft.tanks.filter((x) => x !== t) : [...draft.tanks, t],
+                                })
+                              }
+                              className={`rounded py-1 text-[11px] ${draft.tanks.includes(t) ? "bg-green-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}
+                            >
+                              {t.slice(2)}
+                            </button>
+                          ))}
+                        </div>
+                      </Field>
                       <Field label="払出系統">
                         <Seg options={["1", "2"]} value={String(draft.pumpSystem)} onChange={(s) => setDraft({ ...draft, pumpSystem: Number(s) as 1 | 2 })} />
                       </Field>
-                    )}
-                    <Field label={draft.kind === "transfer" ? "移送ポンプ" : "払出ポンプ"}>
-                      <Checks
-                        options={draft.kind === "transfer" ? [1, 2] : [1, 2, 3]}
-                        value={draft.pumps}
-                        onChange={(n) => setDraft({ ...draft, pumps: toggle(draft.pumps, n) })}
-                        prefix={draft.kind === "transfer" ? "TP-" : `P-${draft.pumpSystem}`}
-                      />
-                    </Field>
-                  </>
-                )}
-              </div>
-              {opError && <p className="mt-2 text-xs text-red-600">{opError}</p>}
-              <button
-                onClick={addOperation}
-                className="mt-3 w-full rounded-lg py-2 text-sm font-semibold text-white"
-                style={{ background: OPERATION_META[draft.kind].color }}
-              >
-                運用ラインを表示（追加）
-              </button>
-            </Panel>
+                      <Field label="払出ポンプ">
+                        <Checks options={[1, 2, 3]} value={draft.pumps} onChange={(n) => setDraft({ ...draft, pumps: toggle(draft.pumps, n) })} prefix={`P-${draft.pumpSystem}`} />
+                      </Field>
+                    </>
+                  )}
+                  {(draft.kind === "transfer" || draft.kind === "bypass") && (
+                    <>
+                      <Field label={draft.kind === "transfer" ? "移送元タンク" : "払出元タンク"}>
+                        <TankSelect value={draft.fromTank} onChange={(t) => setDraft({ ...draft, fromTank: t })} />
+                      </Field>
+                      <Field label={draft.kind === "transfer" ? "移送先タンク" : "返油先タンク"}>
+                        <TankSelect value={draft.toTank} onChange={(t) => setDraft({ ...draft, toTank: t })} />
+                      </Field>
+                      {draft.kind === "bypass" && (
+                        <Field label="払出系統">
+                          <Seg options={["1", "2"]} value={String(draft.pumpSystem)} onChange={(s) => setDraft({ ...draft, pumpSystem: Number(s) as 1 | 2 })} />
+                        </Field>
+                      )}
+                      <Field label={draft.kind === "transfer" ? "移送ポンプ" : "払出ポンプ"}>
+                        <Checks
+                          options={draft.kind === "transfer" ? [1, 2] : [1, 2, 3]}
+                          value={draft.pumps}
+                          onChange={(n) => setDraft({ ...draft, pumps: toggle(draft.pumps, n) })}
+                          prefix={draft.kind === "transfer" ? "TP-" : `P-${draft.pumpSystem}`}
+                        />
+                      </Field>
+                    </>
+                  )}
+                </div>
+                {opError && <p className="mt-2 text-xs text-red-600">{opError}</p>}
+                <button
+                  onClick={addOperation}
+                  className="mt-3 w-full rounded-lg py-2 text-sm font-semibold text-white"
+                  style={{ background: OPERATION_META[draft.kind].color }}
+                >
+                  運用ラインを表示（追加）
+                </button>
+              </Panel>
+            ) : (
+              <Panel title="運用の入力">
+                <p className="text-sm text-zinc-500">
+                  この拠点の運用パターン（受入・払出・移送）はまだ設定されていません。運用停止範囲と点検の確認は使えます。
+                </p>
+              </Panel>
+            )}
 
             <Panel title={`運用停止範囲（当日）${live.outages.length ? `：${live.outages.length}件停止中` : ""}`}>
-              <OutagePanel outages={store?.outages ?? []} act={act} conflicts={live.outageConflicts} />
+              <OutagePanel
+                defs={outageDefsFor(diagramInfo.facilityId, g)}
+                outages={store?.outages ?? []}
+                act={act}
+                conflicts={live.outageConflicts}
+              />
             </Panel>
 
             <Panel title={`現在の運用（${operations.length}）`}>

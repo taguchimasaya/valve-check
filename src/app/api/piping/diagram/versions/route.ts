@@ -73,15 +73,15 @@ export async function GET(request: Request) {
     const docNo = new Map((docs ?? []).map((d) => [d.id, d.doc_no]));
     const [areas, nodes, symbols, pipes, geometries] = await Promise.all([
       all<Record<string, unknown>>(c, "piping_areas", "name, sheet_id, x, y, w, h, sort", versionId, "sort"),
-      all<Record<string, unknown>>(c, "piping_nodes", "code, kind, label, name, area, equipment_code, normal, volume_l, drain_size_a, gauge_mountable, service, fill_line, fill_source, drain_pump_lpm, drain_route, drain_target, drain_system, dir_from, small, recovery, rated_flow_lpm, capacity_kl, set_pressure_mpa, data_source, note, sort", versionId, "sort"),
+      all<Record<string, unknown>>(c, "piping_nodes", "*", versionId, "sort"),
       all<Record<string, unknown>>(c, "piping_node_symbols", "node_code, sheet_id, x, y, rotation, show_label", versionId, "node_code"),
-      all<Record<string, unknown>>(c, "piping_pipes", "code, line_no, node_a, node_b, size_a, pipe_spec_id, length_m, length_source, note, sort", versionId, "sort"),
+      all<Record<string, unknown>>(c, "piping_pipes", "*", versionId, "sort"),
       all<Record<string, unknown>>(c, "piping_pipe_geometries", "pipe_code, sheet_id, points", versionId, "pipe_code"),
     ]);
     const { data: specs, error: sErr } = await c.from("piping_pipe_specs").select("id, size_a, schedule, outer_diameter_mm, inner_diameter_mm, material").order("size_a");
     if (sErr) throw new Error(sErr.message);
     // 並び順の列は書き出さない（取り込み時は行の順に振り直す）
-    const strip = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== "sort"));
+    const strip = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== "sort" && k !== "version_id"));
     const data: DiagramData = {
       facility_id: v.facility_id,
       facility_name: f?.name ?? v.facility_id,
@@ -153,8 +153,10 @@ export async function POST(request: Request) {
         const sheetId = (no: string) => `${versionId}-${no}`;
         await insertChunks(c, "piping_sheets", d.sheets.map((s, i) => ({ id: sheetId(s.sheet_no), version_id: versionId, sheet_no: s.sheet_no, title: s.title, source_document_id: s.source_doc_no ? `${d.facility_id}-${s.source_doc_no}` : null, width: s.width, height: s.height, meters_per_unit: s.meters_per_unit, sort: i })));
         await insertChunks(c, "piping_areas", d.areas.map((ar, i) => ({ version_id: versionId, name: ar.name, sheet_id: ar.sheet_no ? sheetId(ar.sheet_no) : null, x: ar.x, y: ar.y, w: ar.w, h: ar.h, sort: i })));
-        await insertChunks(c, "piping_nodes", d.nodes.map((n, i) => ({ ...n, version_id: versionId, sort: i })));
-        await insertChunks(c, "piping_pipes", d.pipes.map((p, i) => ({ ...p, version_id: versionId, sort: i })));
+        // 流体・系統は使っているときだけ送る（追加の列を作る前のDBでも、燃料だけのデータは取り込める）
+        const optional = (r: object) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !(["fluid", "system"].includes(k) && (v === null || v === undefined))));
+        await insertChunks(c, "piping_nodes", d.nodes.map((n, i) => ({ ...optional(n), version_id: versionId, sort: i })));
+        await insertChunks(c, "piping_pipes", d.pipes.map((p, i) => ({ ...optional(p), version_id: versionId, sort: i })));
         await insertChunks(c, "piping_node_symbols", d.symbols.map((s) => ({ version_id: versionId, node_code: s.node_code, sheet_id: sheetId(s.sheet_no), x: s.x, y: s.y, rotation: s.rotation ?? 0, show_label: s.show_label ?? true })));
         await insertChunks(c, "piping_pipe_geometries", d.geometries.map((g) => ({ version_id: versionId, pipe_code: g.pipe_code, sheet_id: sheetId(g.sheet_no), points: g.points })));
         await insertChunks(c, "piping_validation_issues", issues.map((i) => ({ ...i, version_id: versionId })));

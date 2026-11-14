@@ -111,14 +111,16 @@ export function execPlan(plan: SavedPlan, exec: Execution): SavedPlan {
   };
 }
 
-export async function fetchStore(): Promise<PipingStore> {
-  const res = await fetch("/api/piping", { cache: "no-store" });
+const storeUrl = (facility: string) => `/api/piping?facility=${encodeURIComponent(facility)}`;
+
+export async function fetchStore(facility: string): Promise<PipingStore> {
+  const res = await fetch(storeUrl(facility), { cache: "no-store" });
   if (!res.ok) throw new Error((await res.text()) || "配管系統図のデータを読み込めませんでした");
   return res.json();
 }
 
-export async function dispatch(action: StoreAction): Promise<PipingStore> {
-  const res = await fetch("/api/piping", {
+export async function dispatch(facility: string, action: StoreAction): Promise<PipingStore> {
+  const res = await fetch(storeUrl(facility), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(action),

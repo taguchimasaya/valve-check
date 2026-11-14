@@ -1,5 +1,5 @@
 import { innerDiameterM } from "./facility";
-import type { Facility, PNode, Pipe, ValveState } from "./types";
+import { isOutlet, type Facility, type PNode, type Pipe, type ValveState } from "./types";
 
 // 配管グラフの解析（隣接関係・区間分割・経路探索）。
 
@@ -49,7 +49,7 @@ export function isSeparator(n: PNode) {
     n.kind === "valve" ||
     n.kind === "tank" ||
     n.kind === "source" ||
-    n.kind === "sink" ||
+    isOutlet(n.kind) ||
     isBypassRelief(n)
   );
 }
@@ -90,7 +90,7 @@ export function routeSideValves(g: Graph, route: { nodeIds: string[]; pipeIds: s
         if (n.kind === "check" && !canFlow(g, cur, other)) continue;
         if (n.kind === "valve") out.add(other);
         else if (n.kind === "drain" || n.kind === "gauge" || n.kind === "psv" || n.kind === "tank") continue;
-        else if (n.kind === "source" || n.kind === "sink") continue;
+        else if (n.kind === "source" || isOutlet(n.kind)) continue;
         else stack.push(other);
       }
     }
@@ -181,7 +181,7 @@ export function buildGraph(facility: Facility): Graph {
         else if (isBypassRelief(n)) {
           // 逃し弁の入口側の区間だけが、その逃し弁で保護される
           if ((p.a === nid ? p.b : p.a) === n.dirFrom) reliefSet.add(nid);
-        } else if (n.kind === "source" || n.kind === "sink") external = true;
+        } else if (n.kind === "source" || isOutlet(n.kind)) external = true;
         else nodeSet.add(nid);
       });
     });
@@ -282,7 +282,7 @@ export function shortestPath(
     done.add(cur);
     if (cur === to) break;
     const curNode = g.nodeById.get(cur)!;
-    if (cur !== from && (curNode.kind === "tank" || curNode.kind === "source" || curNode.kind === "sink")) continue;
+    if (cur !== from && (curNode.kind === "tank" || curNode.kind === "source" || isOutlet(curNode.kind))) continue;
     for (const { pipe, other } of g.adj.get(cur)!) {
       if (done.has(other) || blocked.has(other)) continue;
       const on = g.nodeById.get(other)!;

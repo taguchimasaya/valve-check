@@ -3,7 +3,7 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
-import { OUTAGE_BY_KEY } from "@/lib/piping/outages";
+import { outageDefOf } from "@/lib/piping/outages";
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -33,32 +33,43 @@ function normalize(raw: Partial<PipingStore> | null | undefined): PipingStore {
 }
 
 // ───── ローカル（ファイル）保存 ─────
-const DATA_DIR = path.join(process.cwd(), ".local-data");
-const DATA_FILE = path.join(DATA_DIR, "piping-store.json");
+// 拠点（施設）ごとに分けて保存する。仮想施設は今までどおりの行・ファイル（main／piping-store.json）
+const DEFAULT_FACILITY = "virtual-airport";
+const facilityOf = (request: Request) => {
+  const id = new URL(request.url).searchParams.get("facility") || DEFAULT_FACILITY;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error("拠点IDが正しくありません");
+  return id;
+};
 
-let memory: PipingStore | null = null;
+const DATA_DIR = path.join(process.cwd(), ".local-data");
+const dataFile = (facility: string) =>
+  path.join(DATA_DIR, facility === DEFAULT_FACILITY ? "piping-store.json" : `piping-store-${facility}.json`);
+
+const memory = new Map<string, PipingStore>();
 // 同時リクエストで読み書きが交錯しないよう、更新を直列化する
 let queue: Promise<unknown> = Promise.resolve();
 
-async function loadFile(): Promise<PipingStore> {
-  if (!memory) {
+async function loadFile(facility: string): Promise<PipingStore> {
+  let store = memory.get(facility);
+  if (!store) {
     try {
-      memory = normalize(JSON.parse(await fs.readFile(DATA_FILE, "utf8")));
+      store = normalize(JSON.parse(await fs.readFile(dataFile(facility), "utf8")));
     } catch {
-      memory = normalize(null);
+      store = normalize(null);
     }
   }
-  memory = normalize(memory);
-  return memory;
+  store = normalize(store);
+  memory.set(facility, store);
+  return store;
 }
 
-async function saveFile(store: PipingStore) {
+async function saveFile(facility: string, store: PipingStore) {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(DATA_FILE, JSON.stringify(store, null, 2), "utf8");
+  await fs.writeFile(dataFile(facility), JSON.stringify(store, null, 2), "utf8");
 }
 
 // ───── 本番（Supabase）保存 ─────
-const ROW_ID = "main";
+const rowId = (facility: string) => (facility === DEFAULT_FACILITY ? "main" : facility);
 
 function db() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -73,8 +84,8 @@ const isMissingTable = (code?: string) => code === "42P01" || code === "PGRST205
 const TABLE_MISSING =
   "配管系統図の保存テーブル（piping_store）がありません。supabase/piping_store.sql を Supabase の SQL Editor で実行してください。";
 
-async function loadDb(): Promise<PipingStore> {
-  const { data, error } = await db().from("piping_store").select("data, version").eq("id", ROW_ID).maybeSingle();
+async function loadDb(facility: string): Promise<PipingStore> {
+  const { data, error } = await db().from("piping_store").select("data, version").eq("id", rowId(facility)).maybeSingle();
   if (error) throw new Error(isMissingTable(error.code) ? TABLE_MISSING : error.message);
   const store = normalize(data?.data as Partial<PipingStore> | undefined);
   store.version = data?.version ?? 0;
@@ -85,10 +96,10 @@ async function loadDb(): Promise<PipingStore> {
  * 読み込み → 更新 → 書き込み。サーバーが複数台で同時に動いても上書きし合わないよう、
  * version が読み込み時と同じときだけ書き込み、違えば読み直してやり直す（楽観的排他）。
  */
-async function updateDb(action: StoreAction): Promise<Response> {
+async function updateDb(facility: string, action: StoreAction): Promise<Response> {
   const client = db();
   for (let attempt = 0; attempt < 5; attempt++) {
-    const store = await loadDb();
+    const store = await loadDb(facility);
     const before = store.version;
     const err = apply(store, action);
     if (err) return new Response(err, { status: 400 });
@@ -96,8 +107,8 @@ async function updateDb(action: StoreAction): Promise<Response> {
     const payload = { data: store, version: store.version, updated_at: new Date().toISOString() };
     const result =
       before === 0
-        ? await client.from("piping_store").upsert({ id: ROW_ID, ...payload }).select("id")
-        : await client.from("piping_store").update(payload).eq("id", ROW_ID).eq("version", before).select("id");
+        ? await client.from("piping_store").upsert({ id: rowId(facility), ...payload }).select("id")
+        : await client.from("piping_store").update(payload).eq("id", rowId(facility)).eq("version", before).select("id");
     if (result.error) throw new Error(isMissingTable(result.error.code) ? TABLE_MISSING : result.error.message);
     if (result.data && result.data.length > 0) return Response.json(store);
   }
@@ -205,7 +216,7 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       store.executions = store.executions.filter((e) => e.id !== a.execId);
       return null;
     case "setOutage": {
-      const def = OUTAGE_BY_KEY.get(a.key);
+      const def = outageDefOf(a.key);
       if (!def) return "停止範囲が見つかりません";
       const list = (store.outages ??= []);
       const i = list.findIndex((o) => o.key === a.key);
@@ -295,9 +306,10 @@ function isOperate(states: (string | null)[], step: number) {
   return step !== 0;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    return Response.json(BACKEND === "supabase" ? await loadDb() : await loadFile());
+    const facility = facilityOf(request);
+    return Response.json(BACKEND === "supabase" ? await loadDb(facility) : await loadFile(facility));
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
   }
@@ -305,19 +317,25 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const action = (await request.json()) as StoreAction;
+  let facility: string;
+  try {
+    facility = facilityOf(request);
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : String(e), { status: 400 });
+  }
   if (BACKEND === "supabase") {
     try {
-      return await updateDb(action);
+      return await updateDb(facility, action);
     } catch (e) {
       return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   }
   const run = queue.then(async () => {
-    const store = await loadFile();
+    const store = await loadFile(facility);
     const err = apply(store, action);
     if (err) return new Response(err, { status: 400 });
     store.version += 1;
-    await saveFile(store);
+    await saveFile(facility, store);
     return Response.json(store);
   });
   queue = run.catch(() => {});

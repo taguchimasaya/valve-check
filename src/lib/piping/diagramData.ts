@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
 import { rowsToFacilityV2 } from "./diagramDb";
-import type { Facility, NodeKind } from "./types";
+import { FLUID_LABEL, type Facility, type Fluid, type NodeKind } from "./types";
+
+export { FLUID_LABEL };
 
 // 系統図データの入出力（Excel ⇔ DBの行）と入力チェック。
 // 1つの「版」の中身をまとめた DiagramData を、DBの行と同じ項目名で持つ（version_id だけ除く）。
@@ -40,6 +42,9 @@ export type NodeData = {
   set_pressure_mpa: number | null;
   data_source: string | null;
   note: string | null;
+  /** 流体（空欄＝燃料）・系統名（例：燃料、消火） */
+  fluid?: Fluid | null;
+  system?: string | null;
 };
 export type SymbolData = { node_code: string; sheet_no: string; x: number; y: number; rotation: number; show_label: boolean };
 export type PipeData = {
@@ -52,6 +57,7 @@ export type PipeData = {
   length_m: number | null;
   length_source: "measured" | "isometric" | "cad" | "drawing_estimate" | null;
   note: string | null;
+  fluid?: Fluid | null;
 };
 export type GeometryData = { pipe_code: string; sheet_no: string; points: [number, number][] | null };
 export type SpecData = {
@@ -93,7 +99,20 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   gauge: "圧力計取付口",
   source: "受入口",
   sink: "払出先",
+  hydrant: "消火栓",
+  monitor: "放水銃・泡モニター",
+  sprinkler: "散水ヘッド",
+  proportioner: "泡混合器",
 };
+
+const FLUID_BY_LABEL = new Map<string, Fluid>(
+  (Object.entries(FLUID_LABEL) as [Fluid, string][]).flatMap(([k, l]) => [
+    [l, k],
+    [k, k],
+    ["水", "water"],
+    ["泡", "foam"],
+  ])
+);
 const KIND_BY_LABEL = new Map<string, NodeKind>(
   (Object.entries(KIND_LABEL) as [NodeKind, string][]).flatMap(([k, l]) => [
     [l, k],
@@ -115,7 +134,7 @@ type Col<T> = {
   head: string;
   key: keyof T;
   /** flagOn：空欄＝はい（○／×で書く） */
-  type: "text" | "num" | "flag" | "flagOn" | "list" | "kind" | "normal" | "lsrc" | "points";
+  type: "text" | "num" | "flag" | "flagOn" | "list" | "kind" | "normal" | "lsrc" | "points" | "fluid";
   required?: boolean;
   note: string;
 };
@@ -160,6 +179,8 @@ const NODE_COLS: Col<NodeData>[] = [
   { head: "定格流量(L/min)", key: "rated_flow_lpm", type: "num", note: "ポンプ" },
   { head: "タンク容量(kL)", key: "capacity_kl", type: "num", note: "タンク" },
   { head: "設定圧力(MPa)", key: "set_pressure_mpa", type: "num", note: "安全弁" },
+  { head: "系統", key: "system", type: "text", note: "例：燃料、消火（図面の色分け・絞り込みの単位）" },
+  { head: "流体", key: "fluid", type: "fluid", note: "燃料／消火用水／泡原液／泡水溶液／その他（空欄＝燃料）" },
   { head: "諸元の出典", key: "data_source", type: "text", note: "例：機器台帳、メーカー資料、現地確認" },
   { head: "備考", key: "note", type: "text", note: "" },
 ];
@@ -180,6 +201,7 @@ const PIPE_COLS: Col<PipeData>[] = [
   { head: "配管仕様ID", key: "pipe_spec_id", type: "text", note: "配管仕様シートのID（空欄なら呼び径のSch40相当）" },
   { head: "実長(m)", key: "length_m", type: "num", note: "空欄なら図面上の長さ×縮尺で概算" },
   { head: "実長の出典", key: "length_source", type: "lsrc", note: "実測／アイソメ／CAD／図面概算" },
+  { head: "流体", key: "fluid", type: "fluid", note: "空欄なら両端の機器の流体" },
   { head: "備考", key: "note", type: "text", note: "" },
 ];
 const GEOMETRY_COLS: Col<GeometryData>[] = [
@@ -223,6 +245,8 @@ function cellOut(type: Col<object>["type"], v: unknown): string | number {
       return v === "open" ? "開" : "閉";
     case "lsrc":
       return LENGTH_SOURCE_LABEL[v as keyof typeof LENGTH_SOURCE_LABEL] ?? String(v);
+    case "fluid":
+      return FLUID_LABEL[v as Fluid] ?? String(v);
     case "points":
       return (v as [number, number][]).map(([x, y]) => `${x},${y}`).join(";");
     default:
@@ -337,6 +361,10 @@ export function workbookToDiagram(wb: XLSX.WorkBook): { data: DiagramData; issue
             case "lsrc":
               v = LENGTH_SOURCE_BY_LABEL.get(s) ?? null;
               if (!v) err("version", null, `${line}：実長の出典は 実測／アイソメ／CAD／図面概算 のどれかです（${s}）`);
+              break;
+            case "fluid":
+              v = FLUID_BY_LABEL.get(s) ?? null;
+              if (!v) err("version", null, `${line}：流体は ${Object.values(FLUID_LABEL).join("／")} のどれかです（${s}）`);
               break;
             case "points": {
               const pts = s.split(";").filter(Boolean).map((p) => p.split(",").map((n) => Number(n.trim())));

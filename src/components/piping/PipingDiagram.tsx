@@ -12,7 +12,7 @@ import {
   type Ref,
 } from "react";
 import { pipePoints, type Graph } from "@/lib/piping/graph";
-import type { PNode, ValveState } from "@/lib/piping/types";
+import type { Fluid, PNode, ValveState } from "@/lib/piping/types";
 
 // 配管系統図（SVG）。図面データ（Graph）と、各画面が重ねたい表示（レイヤー・マーク）を受け取って描く。
 
@@ -136,6 +136,15 @@ function pipeWidth(sizeA: number) {
   return 1.4 + sizeA / 90;
 }
 
+/** 配管の地の色（流体別）：燃料＝灰、消火用水＝水色、泡原液・泡水溶液＝桃・紫 */
+export const FLUID_COLOR: Record<Fluid, string> = {
+  fuel: "#71717a",
+  water: "#0ea5e9",
+  foam: "#db2777",
+  foamSolution: "#a855f7",
+  other: "#71717a",
+};
+
 function pts(points: [number, number][]) {
   return points.map((p) => p.join(",")).join(" ");
 }
@@ -166,6 +175,13 @@ export default function PipingDiagram({
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 配管の流体：配管に無ければ両端の機器（燃料以外を優先）、どちらも無ければ燃料
+  const pipeFluid = (p: { a: string; b: string; fluid?: Fluid }): Fluid => {
+    if (p.fluid) return p.fluid;
+    const fa = graph.nodeById.get(p.a)?.fluid;
+    const fb = graph.nodeById.get(p.b)?.fluid;
+    return (fa && fa !== "fuel" ? fa : fb && fb !== "fuel" ? fb : fa ?? fb) ?? "fuel";
+  };
   const pipeGeom = useMemo(
     () => new Map(f.pipes.map((p) => [p.id, pipePoints(graph, p)])),
     [f, graph]
@@ -491,6 +507,46 @@ export default function PipingDiagram({
           </g>
         );
       }
+      case "hydrant":
+      case "monitor":
+      case "sprinkler":
+      case "proportioner": {
+        // 消火設備：赤い記号（消火栓＝丸に「栓」、放水銃＝三角、散水ヘッド＝小さな丸と放射線、泡混合器＝ひし形）
+        const red = "#dc2626";
+        const shape =
+          n.kind === "hydrant" ? (
+            <>
+              <circle cx={n.x} cy={n.y} r={11} fill={red} />
+              <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="#ffffff">
+                栓
+              </text>
+            </>
+          ) : n.kind === "monitor" ? (
+            <polygon points={`${n.x - 10},${n.y + 9} ${n.x + 10},${n.y + 9} ${n.x},${n.y - 11}`} fill={red} />
+          ) : n.kind === "sprinkler" ? (
+            <>
+              <circle cx={n.x} cy={n.y} r={5} fill={red} />
+              <path d={`M${n.x - 10},${n.y + 8} L${n.x - 5},${n.y + 3} M${n.x},${n.y + 11} L${n.x},${n.y + 5} M${n.x + 10},${n.y + 8} L${n.x + 5},${n.y + 3}`} stroke={red} strokeWidth={1.5} />
+            </>
+          ) : (
+            <>
+              <polygon points={`${n.x},${n.y - 12} ${n.x + 12},${n.y} ${n.x},${n.y + 12} ${n.x - 12},${n.y}`} className="fill-white dark:fill-zinc-900" stroke="#a855f7" strokeWidth={1.8} />
+              <text x={n.x} y={n.y + 3.5} textAnchor="middle" fontSize={9} fontWeight={700} fill="#a855f7">
+                混
+              </text>
+            </>
+          );
+        return (
+          <g>
+            {shape}
+            {showLabels && (
+              <text x={n.x} y={n.y + 24} textAnchor="middle" fontSize={8.5} className={textCls}>
+                {n.label}
+              </text>
+            )}
+          </g>
+        );
+      }
       case "strainer":
         return (
           <g>
@@ -629,7 +685,7 @@ export default function PipingDiagram({
               key={p.id}
               points={pts(pipeGeom.get(p.id)!)}
               fill="none"
-              stroke="#71717a"
+              stroke={FLUID_COLOR[pipeFluid(p)]}
               strokeWidth={pipeWidth(p.sizeA)}
               strokeLinejoin="round"
             />

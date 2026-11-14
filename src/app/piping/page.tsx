@@ -2,10 +2,12 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
+import PipingDiagram, { DiagramLegend, FLUID_COLOR } from "@/components/piping/PipingDiagram";
+import { FLUID_LABEL } from "@/lib/piping/types";
 import { liveDiagram, OUTAGE_COLOR } from "@/lib/piping/live";
 import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
 import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
 
 const menus = [
   {
@@ -59,6 +61,7 @@ export default function PipingHome() {
         </Link>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（試作）</h1>
+          <FacilitySwitcher />
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
             既存の機器マスター・チェックリストとは別に保存します
           </span>
@@ -174,6 +177,10 @@ export default function PipingHome() {
               })),
               { color: "#ef4444", label: "点検範囲（点滅）" },
               { color: OUTAGE_COLOR, label: "運用停止範囲（灰色の破線・枠）" },
+              // 燃料以外の配管があれば、配管の地の色の意味も出す
+              ...(["water", "foam", "foamSolution"] as const)
+                .filter((f) => graph.facility.nodes.some((n) => n.fluid === f) || graph.facility.pipes.some((p) => p.fluid === f))
+                .map((f) => ({ color: FLUID_COLOR[f], label: `${FLUID_LABEL[f]}の配管` })),
               { color: "#0284c7", label: "抜取の流れ" },
               { color: "#0d9488", label: "充填の流れ" },
               { color: "#dc2626", label: "閉操作待ち", kind: "blink" as const },

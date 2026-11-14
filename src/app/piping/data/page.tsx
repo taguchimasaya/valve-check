@@ -13,7 +13,8 @@ import {
   type DiagramData,
   type Issue,
 } from "@/lib/piping/diagramData";
-import { useDiagramInfo } from "@/lib/piping/usePiping";
+import { selectFacility, useDiagramInfo } from "@/lib/piping/usePiping";
+import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
 
 // ④ 系統図データ管理：系統図の版の一覧、Excel での書き出し・取り込み（下書きの版として登録）、使用中への切り替え。
 
@@ -120,12 +121,16 @@ export default function DiagramDataPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "import", data: { ...draft.data, note: note.trim() || null } }),
       });
+      const other = draft.data.facility_id !== facilityId;
       setMessage({
         type: "ok",
-        text: `第${r.versionNo}版（下書き）として登録しました${r.warnings ? `（注意 ${r.warnings} 件）` : ""}。プレビューで確認してから「使用中にする」を押してください。`,
+        text: `${other ? `拠点「${draft.data.facility_name}」の` : ""}第${r.versionNo}版（下書き）として登録しました${r.warnings ? `（注意 ${r.warnings} 件）` : ""}。${
+          other ? "上の「拠点」をその拠点に切り替えると、版の一覧に出ます。" : "図面で確認してから「使用中にする」を押してください。"
+        }`,
       });
       setDraft(null);
       await load();
+      if (other && confirm(`拠点「${draft.data.facility_name}」に切り替えますか？`)) selectFacility(draft.data.facility_id);
     } catch (e) {
       const issues = (e as { issues?: Issue[] }).issues;
       if (issues && draft) setDraft({ ...draft, issues });
@@ -189,7 +194,10 @@ export default function DiagramDataPage() {
           <Link href="/piping" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
             ← 配管系統図メニュー
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">④ 系統図データ管理</h1>
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+            <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">④ 系統図データ管理</h1>
+            <FacilitySwitcher />
+          </div>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             系統図は「版」ごとに保存します。Excel で書き出して編集し、取り込むと新しい版（下書き）になります。
             図面で確認してから「使用中にする」と、全画面の系統図が切り替わります。今までの版は「保管」として残ります。

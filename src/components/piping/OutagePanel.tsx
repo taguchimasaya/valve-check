@@ -1,19 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { OUTAGES, type OutageKey } from "@/lib/piping/outages";
+import type { OutageDef, OutageKey } from "@/lib/piping/outages";
 import type { Outage, StoreAction } from "@/lib/piping/store";
 
 // 制御室：当日の運用停止範囲の入力（複数を同時に停止できる）。
 
 type Props = {
+  /** この拠点で選べる停止範囲 */
+  defs: OutageDef[];
   outages: Outage[];
   act: (a: StoreAction) => Promise<unknown>;
   /** 運用ラインが停止範囲を通っているときの注意 */
   conflicts: string[];
 };
 
-export default function OutagePanel({ outages, act, conflicts }: Props) {
+export default function OutagePanel({ defs, outages, act, conflicts }: Props) {
   const [busy, setBusy] = useState<OutageKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const active = new Map(outages.map((o) => [o.key, o]));
@@ -33,7 +35,7 @@ export default function OutagePanel({ outages, act, conflicts }: Props) {
   return (
     <div>
       <div className="grid grid-cols-2 gap-1.5">
-        {OUTAGES.map((o) => {
+        {defs.map((o) => {
           const on = active.get(o.key);
           return (
             <button

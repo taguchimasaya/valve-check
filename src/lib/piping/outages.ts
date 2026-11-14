@@ -3,8 +3,9 @@ import type { PNode } from "./types";
 
 // 当日の運用停止範囲（制御室で入力し、トップ・制御室の図面に明示する）。
 // 範囲は施設のエリア（受入系統A など）や機器IDで決める。複数を同時に停止できる。
+// 仮想施設は下の8種類、ほかの拠点は区画ごと（キー "area:<区画名>"）に停止できる。
 
-export type OutageKey = "recvA" | "recvB" | "issueA" | "issueB" | "transferA" | "transferB" | "yard1" | "yard2";
+export type OutageKey = string;
 
 export type OutageDef = {
   key: OutageKey;
@@ -36,6 +37,22 @@ export const OUTAGES: OutageDef[] = [
 
 export const OUTAGE_BY_KEY = new Map(OUTAGES.map((o) => [o.key, o]));
 
+/** 区画まるごとの停止範囲（仮想施設以外の拠点） */
+export function areaOutage(area: string): OutageDef {
+  return { key: `area:${area}`, label: `${area}停止`, desc: `区画「${area}」の機器・配管`, match: (n) => n.area === area };
+}
+
+/** キーから停止範囲の定義を引く */
+export function outageDefOf(key: OutageKey): OutageDef | undefined {
+  return OUTAGE_BY_KEY.get(key) ?? (key.startsWith("area:") ? areaOutage(key.slice(5)) : undefined);
+}
+
+/** 拠点で選べる停止範囲：仮想施設は8種類、ほかの拠点は区画ごと */
+export function outageDefsFor(facilityId: string, g: Graph): OutageDef[] {
+  if (facilityId === "virtual-airport") return OUTAGES;
+  return [...new Set(g.facility.nodes.filter((n) => n.kind !== "junction").map((n) => n.area))].map(areaOutage);
+}
+
 export type OutageRange = {
   def: OutageDef;
   nodeIds: string[];
@@ -46,7 +63,7 @@ export type OutageRange = {
 
 /** 停止範囲のノード・配管と、図面上の枠 */
 export function outageRange(g: Graph, key: OutageKey): OutageRange | null {
-  const def = OUTAGE_BY_KEY.get(key);
+  const def = outageDefOf(key);
   if (!def) return null;
   const nodes = new Set(g.facility.nodes.filter(def.match).map((n) => n.id));
   const pipeIds = g.facility.pipes
