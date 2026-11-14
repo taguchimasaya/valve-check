@@ -277,6 +277,7 @@ export default function PlannerPage() {
     return applyBlocks(g, rawRows, steps, builtinBlocks, { target: blockTarget, route, base: baseline });
   }, [g, rawRows, steps, builtinBlocks, blockTarget, dayRoutes, workType, iso, baseline]);
   const rows = blockApplied.rows;
+  const boundaryRows = rows.filter((r) => r.role === "boundary" || r.role === "fill").filter((r) => r.states[1] === "close");
   const ruleWarnings = [...(isDay ? [] : drainRows.warnings), ...blockApplied.warnings, ...(customResult?.warnings ?? [])];
   const appliedRules = { flush: flushRules, tankIsolation: isoRules, blocks: builtinBlocks, blockMethod };
   // 制御室で入力中の運用との干渉
@@ -330,6 +331,8 @@ export default function PlannerPage() {
       })
     );
     iso.boundaryValves.forEach((v) => (marks[v] = "boundary"));
+    // 2ブロック目など、チェックリストで遮断弁として閉める弁もすべて表示する
+    rows.filter((r) => r.role === "boundary" && r.nodeId).forEach((r) => (marks[r.nodeId!] = "boundary"));
     iso.internalValves.forEach((v) => (marks[v] = "internal"));
     drains.forEach((d) => (marks[d] = "drain"));
     // 抜取で開ける弁（ドレン弁・抜取ポンプ側の弁）
@@ -949,11 +952,18 @@ export default function PlannerPage() {
                     </p>
                   ))}
                   <dl className="grid grid-cols-3 gap-2 text-center">
-                    <Stat label="遮断弁（閉）" value={iso.boundaryValves.length} color="text-red-600" />
+                    <Stat label="遮断弁（閉）" value={boundaryRows.length} color="text-red-600" />
                     <Stat label="範囲内弁（開）" value={iso.internalValves.length} color="text-emerald-600" />
                     <Stat label="ドレン口" value={iso.drains.length} color="text-sky-600" />
                   </dl>
-                  <p className="mt-2 text-xs text-zinc-500">遮断弁：{iso.boundaryValves.join("、") || "—"}</p>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    遮断弁：{boundaryRows.filter((r) => !r.note?.startsWith("2ブロック目")).map((r) => r.code).join("、") || "—"}
+                  </p>
+                  {boundaryRows.some((r) => r.note?.startsWith("2ブロック目")) && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      2ブロック目：{boundaryRows.filter((r) => r.note?.startsWith("2ブロック目")).map((r) => r.code).join("、")}
+                    </p>
+                  )}
                   {conflicts.length > 0 && (
                     <ul className="mt-2 space-y-1">
                       {conflicts.map((c) => (
