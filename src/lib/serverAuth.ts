@@ -3,8 +3,6 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 // API 側のログイン確認。端末から送られたトークンを Supabase で確かめ、
 // その利用者として DB に接続するクライアント（RLS で authenticated として扱われる）を返す。
 
-const LOGIN_DOMAIN = "valve-check.local";
-
 export type AuthContext = { client: SupabaseClient; userId: string; name: string };
 
 export async function requireAuth(request: Request): Promise<AuthContext | Response> {
@@ -20,6 +18,6 @@ export async function requireAuth(request: Request): Promise<AuthContext | Respo
   const { data, error } = await client.auth.getUser(token);
   if (error || !data.user) return Response.json({ error: "ログインの有効期限が切れました。もう一度ログインしてください" }, { status: 401 });
   const meta = data.user.user_metadata as { name?: string; display_name?: string } | undefined;
-  const name = meta?.name || meta?.display_name || (data.user.email ?? "").replace(`@${LOGIN_DOMAIN}`, "");
+  const name = meta?.name || meta?.display_name || (data.user.email ?? "").split("@")[0];
   return { client, userId: data.user.id, name };
 }

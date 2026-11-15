@@ -5,25 +5,31 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
 // ログイン（Supabase Auth）。利用者は ID とパスワードでログインする。
-// Supabase Auth はメールアドレスで管理するため、ID は「ID@valve-check.local」に置き換えて扱う
-// （@ を含む入力はメールアドレスとしてそのまま使う）。利用者は Supabase の管理画面で作成する。
+// ID はメールアドレスの @ より前（例：test@test.com なら「test」）。
+// DB の関数 login_email（supabase/auth_login_id.sql）で、ID からメールアドレスを探してログインする。
+// 関数が無い・見つからないときは「ID@valve-check.local」として扱う。@ を含む入力はメールアドレスとしてそのまま使う。
+// 利用者は Supabase の管理画面で作成する。
 
 export const LOGIN_DOMAIN = "valve-check.local";
 
-export function idToEmail(id: string) {
+/** 入力された ID からログインに使うメールアドレスを決める */
+export async function resolveLoginEmail(id: string) {
   const v = id.trim().toLowerCase();
-  return v.includes("@") ? v : `${v}@${LOGIN_DOMAIN}`;
+  if (v.includes("@")) return v;
+  const { data, error } = await supabase.rpc("login_email", { login_id: v });
+  if (!error && typeof data === "string" && data) return data;
+  return `${v}@${LOGIN_DOMAIN}`;
 }
 
 /** 画面に出す名前：利用者情報の名前、無ければ ID（メールの @ より前） */
 export function displayName(user: Pick<User, "email" | "user_metadata"> | null | undefined) {
   if (!user) return "";
   const meta = user.user_metadata as { name?: string; display_name?: string } | undefined;
-  return meta?.name || meta?.display_name || (user.email ?? "").replace(`@${LOGIN_DOMAIN}`, "");
+  return meta?.name || meta?.display_name || (user.email ?? "").split("@")[0];
 }
 
 export async function signIn(id: string, password: string) {
-  const { error } = await supabase.auth.signInWithPassword({ email: idToEmail(id), password });
+  const { error } = await supabase.auth.signInWithPassword({ email: await resolveLoginEmail(id), password });
   if (error) {
     throw new Error(error.message.includes("Invalid login") ? "ID またはパスワードが違います" : error.message);
   }
