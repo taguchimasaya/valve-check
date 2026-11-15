@@ -73,7 +73,7 @@ export function liveDiagram(g: Graph, store: PipingStore | null, hiddenExecIds: 
   // 運用停止範囲：灰色の破線の帯（一番下）と、範囲名の枠
   const outages = (store?.outages ?? [])
     .map((o) => {
-      const r = outageRange(g, o.key);
+      const r = outageRange(g, o.key, store?.outageDefs);
       return r ? { ...r, at: o.at, note: o.note } : null;
     })
     .filter((o): o is NonNullable<typeof o> => !!o);

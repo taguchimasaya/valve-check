@@ -13,9 +13,11 @@ type Props = {
   act: (a: StoreAction) => Promise<unknown>;
   /** 運用ラインが停止範囲を通っているときの注意 */
   conflicts: string[];
+  /** 停止範囲の設定を開く（制御室からだけ変更できる） */
+  onEdit?: () => void;
 };
 
-export default function OutagePanel({ defs, outages, act, conflicts }: Props) {
+export default function OutagePanel({ defs, outages, act, conflicts, onEdit }: Props) {
   const [busy, setBusy] = useState<OutageKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const active = new Map(outages.map((o) => [o.key, o]));
@@ -62,6 +64,11 @@ export default function OutagePanel({ defs, outages, act, conflicts }: Props) {
       </div>
       <p className="mt-1.5 text-[11px] text-zinc-500">
         押すと停止／解除が切り替わります（複数同時に停止できます）。トップ画面と制御室の図面に、灰色の破線と枠で表示されます。
+        {onEdit && (
+          <button onClick={onEdit} className="ml-1 text-sky-700 underline dark:text-sky-400">
+            範囲を設定する
+          </button>
+        )}
       </p>
       {outages.length > 0 && (
         <button

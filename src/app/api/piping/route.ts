@@ -233,7 +233,7 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       store.executions = store.executions.filter((e) => e.id !== a.execId);
       return null;
     case "setOutage": {
-      const def = outageDefOf(a.key);
+      const def = outageDefOf(a.key, store.outageDefs);
       if (!def) return "停止範囲が見つかりません";
       const list = (store.outages ??= []);
       const i = list.findIndex((o) => o.key === a.key);
@@ -308,6 +308,24 @@ function apply(store: PipingStore, a: StoreAction): string | null {
         type: "info",
         text: `充填元を ${a.fillSupply.tank}・移送ポンプ ${a.fillSupply.pump} に設定しました`,
       });
+      return null;
+    }
+    case "setOutageDefs": {
+      // 運用停止範囲の設定：形と重複だけ確認して保存する（空なら既定の範囲に戻る）
+      const defs = Array.isArray(a.defs) ? a.defs : null;
+      if (!defs) return "停止範囲の形式が正しくありません";
+      const keys = new Set<string>();
+      for (const d of defs) {
+        if (!d || typeof d.key !== "string" || !d.key || typeof d.label !== "string" || !d.label.trim()) return "停止範囲の名前が空欄です";
+        if (keys.has(d.key)) return `停止範囲「${d.label}」が重複しています`;
+        if (![d.areas, d.nodes, d.exclude].every((x) => Array.isArray(x) && x.every((v) => typeof v === "string"))) return `停止範囲「${d.label}」の形式が正しくありません`;
+        keys.add(d.key);
+      }
+      store.outageDefs = defs.map((d) => ({ key: d.key, label: d.label.trim(), desc: d.desc?.trim() || undefined, areas: d.areas, nodes: d.nodes, exclude: d.exclude, toJunctions: !!d.toJunctions }));
+      // 無くなった範囲で停止中のものは解除する
+      store.outages = (store.outages ?? []).filter((o) => !!outageDefOf(o.key, store.outageDefs));
+      store.log.unshift({ at: now, type: "info", text: defs.length ? `運用停止範囲の設定を更新しました（${defs.length}件）` : "運用停止範囲の設定を既定に戻しました" });
+      store.log = store.log.slice(0, 100);
       return null;
     }
     case "setRules": {

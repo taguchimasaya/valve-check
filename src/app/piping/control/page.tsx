@@ -17,6 +17,7 @@ import {
 import { execPlan, recordKey, type Execution } from "@/lib/piping/store";
 import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
 import OutagePanel from "@/components/piping/OutagePanel";
+import OutageSettings from "@/components/piping/OutageSettings";
 import { outageDefsFor } from "@/lib/piping/outages";
 import { OUTAGE_COLOR } from "@/lib/piping/live";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
@@ -68,6 +69,8 @@ export default function ControlPage() {
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1000);
+  // 運用停止範囲の設定（制御室からだけ変更できる）
+  const [outageSettingsOpen, setOutageSettingsOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(INITIAL_DRAFT);
   const [hidden, setHidden] = useState<string[]>([]);
   const [opError, setOpError] = useState<string | null>(null);
@@ -151,6 +154,9 @@ export default function ControlPage() {
 
   return (
     <main className="min-h-screen bg-zinc-100 px-3 py-4 dark:bg-black">
+      {outageSettingsOpen && (
+        <OutageSettings g={g} facilityId={diagramInfo.facilityId} store={store} act={act} onClose={() => setOutageSettingsOpen(false)} />
+      )}
       <div className="mx-auto max-w-[1900px]">
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/piping" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
@@ -266,10 +272,11 @@ export default function ControlPage() {
 
             <Panel title={`運用停止範囲（当日）${live.outages.length ? `：${live.outages.length}件停止中` : ""}`}>
               <OutagePanel
-                defs={outageDefsFor(diagramInfo.facilityId, g)}
+                defs={outageDefsFor(diagramInfo.facilityId, g, store?.outageDefs)}
                 outages={store?.outages ?? []}
                 act={act}
                 conflicts={live.outageConflicts}
+                onEdit={() => setOutageSettingsOpen(true)}
               />
             </Panel>
 

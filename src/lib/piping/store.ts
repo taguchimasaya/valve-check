@@ -1,6 +1,6 @@
 import type { PlanRow, SavedPlan } from "./checklist";
 import { needsDayParams, type DayParams } from "./workTypes";
-import type { OutageKey } from "./outages";
+import type { OutageKey, OutageSetting } from "./outages";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { ChecklistRules } from "./rules";
@@ -58,6 +58,8 @@ export type PipingStore = {
   outages?: Outage[];
   /** チェックリスト作成のルール（拠点ごとにユーザーが登録。未登録の項目は既定値） */
   rules?: ChecklistRules;
+  /** 運用停止範囲の設定（拠点ごとにユーザーが登録。空・未登録なら既定の範囲） */
+  outageDefs?: OutageSetting[];
 };
 
 export type Outage = { key: OutageKey; at: string; note?: string };
@@ -87,6 +89,7 @@ export type StoreAction =
     }
   | { action: "markStepDone"; execId: string; step: number }
   | { action: "setRules"; rules: ChecklistRules; by?: string }
+  | { action: "setOutageDefs"; defs: OutageSetting[] }
   | {
       action: "setFillSupply";
       execId: string;

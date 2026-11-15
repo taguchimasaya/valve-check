@@ -26,26 +26,30 @@ const menus = [
   {
     no: "③",
     title: "制御室（図面ビュー）",
-    desc: "運用パターン・タンク・ポンプを入力して運用ラインを表示し、点検ラインの点滅・操作済みバルブの点灯で進捗を確認します。",
+    desc: "運用パターン・タンク・ポンプを入力して運用ラインを表示し、点検ラインの点滅・操作済みバルブの点灯で進捗を確認します。運用停止範囲の設定もここで行います。",
     href: "/piping/control",
-  },
-  {
-    no: "④",
-    title: "系統図データ管理",
-    desc: "系統図の機器・配管・図面の位置を Excel で書き出し・取り込みます。取り込んだデータは下書きの版になり、確認してから使用中に切り替えます。",
-    href: "/piping/data",
-  },
-  {
-    no: "⑤",
-    title: "チェックリスト作成のルール",
-    desc: "チェックリストを自動で作るときの決まり（仕切り方・各作業の設定・追加ルール）を拠点ごとに登録します。工程とルールを組み立てて、新しい作業種別も作れます。",
-    href: "/piping/rules",
   },
   {
     no: "QR",
     title: "機器QRコード印刷",
     desc: "系統図で使っているバルブ・ドレン弁・圧力計元弁のQRコードを印刷します（既存の機器QRと同じ形式）。",
     href: "/piping/qr",
+  },
+];
+
+/** 管理設定（右上）：系統図データとチェックリスト作成のルール */
+const settings = [
+  {
+    no: "④",
+    title: "系統図データ管理",
+    desc: "系統図の版の管理（Excel 書き出し・取り込み、系統図エディタ、使用中への切り替え）",
+    href: "/piping/data",
+  },
+  {
+    no: "⑤",
+    title: "チェックリスト作成のルール",
+    desc: "チェックリストを自動で作るときの決まり（仕切り方・各作業の設定・追加ルール・ユーザー定義の作業）",
+    href: "/piping/rules",
   },
 ];
 
@@ -63,9 +67,21 @@ export default function PipingHome() {
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-8 dark:bg-black">
       <div className="mx-auto max-w-6xl">
-        <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
-          ← ホームに戻る
-        </Link>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+            ← ホームに戻る
+          </Link>
+          {/* 管理設定（系統図データ・チェックリスト作成のルール） */}
+          <nav className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <span className="text-xs font-semibold text-zinc-500">⚙ 管理設定</span>
+            {settings.map((m) => (
+              <Link key={m.href} href={m.href} title={m.desc} className="rounded-lg px-2 py-1 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900">
+                <span className="mr-1 text-emerald-600">{m.no}</span>
+                {m.title}
+              </Link>
+            ))}
+          </nav>
+        </div>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（試作）</h1>
           <FacilitySwitcher />
@@ -87,7 +103,7 @@ export default function PipingHome() {
           {diagramInfo.notice && <span className="ml-1 text-amber-700 dark:text-amber-400">— {diagramInfo.notice}</span>}
         </p>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {menus.map((m) => (
             <Link
               key={m.href}

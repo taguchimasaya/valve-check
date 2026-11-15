@@ -15,7 +15,7 @@
 | 系統 | 画面 | 概要 |
 |---|---|---|
 | **A. 既存系（QRチェックリスト）** | `/equipment` `/checklists` `/inspect` `/inspect/[code]` `/control-room` `/settings` | 機器マスター（equipment）と Excel 取込のチェックリストを使い、現場 iPad の QR 読取で工程ごとに弁操作を記録し、制御室 PC がリアルタイム（Realtime）で監視する |
-| **B. 配管系統図系（/piping）** | `/piping/planner` `/piping/field` `/piping/control` `/piping/data` `/piping/rules` `/piping/qr` `/piping/print` | 配管系統図（グラフ構造）から遮断範囲・操作弁を自動算定してチェックリストを作り、図面上で現場点検・制御室監視を行う |
+| **B. 配管系統図系（/piping）** | `/piping/planner` `/piping/field` `/piping/control`（運用停止範囲の設定を含む） `/piping/qr` `/piping/print`、管理設定（トップ右上）：`/piping/data`（`/piping/editor` を含む） `/piping/rules` | 配管系統図（グラフ構造）から遮断範囲・操作弁を自動算定してチェックリストを作り、図面上で現場点検・制御室監視を行う |
 
 両系統はホーム画面（`/`）から入り、**ログイン（Supabase Auth）を共通**で使います。データは互いに独立しており、配管系統図系は既存系のテーブルに書き込みません（QR の形式 `/inspect/{code}` のみ共通）。
 
@@ -130,8 +130,9 @@ DB（版：論理データ＋図面データ）
 | `checklist.ts` | チェックリストの型（PlanRow / SavedPlan）、Excel 入出力、工程ごとの状態 |
 | `store.ts` | 共有ストアの型・StoreAction・`execPlan()`（当日選択の重ね合わせ） |
 | `execution.ts` / `live.ts` / `flow.ts` | 点検進捗の表示、トップ・制御室の現在状況図、工程ごとの流れの向き |
-| `operations.ts` / `outages.ts` | 制御室の運用入力（運用ライン）と当日の運用停止範囲 |
+| `operations.ts` / `outages.ts` | 制御室の運用入力（運用ライン）と当日の運用停止範囲（既定の範囲と、拠点ごとに登録した範囲 `OutageSetting`） |
 | `diagramData.ts` / `diagramDb.ts` | Excel ⇔ 系統図データ変換・入力チェック、DB 行 → Facility 変換 |
+| `diagramEdit.ts` | 系統図エディタの編集操作（移動・経由点・配管途中への挿入・枝・置く・配管を引く・削除・属性変更・変更点のまとめ）。`DiagramData` → 新しい `DiagramData` の純粋関数 |
 | `facility.ts` | プログラム内の仮想施設（DB が無いときのフォールバック（fallback）） |
 | `usePiping.ts` | 拠点選択（localStorage）・グラフ・ストアのフック |
 
