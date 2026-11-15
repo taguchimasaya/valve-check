@@ -96,7 +96,133 @@ export type ChecklistRules = {
 // ───────────── ルールブロック（ノーコードで組み立てる「もし〜なら、〜する」） ─────────────
 
 /** 対象との関係 */
-export type BlockRelation = "any" | "targetBranch" | "targetOutletBranch" | "onRoute" | "routeBranch";
+export type BlockRelation =
+  | "any"
+  | "targetBranch"
+  | "targetOutletBranch"
+  | "onRoute"
+  | "routeBranch"
+  // 計算の部品「遮断範囲（燃料抜取）」の結果
+  | "isoBoundary"
+  | "isoInternal"
+  | "isoDrain"
+  | "isoDrainPump"
+  | "isoFillLine"
+  | "isoFillCrack"
+  | "isoGauge"
+  | "isoBleed"
+  // 計算の部品「循環経路（燃料末端部作業）」の結果
+  | "flushRoute"
+  | "flushSide"
+  | "flushPump"
+  | "flushBleed"
+  // 計算の部品「消火試験の範囲」の結果
+  | "fireWater"
+  | "fireFoamRoute"
+  | "fireSprCylinder"
+  | "fireFoamCylinder"
+  | "fireHydWater"
+  | "fireHydFoam"
+  | "fireIdleOwn"
+  | "fireOtherFoamCyl"
+  | "fireOtherFoamManual"
+  | "fireOutside"
+  | "fireBleed"
+  | "firePump"
+  | "fireFoamPump"
+  // 計算の部品「移送経路（タンク縁切り）」の結果
+  | "transferNozzle"
+  | "transferIssuePump"
+  | "transferMovePump"
+  | "transferIssueRoute"
+  | "transferMoveRoute";
+
+/** 計算の部品（プログラムの計算を、ルールの条件として使えるようにしたもの） */
+export type CalcKind = "none" | "isolation" | "flush" | "fireTest" | "transfer";
+
+export const CALC_LABEL: Record<CalcKind, string> = {
+  none: "使わない（条件だけで組み立てる）",
+  isolation: "遮断範囲（燃料抜取）：対象の区間をドレン口のある区間まで広げて仕切る範囲・ドレン口・充填・液封を計算",
+  flush: "循環経路（燃料末端部作業）：選んだ末端部の配管を通る、送り元タンク → ポンプ → 末端部 → 戻り先タンクの経路を計算（タンク・ポンプは点検の当日に選ぶ）",
+  fireTest:
+    "消火試験の範囲：試験タンクの発泡装置・冷却散水、隣接タンクの冷却散水、近くの消火栓、消火ポンプ・泡原液ポンプ、水系統・泡系統の経路、試験範囲外への仕切りを計算（下の設定で決まる）",
+  transfer:
+    "移送経路（タンク縁切り）：対象タンクから移送先タンクへ、払出系統（払出ポンプ → バイパス → 受入ライン）と移送系統（移送ポンプ → 受入ライン）の経路を計算し、工程ごとに経路の弁を開け・分岐先を閉め・使い終わった弁を戻す（移送先・ポンプは点検の当日に選ぶ）",
+};
+
+/** 計算の部品の設定 */
+export type CalcSetting = {
+  kind: CalcKind;
+  /** 遮断範囲：対象区間にドレン口が無ければ、ドレン口のある区間まで広げる */
+  expandToDrain: boolean;
+  /** 遮断範囲：抜取・充填の時間の試算に使う能力（L/min） */
+  portableLpm: number;
+  fillLpm: number;
+  /** 循環経路：循環量の目安（末端部の配管容量の何倍か）と、時間の試算に使うポンプ能力（L/min） */
+  turnover: number;
+  pumpLpm: number;
+  transferPumpLpm: number;
+  /** 消火試験の範囲：範囲の決め方（⑤ 消火設備機能試験と同じ項目）と、試験範囲外の仕切り方 */
+  fire?: FireTestRules;
+  fireMethod?: BlockMethod;
+  /** 移送経路：払出系統で移送する工程・移送系統で移送する工程（工程名）、経路の分岐先を閉めるか、仕切り方 */
+  issueStep?: string;
+  moveStep?: string;
+  closeSide?: boolean;
+  lineupMethod?: BlockMethod;
+};
+
+export const DEFAULT_CALC: CalcSetting = {
+  kind: "none",
+  expandToDrain: true,
+  portableLpm: 200,
+  fillLpm: 200,
+  turnover: 3,
+  pumpLpm: 2000,
+  transferPumpLpm: 1000,
+};
+
+/** 計算の部品ごとの対象の選び方 */
+export const CALC_TARGET: Record<CalcKind, CustomWorkType["target"] | null> = { none: null, isolation: "equipment", flush: "pipes", fireTest: "tank", transfer: "tank" };
+
+/** 計算の部品ごとに使える「対象との関係」 */
+export const CALC_RELATIONS: Record<CalcKind, BlockRelation[]> = {
+  none: [],
+  isolation: ["isoBoundary", "isoInternal", "isoDrain", "isoDrainPump", "isoFillLine", "isoFillCrack", "isoGauge", "isoBleed"],
+  flush: ["flushRoute", "flushSide", "flushPump", "flushBleed"],
+  fireTest: [
+    "fireWater",
+    "fireFoamRoute",
+    "fireSprCylinder",
+    "fireFoamCylinder",
+    "fireHydWater",
+    "fireHydFoam",
+    "fireIdleOwn",
+    "fireOtherFoamCyl",
+    "fireOtherFoamManual",
+    "fireOutside",
+    "fireBleed",
+    "firePump",
+    "fireFoamPump",
+  ],
+  transfer: ["transferNozzle", "transferIssuePump", "transferMovePump", "transferIssueRoute", "transferMoveRoute"],
+};
+
+/** 計算の部品に頼らない関係 */
+export const BASIC_RELATIONS: BlockRelation[] = ["any", "targetBranch", "targetOutletBranch", "onRoute", "routeBranch"];
+
+/** 計算の部品が無いと使えない関係か */
+export const needsCalc = (r: BlockRelation): CalcKind | null =>
+  (Object.keys(CALC_RELATIONS) as CalcKind[]).find((k) => CALC_RELATIONS[k].includes(r)) ?? null;
+
+/** 工程の注記に書ける、計算した値の差し込み（遮断範囲） */
+export const CALC_PLACEHOLDERS: Record<CalcKind, string[]> = {
+  none: [],
+  isolation: ["{抜取量}", "{抜取時間}", "{充填時間}", "{ドレン口}"],
+  flush: ["{送り元}", "{ポンプ}", "{戻り先}", "{循環量}", "{循環時間}", "{末端部容量}"],
+  transfer: ["{対象タンク}", "{移送先}", "{払出ポンプ}", "{移送ポンプ}"],
+  fireTest: ["{試験タンク}", "{消火ポンプ}", "{泡原液ポンプ}", "{発泡装置}", "{冷却散水}", "{消火栓（水）}", "{泡消火栓}", "{シリンダー弁}"],
+};
 
 export const RELATION_LABEL: Record<BlockRelation, string> = {
   any: "指定なし（系統図全体）",
@@ -104,6 +230,36 @@ export const RELATION_LABEL: Record<BlockRelation, string> = {
   targetOutletBranch: "対象タンクに付いた設備（冷却散水・発泡装置）の枝の弁",
   onRoute: "作業の範囲・経路の上",
   routeBranch: "作業の範囲・経路から分岐する先の最初の弁",
+  isoBoundary: "【遮断範囲】遮断弁（範囲を仕切る弁）",
+  isoInternal: "【遮断範囲】範囲の中の弁",
+  isoDrain: "【遮断範囲】抜取に使うドレン口（ドレン弁・抜取経路の弁）",
+  isoDrainPump: "【遮断範囲】抜取ポンプ",
+  isoFillLine: "【遮断範囲】充填ラインの弁",
+  isoFillCrack: "【遮断範囲】充填ラインが無いとき微開して充填する弁",
+  isoGauge: "【遮断範囲】液封の恐れがある区間の圧力計取付口",
+  isoBleed: "【遮断範囲】2ブロックの間のドレン口（ブリード）",
+  flushRoute: "【循環経路】経路上の弁",
+  flushSide: "【循環経路】経路から分岐する先の弁",
+  flushPump: "【循環経路】循環に使うポンプ",
+  flushBleed: "【循環経路】2ブロックの間のドレン口（ブリード）",
+  fireWater: "【消火試験】水系統の経路の弁（手動弁）",
+  fireFoamRoute: "【消火試験】泡系統の経路の弁",
+  fireSprCylinder: "【消火試験】使う冷却散水のシリンダー弁（隣接タンクなど）",
+  fireFoamCylinder: "【消火試験】試験タンクの発泡装置のシリンダー弁",
+  fireHydWater: "【消火試験】使う消火栓（水）の弁",
+  fireHydFoam: "【消火試験】使う泡消火栓の弁",
+  fireIdleOwn: "【消火試験】試験タンクの冷却散水のシリンダー弁（散水しないもの）",
+  fireOtherFoamCyl: "【消火試験】同じヤードのほかのタンクの発泡装置のシリンダー弁",
+  fireOtherFoamManual: "【消火試験】同じヤードのほかのタンクの発泡装置の手動弁",
+  fireOutside: "【消火試験】試験範囲外へ分岐する弁",
+  fireBleed: "【消火試験】2ブロックの間のドレン口（ブリード）",
+  firePump: "【消火試験】消火ポンプ",
+  fireFoamPump: "【消火試験】泡原液ポンプ",
+  transferNozzle: "【移送経路】対象タンクのノズル弁（受入・払出・移送）",
+  transferIssuePump: "【移送経路】払出系統で使う払出ポンプ",
+  transferMovePump: "【移送経路】移送系統で使う移送ポンプ",
+  transferIssueRoute: "【移送経路】払出系統の経路上の弁",
+  transferMoveRoute: "【移送経路】移送系統の経路上の弁",
 };
 
 /** 機器の条件（すべて満たすもの） */
@@ -136,6 +292,8 @@ export type RuleBlock = {
   ops: Record<string, "open" | "close">;
   /** 最後の工程で待機状態に戻す */
   restore: boolean;
+  /** 戻すのは、それまでの工程で待機状態から変わった機器だけ（変わっていなければ最後の工程は空欄） */
+  restoreIfChanged?: boolean;
   /** チェックリストに載せる注記 */
   note: string;
 };
@@ -148,12 +306,14 @@ export type CustomWorkType = {
   name: string;
   desc: string;
   /** 図面で選ぶ対象 */
-  target: "tank" | "equipment" | "none";
+  target: "tank" | "equipment" | "pipes" | "none";
   /** 工程（「作業前」は自動で先頭に入る） */
   steps: CustomStep[];
   /** 作業の経路：条件に合う機器（最も近いもの）から対象まで。経路上・分岐先の条件と、流れの表示に使う */
   route: { enabled: boolean; from: BlockSelector; showAt: string[] };
   blocks: RuleBlock[];
+  /** 計算の部品（省略時は使わない） */
+  calc?: CalcSetting;
 };
 
 export const EMPTY_SELECTOR: BlockSelector = {
@@ -258,6 +418,21 @@ export function validateCustomType(t: CustomWorkType) {
   if (new Set(names).size !== names.length) errs.push("同じ名前の工程があります");
   if (names.includes("作業前")) errs.push("「作業前」は自動で先頭に入るため、工程名に使えません");
   errs.push(...validateBlocks(t.blocks, ["作業前", ...names]));
+  const calc = t.calc?.kind ?? "none";
+  if (calc === "isolation" && t.target !== "equipment") errs.push("計算の部品「遮断範囲」を使うときは、対象を「機器」にしてください");
+  if (calc === "flush" && t.target !== "pipes") errs.push("計算の部品「循環経路」を使うときは、対象を「配管」にしてください");
+  if (calc === "fireTest" && t.target !== "tank") errs.push("計算の部品「消火試験の範囲」を使うときは、対象を「タンク」にしてください");
+  if (calc === "transfer") {
+    if (t.target !== "tank") errs.push("計算の部品「移送経路」を使うときは、対象を「タンク」にしてください");
+    const all = ["作業前", ...names];
+    if (t.calc?.issueStep && !all.includes(t.calc.issueStep)) errs.push(`払出系統で移送する工程「${t.calc.issueStep}」がありません`);
+    if (t.calc?.moveStep && !all.includes(t.calc.moveStep)) errs.push(`移送系統で移送する工程「${t.calc.moveStep}」がありません`);
+  }
+  if (calc !== "flush" && t.target === "pipes") errs.push("対象を「配管」にできるのは、計算の部品「循環経路」を使うときだけです");
+  t.blocks.forEach((b) => {
+    const need = needsCalc(b.when.relation);
+    if (need && need !== calc) errs.push(`ルール「${b.name}」は計算の部品「${CALC_LABEL[need].split("：")[0]}」を使う条件です。「使う計算」で選んでください`);
+  });
   return errs;
 }
 export const customStepsOf = (t: Pick<CustomWorkType, "steps">) => ["作業前", ...t.steps.map((s) => s.name)];

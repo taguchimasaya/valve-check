@@ -85,24 +85,46 @@ export function unionRoute(routes: Route[]): Route {
 
 const dist = (a: PNode, b: PNode) => Math.hypot(a.x - b.x, a.y - b.y);
 
-export function buildFireTestChecklist(
+/** 機能試験で使う機器の組（行を作る順に、前の組に入った機器は後の組に入れない）。ユーザー定義の作業の計算の部品「消火試験の範囲」でも使う */
+export type FireParts = {
+  tank: PNode;
+  pump: PNode;
+  foamPump: PNode | null;
+  waterRoute: Route;
+  foamRoute: Route;
+  sprinklers: PNode[];
+  usedOwn: PNode[];
+  adjacent: PNode[];
+  sprUsed: PNode[];
+  chambers: PNode[];
+  waterHydrants: { h: PNode; r: Route }[];
+  foamHydrants: { h: PNode; r: Route }[];
+  /** 行を作る組（この順に先勝ち） */
+  water: string[];
+  foamOnly: string[];
+  sprCylinders: string[];
+  foamCylinders: string[];
+  hydWater: string[];
+  hydFoam: string[];
+  idleOwn: string[];
+  otherFoamCyl: string[];
+  otherFoamManual: string[];
+  outside: string[];
+  outsideSecond: string[];
+  bleeds: string[];
+  /** 機器ごとの注記（どの放出口の弁か等） */
+  noteOf: Map<string, string>;
+};
+
+/** 消火設備機能試験の範囲を計算する（試験タンク・隣接タンク・消火栓・ポンプ・経路と、行を作る組） */
+export function fireParts(
   g: Graph,
   tankId: string,
   base: Record<string, ValveState>,
   rules: FireTestRules = DEFAULT_FIRE_TEST_RULES,
   method: BlockMethod = DEFAULT_BLOCK_METHOD
-): FireTestResult {
-  const fail = (error: string): FireTestResult => ({ rows: [], stepNotes: {}, stepRoutes: {}, error });
-  const steps = fireTestSteps(rules);
-  const S = {
-    lineup: 1,
-    cylinder: 2,
-    pumpOn: 3,
-    foam: steps.indexOf("泡系統試験"),
-    water: steps.indexOf("水系統試験"),
-    end: steps.indexOf("試験終了"),
-    restore: steps.indexOf("復旧"),
-  };
+): FireParts | { error: string } {
+  const fail = (error: string) => ({ error });
   const isCylinder = cylinderTest(rules.cylinderKeywords);
   const tank = g.nodeById.get(tankId);
   if (!tank || tank.kind !== "tank") return fail("試験対象のタンクを選んでください");
@@ -221,23 +243,26 @@ export function buildFireTestChecklist(
   }
   const foamRoute = unionRoute([srcRoute, ...foamRoutes, ...(concRoute ? [concRoute] : [])]);
 
-  // ───── 弁の区分 ─────
-  const N = steps.length;
+  // ───── 行を作る組（buildFireTestChecklist と同じ順・先勝ち） ─────
   const b = (v: string) => base[v] ?? "close";
-  const rows = new Map<string, { states: (ValveState | null)[]; note: string }>();
-  const set = (v: string, note: string, changes: Record<number, ValveState>) => {
-    if (rows.has(v)) return;
-    const st: (ValveState | null)[] = Array(N).fill(null);
-    st[0] = b(v);
-    Object.entries(changes).forEach(([i, s]) => (st[Number(i)] = s));
-    rows.set(v, { states: st, note });
+  const taken = new Set<string>();
+  const noteOf = new Map<string, string>();
+  const take = (list: string[], note: (v: string) => string) => {
+    const out: string[] = [];
+    list.forEach((v) => {
+      if (taken.has(v)) return;
+      taken.add(v);
+      out.push(v);
+      noteOf.set(v, note(v));
+    });
+    return out;
   };
   const valvesOn = (r: Route) => [...new Set(r.nodeIds)].filter((n) => g.nodeById.get(n)!.kind === "valve");
   const label = (id: string) => g.nodeById.get(id)!.label;
 
   // 1) 試験で使う放出口の枝の弁：シリンダー弁は開ける、手動弁は開を確認
-  const sprCylinders: string[] = [];
-  const foamCylinders: string[] = [];
+  const sprCylAll: string[] = [];
+  const foamCylAll: string[] = [];
   const outletNote = new Map<string, string>();
   usedOwn.forEach((o) => outletNote.set(o.id, `${tank.label} 冷却散水（${side(o, tank)}）`));
   chambers.forEach((o) => outletNote.set(o.id, `${tank.label} 発泡装置（${side(o, tank)}）`));
@@ -247,7 +272,7 @@ export function buildFireTestChecklist(
   });
   [...sprUsed, ...chambers].forEach((o) => {
     branchValves(g, o.id).forEach((v) => {
-      if (isCylinder(g.nodeById.get(v)!)) (o.kind === "sprinkler" ? sprCylinders : foamCylinders).push(v);
+      if (isCylinder(g.nodeById.get(v)!)) (o.kind === "sprinkler" ? sprCylAll : foamCylAll).push(v);
       outletNote.set(v, outletNote.get(o.id)!);
     });
   });
@@ -256,99 +281,155 @@ export function buildFireTestChecklist(
     const v = x.r.nodeIds[x.r.nodeIds.length - 2];
     return g.nodeById.get(v)!.kind === "valve" ? v : null;
   };
-
-  const pumpRow = (p: PNode, on: number, note: string): PlanRow => {
-    const st: (ValveState | null)[] = Array(N).fill(null);
-    st[0] = "close";
-    st[on] = "open";
-    st[S.end] = "close";
-    return { code: p.label, nodeId: p.id, name: p.name, role: "pump", states: st, note };
-  };
-  const pumpRows: PlanRow[] = [pumpRow(pump, S.pumpOn, "ポンプ起動の工程で起動、試験終了で停止")];
-  if (foamPump) pumpRows.push(pumpRow(foamPump, S.foam, "泡系統試験で起動、試験終了で停止"));
-
-  // 経路上の弁（シリンダー弁・消火栓の弁以外）
-  const hydWater = waterHydrants.map(hydValveOf).filter((v): v is string => !!v);
-  const hydFoam = foamHydrants.map(hydValveOf).filter((v): v is string => !!v);
-  const special = new Set([...sprCylinders, ...foamCylinders, ...hydWater, ...hydFoam]);
+  const hydWaterAll = waterHydrants.map(hydValveOf).filter((v): v is string => !!v);
+  const hydFoamAll = foamHydrants.map(hydValveOf).filter((v): v is string => !!v);
+  const special = new Set([...sprCylAll, ...foamCylAll, ...hydWaterAll, ...hydFoamAll]);
   const waterValves = valvesOn(waterRoute).filter((v) => !special.has(v));
   const waterSet = new Set(waterValves);
-  const foamOnly = valvesOn(foamRoute).filter((v) => !special.has(v) && !waterSet.has(v));
+  const foamOnlyAll = valvesOn(foamRoute).filter((v) => !special.has(v) && !waterSet.has(v));
+  const sprAtCylinder = rules.sprinklerOpenAt !== "waterStep";
 
-  // ラインナップ：水系統の経路の弁（閉のものは開ける）
-  waterValves.forEach((v) =>
-    set(
-      v,
-      outletNote.get(v) ? `${outletNote.get(v)} の手動弁` : "水系統の経路",
-      b(v) === "open" ? { [S.lineup]: "open" } : { [S.lineup]: "open", [S.restore]: b(v) }
-    )
+  const water = take(waterValves, (v) => (outletNote.get(v) ? `${outletNote.get(v)} の手動弁` : "水系統の経路"));
+  const foamOnly = take(foamOnlyAll, (v) =>
+    outletNote.get(v) ? `${outletNote.get(v)} の手動弁` : b(v) === "open" ? "泡系統の経路" : "泡系統試験で開、試験終了で閉"
   );
-  // 泡系統の経路の弁：普段開のものはラインナップで確認、普段閉のもの（混合器送水弁・泡水溶液主弁・泡原液系統）は泡系統試験で開ける
-  foamOnly.forEach((v) =>
-    set(
-      v,
-      outletNote.get(v) ? `${outletNote.get(v)} の手動弁` : b(v) === "open" ? "泡系統の経路" : "泡系統試験で開、試験終了で閉",
-      b(v) === "open" ? { [S.lineup]: "open" } : { [S.lineup]: "close", [S.foam]: "open", [S.end]: "close" }
-    )
-  );
-  const sprOpenStep = rules.sprinklerOpenAt === "waterStep" ? S.water : S.cylinder;
-  sprCylinders.forEach((v) =>
-    set(v, `${outletNote.get(v)}：${sprOpenStep === S.cylinder ? "制御室で電磁弁を開操作" : "水系統試験で電磁弁を開操作（制御室）"}`, {
-      [S.lineup]: "close",
-      [sprOpenStep]: "open",
-      [S.end]: "close",
-    })
-  );
-  foamCylinders.forEach((v) =>
-    set(v, `${outletNote.get(v)}：制御室で電磁弁を開操作`, { [S.lineup]: "close", [S.cylinder]: "open", [S.end]: "close" })
-  );
-  hydWater.forEach((v, i) => set(v, `使用する消火栓（水）${i + 1}口目`, { [S.lineup]: "close", [S.water]: "open", [S.end]: "close" }));
-  hydFoam.forEach((v, i) => set(v, `使用する泡消火栓 ${i + 1}口目`, { [S.lineup]: "close", [S.foam]: "open", [S.end]: "close" }));
+  const sprCylinders = take(sprCylAll, (v) => `${outletNote.get(v)}：${sprAtCylinder ? "制御室で電磁弁を開操作" : "水系統試験で電磁弁を開操作（制御室）"}`);
+  const foamCylinders = take(foamCylAll, (v) => `${outletNote.get(v)}：制御室で電磁弁を開操作`);
+  const hydWater = take(hydWaterAll, (v) => `使用する消火栓（水）${hydWaterAll.indexOf(v) + 1}口目`);
+  const hydFoam = take(hydFoamAll, (v) => `使用する泡消火栓 ${hydFoamAll.indexOf(v) + 1}口目`);
   // 対象タンクの冷却散水を使わない場合：シリンダー弁の閉を確認
-  if (!rules.testTankSprinkle) {
-    sprinklers.forEach((o) =>
-      branchValves(g, o.id)
-        .filter((v) => isCylinder(g.nodeById.get(v)!))
-        .forEach((v) => set(v, `${tank.label} 冷却散水（${side(o, tank)}）：試験タンクは散水しない（閉を確認）`, { [S.lineup]: "close" }))
-    );
-  }
-
+  const idleNotes = new Map<string, string>();
+  const idleAll = rules.testTankSprinkle
+    ? []
+    : sprinklers.flatMap((o) =>
+        branchValves(g, o.id)
+          .filter((v) => isCylinder(g.nodeById.get(v)!))
+          .map((v) => {
+            idleNotes.set(v, `${tank.label} 冷却散水（${side(o, tank)}）：試験タンクは散水しない（閉を確認）`);
+            return v;
+          })
+      );
+  const idleOwn = take(idleAll, (v) => idleNotes.get(v)!);
   // 同じヤードのほかのタンクの発泡装置：シリンダー弁の閉を確認、（ルールにより）下流の手動弁を閉（復旧で開）
+  const otherFoamCyl: string[] = [];
+  const otherFoamManual: string[] = [];
   yardTanks
     .flatMap((t) => tankOutlets(g, t).filter((o) => o.kind === "foamChamber").map((o) => ({ t, o })))
     .forEach(({ t, o }) => {
       branchValves(g, o.id).forEach((v) => {
         const cy = isCylinder(g.nodeById.get(v)!);
         const what = `同じヤードの ${t.label} 発泡装置（${side(o, t)}）`;
-        if (cy) set(v, `${what}：シリンダー弁の閉を確認`, { [S.lineup]: "close" });
-        else if (rules.closeOtherFoam) set(v, `${what}：誤放出防止のため閉`, { [S.lineup]: "close", [S.restore]: b(v) });
+        if (cy) otherFoamCyl.push(...take([v], () => `${what}：シリンダー弁の閉を確認`));
+        else if (rules.closeOtherFoam) otherFoamManual.push(...take([v], () => `${what}：誤放出防止のため閉`));
       });
     });
-
   // 試験範囲外への分岐：普段閉の弁は閉を確認、（ルールにより）普段開の弁は閉めて仕切る
-  const sideOf = (r: Route) =>
-    routeSideValves(g, r).filter((v) => !rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area);
+  const sideOf = (r: Route) => routeSideValves(g, r).filter((v) => !rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area);
   const firstSides = [...new Set([...sideOf(waterRoute), ...sideOf(foamRoute)])].filter((v) => !special.has(v) && !waterSet.has(v));
-  firstSides.forEach((v) => {
-    if (b(v) !== "open") set(v, "試験範囲外との仕切り（閉を確認）", { [S.lineup]: "close" });
-    else if (rules.isolateOutside) set(v, "試験範囲外との仕切り（復旧で開）", { [S.lineup]: "close", [S.restore]: "open" });
-  });
+  const outside = take(
+    firstSides.filter((v) => b(v) !== "open" || rules.isolateOutside),
+    (v) => (b(v) !== "open" ? "試験範囲外との仕切り（閉を確認）" : "試験範囲外との仕切り（復旧で開）")
+  );
   // 2ブロック：仕切り弁の外側の弁も閉める（ブリードならその間のドレン口を開けて確認）
+  let outsideSecond: string[] = [];
+  let bleeds: string[] = [];
   if (method.blocks === 2 && rules.isolateOutside && firstSides.length) {
     const inside = new Set([...routeSections(g, waterRoute), ...routeSections(g, foamRoute)]);
     const sb = secondBlock(g, firstSides, inside);
-    sb.valves
-      .filter((v) => !special.has(v) && !waterSet.has(v) && (!rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area))
-      .forEach((v) => {
-        const what = `2ブロック目（${label(sb.ofValve.get(v)!)} の外側）`;
-        if (b(v) !== "open") set(v, `${what}：閉を確認`, { [S.lineup]: "close" });
-        else set(v, `${what}：復旧で開`, { [S.lineup]: "close", [S.restore]: "open" });
-      });
+    outsideSecond = take(
+      sb.valves.filter((v) => !special.has(v) && !waterSet.has(v) && (!rules.keepPumpArea || g.nodeById.get(v)!.area !== pump.area)),
+      (v) => `2ブロック目（${label(sb.ofValve.get(v)!)} の外側）：${b(v) !== "open" ? "閉を確認" : "復旧で開"}`
+    );
     if (method.bleed)
-      sb.bleeds
-        .filter((d) => !rules.keepPumpArea || g.nodeById.get(d)!.area !== pump.area)
-        .forEach((d) => set(d, "ブリード：2ブロックの間を抜いて漏れを確認", { [S.lineup]: "open", [S.restore]: b(d) }));
+      bleeds = take(
+        sb.bleeds.filter((d) => !rules.keepPumpArea || g.nodeById.get(d)!.area !== pump.area),
+        () => "ブリード：2ブロックの間を抜いて漏れを確認"
+      );
   }
+  return {
+    tank,
+    pump,
+    foamPump,
+    waterRoute,
+    foamRoute,
+    sprinklers,
+    usedOwn,
+    adjacent,
+    sprUsed,
+    chambers,
+    waterHydrants,
+    foamHydrants,
+    water,
+    foamOnly,
+    sprCylinders,
+    foamCylinders,
+    hydWater,
+    hydFoam,
+    idleOwn,
+    otherFoamCyl,
+    otherFoamManual,
+    outside,
+    outsideSecond,
+    bleeds,
+    noteOf,
+  };
+}
+
+export function buildFireTestChecklist(
+  g: Graph,
+  tankId: string,
+  base: Record<string, ValveState>,
+  rules: FireTestRules = DEFAULT_FIRE_TEST_RULES,
+  method: BlockMethod = DEFAULT_BLOCK_METHOD
+): FireTestResult {
+  const fail = (error: string): FireTestResult => ({ rows: [], stepNotes: {}, stepRoutes: {}, error });
+  const steps = fireTestSteps(rules);
+  const S = {
+    lineup: 1,
+    cylinder: 2,
+    pumpOn: 3,
+    foam: steps.indexOf("泡系統試験"),
+    water: steps.indexOf("水系統試験"),
+    end: steps.indexOf("試験終了"),
+    restore: steps.indexOf("復旧"),
+  };
+  const p = fireParts(g, tankId, base, rules, method);
+  if ("error" in p) return fail(p.error);
+  const { tank, pump, foamPump, waterRoute, foamRoute, sprinklers, usedOwn, adjacent, sprUsed, chambers, waterHydrants, foamHydrants, sprCylinders, foamCylinders } = p;
+  const N = steps.length;
+  const b = (v: string) => base[v] ?? "close";
+  const rows = new Map<string, { states: (ValveState | null)[]; note: string }>();
+  const set = (v: string, changes: Record<number, ValveState>) => {
+    const st: (ValveState | null)[] = Array(N).fill(null);
+    st[0] = b(v);
+    Object.entries(changes).forEach(([i, s]) => (st[Number(i)] = s));
+    rows.set(v, { states: st, note: p.noteOf.get(v) ?? "" });
+  };
+  const label = (id: string) => g.nodeById.get(id)!.label;
+  const pumpRow = (pp: PNode, on: number, note: string): PlanRow => {
+    const st: (ValveState | null)[] = Array(N).fill(null);
+    st[0] = "close";
+    st[on] = "open";
+    st[S.end] = "close";
+    return { code: pp.label, nodeId: pp.id, name: pp.name, role: "pump", states: st, note };
+  };
+  const pumpRows: PlanRow[] = [pumpRow(pump, S.pumpOn, "ポンプ起動の工程で起動、試験終了で停止")];
+  if (foamPump) pumpRows.push(pumpRow(foamPump, S.foam, "泡系統試験で起動、試験終了で停止"));
+
+  const sprOpenStep = rules.sprinklerOpenAt === "waterStep" ? S.water : S.cylinder;
+  p.water.forEach((v) => set(v, b(v) === "open" ? { [S.lineup]: "open" } : { [S.lineup]: "open", [S.restore]: b(v) }));
+  p.foamOnly.forEach((v) => set(v, b(v) === "open" ? { [S.lineup]: "open" } : { [S.lineup]: "close", [S.foam]: "open", [S.end]: "close" }));
+  p.sprCylinders.forEach((v) => set(v, { [S.lineup]: "close", [sprOpenStep]: "open", [S.end]: "close" }));
+  p.foamCylinders.forEach((v) => set(v, { [S.lineup]: "close", [S.cylinder]: "open", [S.end]: "close" }));
+  p.hydWater.forEach((v) => set(v, { [S.lineup]: "close", [S.water]: "open", [S.end]: "close" }));
+  p.hydFoam.forEach((v) => set(v, { [S.lineup]: "close", [S.foam]: "open", [S.end]: "close" }));
+  p.idleOwn.forEach((v) => set(v, { [S.lineup]: "close" }));
+  p.otherFoamCyl.forEach((v) => set(v, { [S.lineup]: "close" }));
+  p.otherFoamManual.forEach((v) => set(v, { [S.lineup]: "close", [S.restore]: b(v) }));
+  [...p.outside, ...p.outsideSecond].forEach((v) =>
+    set(v, b(v) !== "open" ? { [S.lineup]: "close" } : { [S.lineup]: "close", [S.restore]: "open" })
+  );
+  p.bleeds.forEach((d) => set(d, { [S.lineup]: "open", [S.restore]: b(d) }));
 
   const order: Record<string, number> = {};
   const rank = (v: string) => {

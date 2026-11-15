@@ -10,6 +10,8 @@ import {
   ALL_PUMPS,
   buildDayChecklist,
   flushPumps,
+  isFlushLike,
+  isTransferLike,
   isolationIssueRoute,
   isolationTransferRoute,
   manualStepLabel,
@@ -17,7 +19,7 @@ import {
   workTypeOf,
   type DayParams,
 } from "@/lib/piping/workTypes";
-import { applyBlocks } from "@/lib/piping/ruleBlocks";
+import { applyBlocks, buildCustomChecklist } from "@/lib/piping/ruleBlocks";
 import { unionRoute } from "@/lib/piping/fireTest";
 
 // 燃料末端部作業・タンク縁切りの「当日のタンク・ポンプ」を選ぶ欄（現場点検・制御室で共通）。
@@ -37,7 +39,9 @@ type Props = {
 const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function DayParamsPicker({ graph: g, plan, exec, base, act, compact }: Props) {
-  const type = workTypeOf(plan);
+  // ユーザー定義の作業で計算の部品「循環経路」を使うものは、燃料末端部作業と同じ選び方
+  const custom = workTypeOf(plan) === "custom";
+  const type = isFlushLike(plan) ? "flush" : isTransferLike(plan) ? "tankIsolation" : workTypeOf(plan);
   const init = exec.dayParams ?? plan.dayDefaults;
   const [srcTank, setSrcTank] = useState(init?.kind === "flush" ? init.srcTank : "T-101");
   const [returnTank, setReturnTank] = useState(init?.kind === "flush" ? init.returnTank : "T-102");
@@ -89,6 +93,26 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
   async function apply() {
     setError(null);
     if (!params) return;
+    // ユーザー定義の作業：作成時の作業の定義（工程・ルール・計算の部品）で作り直す
+    if (custom && plan.customType) {
+      const c =
+        params.kind === "flush"
+          ? buildCustomChecklist(g, plan.customType, null, base, { flushPipes: plan.flushPipeIds ?? [], day: params })
+          : buildCustomChecklist(g, plan.customType, plan.isolationTank ?? null, base, { transferDay: params });
+      if (c.error) {
+        setError(c.error);
+        return;
+      }
+      setSaving(true);
+      try {
+        await act({ action: "setDayParams", execId: exec.id, params, rows: c.rows, stepNotes: c.stepNotes, stepRoutes: c.stepRoutes });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     // 作成時のルール（⑤）で作り直す
     const r = buildDayChecklist(g, plan, params, base, plan.appliedRules ?? {});
     if (r.error) {

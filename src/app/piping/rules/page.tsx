@@ -9,9 +9,20 @@ import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { PLAN_STEPS, rowGlyph, ROLE_LABEL } from "@/lib/piping/checklist";
 import { FLUSH_STEPS, ISOLATION_STEPS } from "@/lib/piping/workTypes";
 import { fireTestTanks } from "@/lib/piping/fireTest";
-import { buildCustomChecklist } from "@/lib/piping/ruleBlocks";
+import { buildCustomChecklist, flushParts, isoParts } from "@/lib/piping/ruleBlocks";
+import { planIsolation } from "@/lib/piping/isolation";
+import { TEMPLATE_LABEL, templateFromBuiltin, type TemplateKey } from "@/lib/piping/ruleTemplates";
+import { fireParts } from "@/lib/piping/fireTest";
 import {
+  BASIC_RELATIONS,
   blockMethodOf,
+  CALC_LABEL,
+  CALC_PLACEHOLDERS,
+  CALC_RELATIONS,
+  CALC_TARGET,
+  DEFAULT_CALC,
+  type CalcKind,
+  type CalcSetting,
   customStepsOf,
   DEFAULT_BLOCK_METHOD,
   DEFAULT_DRAIN_RULES,
@@ -154,7 +165,16 @@ export default function RulesPage() {
       <p className="text-xs text-zinc-500">
         プログラムが作るチェックリストに、条件に合う弁・ポンプの操作を追加・上書きします。工程：{stepsOf[t].slice(1).join(" → ")}
       </p>
-      <RuleBlockEditor blocks={d.blocks[t]} onChange={(b) => setBlocks(t, b)} steps={stepsOf[t]} g={g} areas={areas} base={base} />
+      <RuleBlockEditor
+        blocks={d.blocks[t]}
+        onChange={(b) => setBlocks(t, b)}
+        steps={stepsOf[t]}
+        g={g}
+        areas={areas}
+        base={base}
+        // 燃料抜取の追加ルールでは、遮断範囲の計算結果も条件に使える
+        relations={t === "drain" ? [...BASIC_RELATIONS, ...CALC_RELATIONS.isolation] : undefined}
+      />
     </Group>
   );
 
@@ -367,7 +387,14 @@ export default function RulesPage() {
         )}
 
         {tab === "custom" && (
-          <CustomTypes g={g} areas={areas} base={base} list={d.customTypes} onChange={(customTypes) => update({ customTypes })} />
+          <CustomTypes
+            g={g}
+            areas={areas}
+            base={base}
+            list={d.customTypes}
+            rules={{ blockMethod: d.blockMethod, fireTest: d.fireTest, drain: d.drain, flush: d.flush, tankIsolation: d.tankIsolation, blocks: d.blocks }}
+            onChange={(customTypes) => update({ customTypes })}
+          />
         )}
       </section>
     </Shell>
@@ -500,14 +527,26 @@ function CustomTypes({
   areas,
   base,
   list,
+  rules,
   onChange,
 }: {
   g: Graph;
   areas: string[];
   base: Record<string, "open" | "close">;
   list: CustomWorkType[];
+  /** 既存の作業の今の設定（例を作るときに使う。画面で直している途中の値も含む） */
+  rules: ChecklistRules;
   onChange: (l: CustomWorkType[]) => void;
 }) {
+  const fromBuiltin = (type: TemplateKey) => {
+    const t = templateFromBuiltin(type, rules);
+    // 同じ名前があれば番号を付ける
+    const names = new Set(list.map((x) => x.name));
+    let name = t.name;
+    for (let i = 2; names.has(name); i++) name = `${t.name.replace(/（例）$/, "")}（例${i}）`;
+    onChange([...list, { ...t, name }]);
+    setSelId(t.id);
+  };
   const [selId, setSelId] = useState<string | null>(null);
   const sel = list.find((t) => t.id === selId) ?? list[0] ?? null;
   const update = (t: CustomWorkType) => onChange(list.map((x) => (x.id === t.id ? t : x)));
@@ -537,6 +576,23 @@ function CustomTypes({
         >
           ＋ 新しい作業を作る
         </button>
+        <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-2 dark:border-cyan-900 dark:bg-cyan-950">
+          <p className="text-xs font-semibold text-cyan-900 dark:text-cyan-200">既存の作業をもとに作る（例）</p>
+          <p className="mt-0.5 text-[11px] text-cyan-900/80 dark:text-cyan-200/80">
+            各作業の今の設定を、工程とルールに置き換えてコピーします。どう組み立てるかの見本として、工程・ルールを直して使ってください。
+          </p>
+          <div className="mt-1.5 space-y-1">
+            {(Object.keys(TEMPLATE_LABEL) as TemplateKey[]).map((k) => (
+              <button
+                key={k}
+                onClick={() => fromBuiltin(k)}
+                className="block w-full rounded border border-cyan-300 bg-white px-2 py-1 text-left text-xs hover:bg-cyan-100 dark:border-cyan-800 dark:bg-zinc-950 dark:hover:bg-cyan-900"
+              >
+                {TEMPLATE_LABEL[k]}をもとに作る
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="pt-2 text-xs text-zinc-500">作った作業は ① チェックリスト作成の「作業内容」に表示されます（登録後）。</p>
       </div>
       {sel ? (
@@ -584,17 +640,53 @@ function CustomEditor({
 }) {
   const steps = customStepsOf(t);
   const [previewTarget, setPreviewTarget] = useState<string>("");
-  const candidates = useMemo(
-    () =>
-      t.target === "none"
-        ? []
-        : g.facility.nodes
-            .filter((n) => (t.target === "tank" ? n.kind === "tank" : TARGET_KINDS.includes(n.kind)))
-            .sort((a, b) => a.label.localeCompare(b.label, "ja")),
-    [g, t.target]
+  const isPipes = t.target === "pipes";
+  // 試しに作るときの対象の候補（配管は区間ごとに1本）
+  const candidates = useMemo((): { id: string; label: string }[] => {
+    if (t.target === "none") return [];
+    if (t.target === "pipes") {
+      const seen = new Set<string>();
+      return g.facility.pipes
+        .filter((p) => {
+          const s = g.sectionOfPipe.get(p.id);
+          if (!s || seen.has(s)) return false;
+          seen.add(s);
+          return true;
+        })
+        .map((p) => ({ id: p.id, label: p.id + "　" + (g.nodeById.get(p.a)?.label || p.a) + " 〜 " + (g.nodeById.get(p.b)?.label || p.b) }));
+    }
+    return g.facility.nodes
+      .filter((n) => (t.target === "tank" ? n.kind === "tank" : TARGET_KINDS.includes(n.kind)))
+      .sort((a, b) => a.label.localeCompare(b.label, "ja"))
+      .map((n) => ({ id: n.id, label: n.label + "　" + n.name }));
+  }, [g, t.target]);
+  const picked = candidates.some((n) => n.id === previewTarget) ? previewTarget : null;
+  const target = t.target === "none" || isPipes ? null : picked;
+  const result = useMemo(
+    () => buildCustomChecklist(g, t, target, base, isPipes && picked ? { flushPipes: [picked] } : {}),
+    [g, t, target, base, isPipes, picked]
   );
-  const target = t.target === "none" ? null : candidates.some((n) => n.id === previewTarget) ? previewTarget : null;
-  const result = useMemo(() => buildCustomChecklist(g, t, target, base), [g, t, target, base]);
+  const calc = { ...DEFAULT_CALC, ...(t.calc ?? {}) };
+  // 計算の部品の結果（ルールの「当てはまる機器」の確認に使う）
+  const previewCalc = useMemo(() => {
+    if (calc.kind !== "isolation" || !target) return null;
+    const iso = planIsolation(g, [{ type: "node", id: target }], { baseline: base, expandToDrain: calc.expandToDrain });
+    return iso.errors.length ? null : isoParts(g, iso);
+  }, [g, calc.kind, calc.expandToDrain, target, base]);
+  const previewFire = useMemo(() => {
+    if (calc.kind !== "fireTest" || !target) return null;
+    const p = fireParts(g, target, base, calc.fire ?? DEFAULT_FIRE_TEST_RULES, calc.fireMethod ?? DEFAULT_BLOCK_METHOD);
+    return "error" in p ? null : p;
+  }, [g, calc.kind, calc.fire, calc.fireMethod, target, base]);
+  const previewFlush = useMemo(
+    () => (result.flush && result.route ? flushParts(g, result.route, result.flush.day.pump) : null),
+    [g, result]
+  );
+  const setCalc = (patch: Partial<CalcSetting>) => {
+    const next = { ...calc, ...patch };
+    // 計算の部品ごとに対象の選び方が決まる（遮断範囲＝機器、循環経路＝配管）
+    onChange({ ...t, calc: next, target: CALC_TARGET[next.kind] ?? (t.target === "pipes" ? "equipment" : t.target) });
+  };
   const input = "rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-700";
 
   // 工程名を変えたら、ルールの操作・経路の表示も付け替える
@@ -637,9 +729,136 @@ function CustomEditor({
           options={[
             ["tank", "タンクを選ぶ"],
             ["equipment", "機器（ポンプ・弁・ストレーナーなど）を選ぶ"],
+            ["pipes", "配管（末端部）を選ぶ"],
             ["none", "選ばない"],
           ]}
         />
+      </Group>
+
+      <Group title="使う計算（計算の部品）">
+        <p className="mb-2 text-xs text-zinc-500">
+          プログラムの計算を部品として使うと、その結果（遮断弁・ドレン口など）をルールの条件「対象との関係」で選べるようになります。
+        </p>
+        <Radio value={calc.kind} onChange={(v) => setCalc({ kind: v })} options={(Object.keys(CALC_LABEL) as CalcKind[]).map((k) => [k, CALC_LABEL[k].split("：")[0]])} />
+        {calc.kind !== "none" && <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{CALC_LABEL[calc.kind].split("：")[1]}</p>}
+        {calc.kind === "isolation" && (
+          <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
+            <Check
+              label="対象の区間にドレン口が無ければ、ドレン口のある区間まで範囲を広げる"
+              checked={calc.expandToDrain}
+              onChange={(c) => setCalc({ expandToDrain: c })}
+            />
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-1">
+                可搬ポンプの能力
+                <input type="number" value={calc.portableLpm} onChange={(e) => setCalc({ portableLpm: Number(e.target.value) })} className={`${input} w-24`} />
+                L/min
+              </label>
+              <label className="flex items-center gap-1">
+                充填の流量
+                <input type="number" value={calc.fillLpm} onChange={(e) => setCalc({ fillLpm: Number(e.target.value) })} className={`${input} w-24`} />
+                L/min
+              </label>
+            </div>
+            <p className="text-xs text-zinc-500">
+              工程の説明に {CALC_PLACEHOLDERS.isolation.join(" ")} と書くと、計算した値に置き換わります。対象は「機器」になります。
+            </p>
+          </div>
+        )}
+        {calc.kind === "transfer" && (
+          <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-1">
+                払出系統で移送する工程
+                <select value={calc.issueStep ?? ""} onChange={(e) => setCalc({ issueStep: e.target.value })} className={input}>
+                  <option value="">（選んでください）</option>
+                  {steps.slice(1).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1">
+                移送系統で移送する工程
+                <select value={calc.moveStep ?? ""} onChange={(e) => setCalc({ moveStep: e.target.value })} className={input}>
+                  <option value="">（選んでください）</option>
+                  {steps.slice(1).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <Check label="経路から分岐する先の弁を閉める" checked={calc.closeSide ?? true} onChange={(c) => setCalc({ closeSide: c })} />
+              <label className="flex items-center gap-1">
+                仕切り方
+                <select
+                  value={`${calc.lineupMethod?.blocks ?? 1}${calc.lineupMethod?.bleed ? "b" : ""}`}
+                  onChange={(e) => setCalc({ lineupMethod: { blocks: e.target.value.startsWith("2") ? 2 : 1, bleed: e.target.value === "2b" } })}
+                  className={input}
+                >
+                  <option value="1">1ブロック</option>
+                  <option value="2">2ブロック</option>
+                  <option value="2b">2ブロック＋ブリード</option>
+                </select>
+              </label>
+            </div>
+            <p className="text-xs text-zinc-500">
+              選んだ工程で、その経路の弁を開け・分岐先を閉め、次の工程で使わない弁は待機状態に戻します。最後の工程では、それまでに変えた弁を戻します。ノズル弁の閉止・ポンプの起動停止は ④ ルールで決めます。
+              工程の説明に {CALC_PLACEHOLDERS.transfer.join(" ")} と書くと、当日の選択に置き換わります。対象は「タンク」になり、移送先・ポンプは ② 現場点検・③ 制御室で当日に選びます。
+            </p>
+          </div>
+        )}
+        {calc.kind === "fireTest" && (
+          <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
+            <p className="text-xs text-zinc-500">
+              範囲の決め方（⑤ 消火設備機能試験のタブと同じ項目。この作業だけの設定です）。工程の順番・シリンダー弁を開ける工程は、② 工程と ④ ルールで決めます。
+            </p>
+            <FireTestForm r={calc.fire ?? DEFAULT_FIRE_TEST_RULES} onChange={(fire) => setCalc({ fire })} />
+            <label className="flex flex-wrap items-center gap-2">
+              試験範囲外の仕切り方
+              <select
+                value={`${calc.fireMethod?.blocks ?? 1}${calc.fireMethod?.bleed ? "b" : ""}`}
+                onChange={(e) => setCalc({ fireMethod: { blocks: e.target.value.startsWith("2") ? 2 : 1, bleed: e.target.value === "2b" } })}
+                className={input}
+              >
+                <option value="1">1ブロック</option>
+                <option value="2">2ブロック</option>
+                <option value="2b">2ブロック＋ブリード</option>
+              </select>
+            </label>
+            <p className="text-xs text-zinc-500">
+              工程の説明に {CALC_PLACEHOLDERS.fireTest.join(" ")} と書くと、計算した設備の番号に置き換わります。対象は「タンク」になります。図面の流れは、工程名に「泡」を含む工程で泡系統、それ以外で水系統を表示します。
+            </p>
+          </div>
+        )}
+        {calc.kind === "flush" && (
+          <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-1">
+                循環量の目安：末端部の配管容量の
+                <input type="number" value={calc.turnover} onChange={(e) => setCalc({ turnover: Number(e.target.value) })} className={input + " w-20"} />
+                倍
+              </label>
+              <label className="flex items-center gap-1">
+                払出ポンプの能力
+                <input type="number" value={calc.pumpLpm} onChange={(e) => setCalc({ pumpLpm: Number(e.target.value) })} className={input + " w-24"} />
+                L/min
+              </label>
+              <label className="flex items-center gap-1">
+                移送ポンプの能力
+                <input type="number" value={calc.transferPumpLpm} onChange={(e) => setCalc({ transferPumpLpm: Number(e.target.value) })} className={input + " w-24"} />
+                L/min
+              </label>
+            </div>
+            <p className="text-xs text-zinc-500">
+              工程の説明に {CALC_PLACEHOLDERS.flush.join(" ")} と書くと、当日に選んだタンク・ポンプと計算した値に置き換わります。対象は「配管（末端部）」になり、送り元・ポンプ・戻り先は ② 現場点検・③ 制御室で当日に選びます。
+            </p>
+          </div>
+        )}
       </Group>
 
       <Group title="② 工程（「作業前」は自動で先頭に入ります）">
@@ -675,11 +894,29 @@ function CustomEditor({
       </Group>
 
       <Group title="③ 作業の経路（任意）">
+        {calc.kind === "transfer" && <p className="text-xs text-zinc-500">経路は計算の部品「移送経路」で決まり、払出系統・移送系統で移送する工程にそれぞれの流れを表示します。</p>}
+        {(calc.kind === "flush" || calc.kind === "fireTest") && (
+          <div className="space-y-1">
+            <p className="text-xs text-zinc-500">経路は計算の部品（{CALC_LABEL[calc.kind].split("：")[0]}）で決まります。流れを図面に表示する工程を選んでください。</p>
+            <div className="flex flex-wrap gap-3">
+              {steps.slice(1).map((s) => (
+                <Check
+                  key={s}
+                  label={s}
+                  checked={t.route.showAt.includes(s)}
+                  onChange={(c) => onChange({ ...t, route: { ...t.route, showAt: c ? [...t.route.showAt, s] : t.route.showAt.filter((x) => x !== s) } })}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {calc.kind !== "flush" && calc.kind !== "fireTest" && calc.kind !== "transfer" && (
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={t.route.enabled} onChange={(e) => onChange({ ...t, route: { ...t.route, enabled: e.target.checked } })} />
           経路を使う（条件に合う機器のうち、対象に届く最も近いものから対象まで）
         </label>
-        {t.route.enabled && (
+        )}
+        {t.route.enabled && calc.kind !== "flush" && calc.kind !== "fireTest" && calc.kind !== "transfer" && (
           <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
             <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">経路の起点の条件</p>
             <SelectorFields
@@ -706,23 +943,37 @@ function CustomEditor({
       </Group>
 
       <Group title="④ ルール（もし〜なら、〜する）">
-        <RuleBlockEditor blocks={t.blocks} onChange={(blocks) => onChange({ ...t, blocks })} steps={steps} g={g} areas={areas} base={base} previewTarget={target} />
+        <RuleBlockEditor
+          blocks={t.blocks}
+          onChange={(blocks) => onChange({ ...t, blocks })}
+          steps={steps}
+          g={g}
+          areas={areas}
+          base={base}
+          previewTarget={target}
+          relations={[...BASIC_RELATIONS, ...CALC_RELATIONS[calc.kind]]}
+          previewCalc={previewCalc}
+          previewFlush={previewFlush}
+          previewFire={previewFire}
+        />
       </Group>
 
       <Group title="⑤ 試しに作ってみる">
         {t.target !== "none" && (
           <label className="flex flex-wrap items-center gap-2 text-sm">
             対象
-            <select value={target ?? ""} onChange={(e) => setPreviewTarget(e.target.value)} className={input}>
-              <option value="">（選んでください）</option>
+            <select value={picked ?? ""} onChange={(e) => setPreviewTarget(e.target.value)} className={input}>
+              <option value="">{isPipes ? "（末端部の配管を選んでください）" : "（選んでください）"}</option>
               {candidates.map((n) => (
                 <option key={n.id} value={n.id}>
-                  {n.label}　{n.name}
+                  {n.label}
                 </option>
               ))}
             </select>
           </label>
         )}
+        {result.iso && !result.error && <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">{result.iso.notes.join(" ／ ")}</p>}
+        {result.fire && !result.error && <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">{result.fire.summary}</p>}
         {result.error ? (
           <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">{result.error}</p>
         ) : (

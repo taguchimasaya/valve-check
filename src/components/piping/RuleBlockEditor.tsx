@@ -3,8 +3,9 @@
 import { useMemo } from "react";
 import { KIND_LABEL } from "@/lib/piping/diagramData";
 import type { Graph } from "@/lib/piping/graph";
-import { selectNodes } from "@/lib/piping/ruleBlocks";
-import { newBlock, newRuleId, RELATION_LABEL, type BlockRelation, type BlockSelector, type RuleBlock } from "@/lib/piping/rules";
+import { selectNodes, type FlushParts, type IsoParts } from "@/lib/piping/ruleBlocks";
+import type { FireParts } from "@/lib/piping/fireTest";
+import { BASIC_RELATIONS, needsCalc, newBlock, newRuleId, RELATION_LABEL, type BlockRelation, type BlockSelector, type RuleBlock } from "@/lib/piping/rules";
 import { FLUID_LABEL, type Fluid, type NodeKind, type ValveState } from "@/lib/piping/types";
 
 // ルールブロックの編集（ノーコード）：「もし（条件）なら → 工程ごとに 開／閉」をカードで組み立てる。
@@ -24,17 +25,22 @@ export function SelectorFields({
   onChange,
   areas,
   relations = true,
+  relationList = BASIC_RELATIONS,
   rowKinds = ROW_KIND_OPTIONS,
 }: {
   sel: BlockSelector;
   onChange: (s: BlockSelector) => void;
   areas: string[];
   relations?: boolean;
+  /** 選べる「対象との関係」（計算の部品を使うときは、その結果の関係も入る） */
+  relationList?: BlockRelation[];
   rowKinds?: NodeKind[];
 }) {
   const set = (patch: Partial<BlockSelector>) => onChange({ ...sel, ...patch });
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
-  const branch = sel.relation === "targetBranch" || sel.relation === "routeBranch";
+  const branch = ["targetBranch", "routeBranch", "isoBoundary", "isoFillLine", "isoFillCrack", "flushSide", "fireOutside"].includes(sel.relation);
+  // 今の設定が一覧に無い関係でも、消えないように選択肢に残す
+  const options = relationList.includes(sel.relation) ? relationList : [...relationList, sel.relation];
   return (
     <div className="grid gap-2 text-sm sm:grid-cols-[120px_1fr] sm:items-center">
       {relations && (
@@ -42,9 +48,10 @@ export function SelectorFields({
           <span className="text-xs text-zinc-500">対象との関係</span>
           <div className="flex flex-wrap items-center gap-2">
             <select value={sel.relation} onChange={(e) => set({ relation: e.target.value as BlockRelation })} className={input}>
-              {(Object.keys(RELATION_LABEL) as BlockRelation[]).map((r) => (
+              {options.map((r) => (
                 <option key={r} value={r}>
                   {RELATION_LABEL[r]}
+                  {!relationList.includes(r) ? "（この作業では使えません）" : ""}
                 </option>
               ))}
             </select>
@@ -126,6 +133,10 @@ export default function RuleBlockEditor({
   areas,
   base,
   previewTarget,
+  relations,
+  previewCalc,
+  previewFlush,
+  previewFire,
 }: {
   blocks: RuleBlock[];
   onChange: (b: RuleBlock[]) => void;
@@ -136,6 +147,14 @@ export default function RuleBlockEditor({
   base: Record<string, ValveState>;
   /** 当てはまる機器の確認に使う対象（無ければ「指定なし」の条件だけ確認する） */
   previewTarget?: string | null;
+  /** 選べる「対象との関係」 */
+  relations?: BlockRelation[];
+  /** 計算の部品の結果（当てはまる機器の確認に使う） */
+  previewCalc?: IsoParts | null;
+  /** 計算の部品「循環経路」の結果（当てはまる機器の確認に使う） */
+  previewFlush?: FlushParts | null;
+  /** 計算の部品「消火試験の範囲」の結果（当てはまる機器の確認に使う） */
+  previewFire?: FireParts | null;
 }) {
   const update = (i: number, b: RuleBlock) => onChange(blocks.map((x, j) => (j === i ? b : x)));
   const move = (i: number, d: number) => {
@@ -150,9 +169,14 @@ export default function RuleBlockEditor({
     <div className="space-y-2">
       {blocks.length === 0 && <p className="text-sm text-zinc-400">追加のルールはありません。</p>}
       {blocks.map((b, i) => {
-        const canPreview = b.when.relation === "any" || ((b.when.relation === "targetBranch" || b.when.relation === "targetOutletBranch") && !!previewTarget);
+        const canPreview =
+          b.when.relation === "any" ||
+          ((b.when.relation === "targetBranch" || b.when.relation === "targetOutletBranch") && !!previewTarget) ||
+          (needsCalc(b.when.relation) === "isolation" && !!previewCalc) ||
+          (needsCalc(b.when.relation) === "flush" && !!previewFlush) ||
+          (needsCalc(b.when.relation) === "fireTest" && !!previewFire);
         const matched = canPreview
-          ? selectNodes(g, b.when, { target: previewTarget ?? null, route: null, base }).filter((n) =>
+          ? selectNodes(g, b.when, { target: previewTarget ?? null, route: null, base, calc: previewCalc ?? null, flush: previewFlush ?? null, fire: previewFire ?? null }).filter((n) =>
               ["valve", "drain", "gauge", "pump", "transferPump"].includes(n.kind)
             )
           : null;
@@ -173,7 +197,7 @@ export default function RuleBlockEditor({
             <div className="mt-2 grid gap-3 lg:grid-cols-2">
               <div>
                 <p className="mb-1 text-xs font-semibold text-cyan-700 dark:text-cyan-400">もし（この条件の機器なら）</p>
-                <SelectorFields sel={b.when} onChange={(when) => update(i, { ...b, when })} areas={areas} />
+                <SelectorFields sel={b.when} onChange={(when) => update(i, { ...b, when })} areas={areas} relationList={relations} />
                 <p className="mt-1 text-xs text-zinc-500">
                   {matched
                     ? `当てはまる機器：${matched.length}件${matched.length ? `（${matched.slice(0, 6).map((n) => n.label).join("・")}${matched.length > 6 ? " ほか" : ""}）` : ""}`

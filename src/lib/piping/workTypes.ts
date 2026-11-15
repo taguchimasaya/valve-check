@@ -35,9 +35,22 @@ export function workTypeOf(plan: Pick<SavedPlan, "workType">): WorkType {
 }
 
 /** 当日のタンク・ポンプ選択が必要な作業か（燃料抜取は充填ラインを使う場合のみ・別扱い。消火設備機能試験は不要） */
-export function needsDayParams(plan: Pick<SavedPlan, "workType">) {
+export function needsDayParams(plan: Pick<SavedPlan, "workType"> & { customType?: SavedPlan["customType"] }) {
   const t = workTypeOf(plan);
-  return t === "flush" || t === "tankIsolation";
+  // ユーザー定義の作業でも、計算の部品「循環経路」を使うものは当日にタンク・ポンプを選ぶ
+  return t === "flush" || t === "tankIsolation" || (t === "custom" && (plan.customType?.calc?.kind === "flush" || plan.customType?.calc?.kind === "transfer"));
+}
+
+/** 当日の選択が「移送先・払出ポンプ・移送ポンプ」（タンク縁切りと同じ）になる作業か */
+export function isTransferLike(plan: Pick<SavedPlan, "workType"> & { customType?: SavedPlan["customType"] }) {
+  const t = workTypeOf(plan);
+  return t === "tankIsolation" || (t === "custom" && plan.customType?.calc?.kind === "transfer");
+}
+
+/** 当日の選択が「送り元・ポンプ・戻り先」（燃料末端部作業と同じ）になる作業か */
+export function isFlushLike(plan: Pick<SavedPlan, "workType"> & { customType?: SavedPlan["customType"] }) {
+  const t = workTypeOf(plan);
+  return t === "flush" || (t === "custom" && plan.customType?.calc?.kind === "flush");
 }
 
 export type OrderedRoute = { nodeIds: string[]; pipeIds: string[] };
@@ -57,12 +70,12 @@ function chainPath(g: Graph, points: string[], blocked: (string[] | undefined)[]
 }
 
 const no = (tank: string) => tank.replace("T-", "");
-const nozzles = (tank: string) => ({ R: `V-${no(tank)}R`, I: `V-${no(tank)}I`, T: `V-${no(tank)}T` });
+export const nozzles = (tank: string) => ({ R: `V-${no(tank)}R`, I: `V-${no(tank)}I`, T: `V-${no(tank)}T` });
 const routeLength = (g: Graph, r: OrderedRoute) => r.pipeIds.reduce((a, p) => a + (g.pipeLengthM.get(p) ?? 0), 0);
-const valvesOf = (g: Graph, r: OrderedRoute) => r.nodeIds.filter((n) => g.nodeById.get(n)?.kind === "valve");
+export const valvesOf = (g: Graph, r: OrderedRoute) => r.nodeIds.filter((n) => g.nodeById.get(n)?.kind === "valve");
 
 /** 経路上で、ポンプの吐出側にある最初の弁（ポンプ起動の注記を付ける） */
-function pumpValve(g: Graph, r: OrderedRoute, pump: string) {
+export function pumpValve(g: Graph, r: OrderedRoute, pump: string) {
   const i = r.nodeIds.indexOf(pump);
   return i < 0 ? null : r.nodeIds.slice(i).find((n) => g.nodeById.get(n)?.kind === "valve") ?? null;
 }
@@ -174,7 +187,7 @@ function row(g: Graph, id: string, states: (ValveState | null)[], note?: string,
   return { code: n.label, nodeId: id, name: n.name, role, states, ...(note ? { note } : {}) };
 }
 
-function formatMin(min: number) {
+export function formatMin(min: number) {
   if (!isFinite(min)) return "—";
   return min < 60 ? `約${Math.ceil(min)}分` : `約${Math.floor(min / 60)}時間${Math.ceil(min % 60)}分`;
 }
@@ -188,7 +201,7 @@ type PumpUse = { id: string; on: number; off: number; note: string };
  * ・前の工程で操作した弁のうち、今の工程で使わないものは作業前の状態に戻す
  * ・最終工程では finalClose の弁を閉め、それ以外はすべて作業前の状態に戻す
  */
-function lineupRows(
+export function lineupRows(
   g: Graph,
   nSteps: number,
   lineups: Record<number, OrderedRoute>,

@@ -56,7 +56,7 @@ import {
   isolationRulesOf,
   type CustomWorkType,
 } from "@/lib/piping/rules";
-import { applyBlocks, buildCustomChecklist } from "@/lib/piping/ruleBlocks";
+import { applyBlocks, buildCustomChecklist, isoParts } from "@/lib/piping/ruleBlocks";
 import { unionRoute } from "@/lib/piping/fireTest";
 import type { NodeKind } from "@/lib/piping/types";
 
@@ -146,6 +146,10 @@ export default function PlannerPage() {
 
   const customDef = customTypes.find((t) => t.id === customId) ?? (loadedCustom?.id === customId ? loadedCustom : null);
   const isDay = workType !== "drain";
+  // ユーザー定義の作業で計算の部品「循環経路」を使うもの（末端部の配管を選び、当日のタンク・ポンプを選ぶ）
+  const customFlush = workType === "custom" && customDef?.calc?.kind === "flush";
+  // ユーザー定義の作業で計算の部品「移送経路」を使うもの（対象タンクを選び、当日の移送先・ポンプを選ぶ）
+  const customTransfer = workType === "custom" && customDef?.calc?.kind === "transfer";
   const steps = useMemo(
     () =>
       workType === "fireTest" ? fireTestSteps(fireRules) : workType === "custom" ? (customDef ? customStepsOf(customDef) : ["作業前"]) : STEPS_OF[workType],
@@ -161,29 +165,31 @@ export default function PlannerPage() {
 
   // ───── 燃料末端部作業・タンク縁切り：当日の選択（例）から作るチェックリスト ─────
   const flushT = useMemo(
-    () => (workType === "flush" && flushPipes.length ? flushTarget(g, flushPipes) : null),
-    [g, workType, flushPipes]
+    () => ((workType === "flush" || customFlush) && flushPipes.length ? flushTarget(g, flushPipes) : null),
+    [g, workType, customFlush, flushPipes]
   );
   const flushPumpOptions = useMemo(
     () => (flushT ? flushPumps(g, flushPipes, flushSrc, flushRet) : []),
     [g, flushT, flushPipes, flushSrc, flushRet]
   );
   const effFlushPump = flushPumpOptions.includes(flushPump) ? flushPump : flushPumpOptions[0];
+  // 移送経路を使う作業の対象タンク（タンク縁切り、または計算の部品「移送経路」を使うユーザー定義の作業）
+  const tTank = workType === "tankIsolation" ? isoTank : customTransfer ? customTarget : null;
   const effDest =
-    isoTank && destTank === isoTank ? TANKS.find((t) => t !== isoTank && yardOf(t) === yardOf(isoTank))! : destTank;
+    tTank && destTank === tTank ? TANKS.find((t) => t !== tTank && yardOf(t) === yardOf(tTank)) ?? destTank : destTank;
   const issuePumpOptions = useMemo(
     () =>
-      isoTank
-        ? ALL_PUMPS(g).filter((p) => g.nodeById.get(p)!.kind === "pump" && isolationIssueRoute(g, isoTank, effDest, p))
+      tTank
+        ? ALL_PUMPS(g).filter((p) => g.nodeById.get(p)!.kind === "pump" && isolationIssueRoute(g, tTank, effDest, p))
         : [],
-    [g, isoTank, effDest]
+    [g, tTank, effDest]
   );
   const transferPumpOptions = useMemo(
     () =>
-      isoTank
-        ? ALL_PUMPS(g).filter((p) => g.nodeById.get(p)!.kind === "transferPump" && isolationTransferRoute(g, isoTank, effDest, p))
+      tTank
+        ? ALL_PUMPS(g).filter((p) => g.nodeById.get(p)!.kind === "transferPump" && isolationTransferRoute(g, tTank, effDest, p))
         : [],
-    [g, isoTank, effDest]
+    [g, tTank, effDest]
   );
   const effIssuePump = issuePumpOptions.includes(issuePump) ? issuePump : issuePumpOptions[0];
   const effTransferPump = transferPumpOptions.includes(transferPump) ? transferPump : transferPumpOptions[0];
@@ -216,14 +222,23 @@ export default function PlannerPage() {
     );
   }, [g, dayKey, steps, flushPipes, isoTank, flushT, baseline, flushRules, isoRules, blockMethod]);
   const customResult = useMemo(
-    () => (workType === "custom" && customDef ? buildCustomChecklist(g, customDef, customTarget, baseline) : null),
-    [g, workType, customDef, customTarget, baseline]
+    () =>
+      workType === "custom" && customDef
+        ? buildCustomChecklist(g, customDef, customTarget, baseline, {
+            gravity,
+            flushPipes,
+            day: customFlush && effFlushPump ? { srcTank: flushSrc, pump: effFlushPump, returnTank: flushRet } : undefined,
+            transferDay:
+              customTransfer && effIssuePump && effTransferPump ? { destTank: effDest, issuePump: effIssuePump, transferPump: effTransferPump } : undefined,
+          })
+        : null,
+    [g, workType, customDef, customTarget, baseline, gravity, flushPipes, customFlush, effFlushPump, flushSrc, flushRet, customTransfer, effDest, effIssuePump, effTransferPump]
   );
   const dayResult = workType === "fireTest" ? fireResult : workType === "custom" ? customResult : dayResultOf;
   const dayError =
-    workType === "flush" && flushT && !effFlushPump
+    (workType === "flush" || customFlush) && flushT && !effFlushPump
       ? "送り元・戻り先タンクから末端部へ届くポンプがありません"
-      : workType === "tankIsolation" && isoTank && (!effIssuePump || !effTransferPump)
+      : (workType === "tankIsolation" || customTransfer) && tTank && (!effIssuePump || !effTransferPump)
         ? "移送先タンクへの移送経路が見つかりません"
         : dayResult?.error;
 
@@ -274,7 +289,9 @@ export default function PlannerPage() {
         : routes.length
           ? unionRoute(routes)
           : null;
-    return applyBlocks(g, rawRows, steps, builtinBlocks, { target: blockTarget, route, base: baseline });
+    // 燃料抜取では、遮断範囲の計算結果（遮断弁・ドレン口など）も追加ルールの条件に使える
+    const calc = workType === "drain" && iso ? isoParts(g, iso) : null;
+    return applyBlocks(g, rawRows, steps, builtinBlocks, { target: blockTarget, route, base: baseline, calc });
   }, [g, rawRows, steps, builtinBlocks, blockTarget, dayRoutes, workType, iso, baseline]);
   const rows = blockApplied.rows;
   const boundaryRows = rows.filter((r) => r.role === "boundary" || r.role === "fill").filter((r) => r.states[1] === "close");
@@ -340,6 +357,13 @@ export default function PlannerPage() {
     activeGauges.forEach((d) => (marks[d] = "gauge"));
     iso.fill.openValves.forEach((v) => (marks[v] = "fill"));
     if (focusSeal !== null) iso.sealGroups[focusSeal]?.ventValves.forEach((v) => (marks[v] = "vent"));
+  }
+  // ユーザー定義の作業で計算の部品「遮断範囲」を使うとき：範囲・充填・液封の区間を表示する
+  const customIso = workType === "custom" ? customResult?.iso : undefined;
+  if (customIso) {
+    layers.push({ key: "c-region", pipeIds: customIso.regionPipeIds, color: "#ef4444", opacity: 0.4 });
+    layers.push({ key: "c-fill", pipeIds: customIso.fillPipeIds, color: "#0d9488", opacity: 0.6 });
+    layers.push({ key: "c-seal", pipeIds: customIso.sealPipeIds, color: "#f59e0b", opacity: 0.55 });
   }
   if (isDay) {
     if (flushT) layers.push({ key: "flush-target", pipeIds: flushT.pipeIds, color: "#06b6d4", opacity: 0.5 });
@@ -415,7 +439,7 @@ export default function PlannerPage() {
   }
 
   function handlePipeClick(pid: string) {
-    if (workType === "flush") {
+    if (workType === "flush" || customFlush) {
       setFlushPipes((p) => (p.includes(pid) ? p.filter((x) => x !== pid) : [...p, pid]));
       return;
     }
@@ -509,16 +533,35 @@ export default function PlannerPage() {
       source: "planner",
       appliedRules,
       diagramVersionId: diagramInfo.versionId,
-      targets: customTarget ? [{ type: "node", id: customTarget }] : [],
-      regionPipeIds: customResult.route?.pipeIds ?? [],
-      regionNodeIds: customTarget ? [customTarget] : [],
-      sealPipeIds: [],
+      targets: customResult.flush
+        ? flushPipes.map((id) => ({ type: "pipe" as const, id }))
+        : customTarget
+          ? [{ type: "node", id: customTarget }]
+          : [],
+      // 循環経路：末端部の配管と、現場・制御室の選択欄の初期値（当日のタンク・ポンプ）
+      ...(customResult.flush ? { flushPipeIds: flushPipes, dayDefaults: { kind: "flush" as const, ...customResult.flush.day } } : {}),
+      // 移送経路：対象タンクと、現場・制御室の選択欄の初期値（当日の移送先・ポンプ）
+      ...(customResult.transfer && customTarget
+        ? { isolationTank: customTarget, dayDefaults: { kind: "tankIsolation" as const, ...customResult.transfer.day } }
+        : {}),
+      regionPipeIds: customResult.flush?.pipeIds ?? customResult.iso?.regionPipeIds ?? customResult.route?.pipeIds ?? [],
+      regionNodeIds: customResult.iso?.regionNodeIds ?? (customTarget ? [customTarget] : []),
+      sealPipeIds: customResult.iso?.sealPipeIds ?? [],
+      // 遮断範囲で充填ラインを使うときは、燃料抜取と同じく当日に充填元を選ぶ
+      ...(customResult.iso?.fillPipeIds.length ? { fillPipeIds: customResult.iso.fillPipeIds } : {}),
       steps,
       rows,
       stepNotes: customResult.stepNotes,
       stepRoutes: customResult.stepRoutes,
       planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
-      summary: { volumeL: null, drainMinutes: null, drains: [], warnings: customResult.warnings, notes: customDef.desc ? [customDef.desc] : [] },
+      summary: {
+        volumeL: customResult.iso?.volumeL ?? customResult.flush?.volumeL ?? null,
+        drainMinutes: customResult.iso?.drainMinutes ?? null,
+        fillMinutes: customResult.iso?.fillMinutes ?? null,
+        drains: customResult.iso?.drains ?? [],
+        warnings: customResult.warnings,
+        notes: [...(customDef.desc ? [customDef.desc] : []), ...(customResult.iso?.notes ?? []), ...(customResult.fire ? [customResult.fire.summary] : [])],
+      },
     };
   }
 
@@ -673,7 +716,7 @@ export default function PlannerPage() {
               ? "図面上で末端部（通常使用しないライン）の配管をクリックしてください。つながっているラインのポンプで循環させる経路と操作バルブを作ります。"
               : workType === "custom"
                 ? `${customDef?.name ?? "ユーザー定義の作業"}：${
-                    customDef?.target === "tank" ? "図面上で対象のタンクをクリックしてください。" : customDef?.target === "equipment" ? "図面上で対象の機器をクリックしてください。" : ""
+                    customDef?.target === "tank" ? "図面上で対象のタンクをクリックしてください。" : customDef?.target === "equipment" ? "図面上で対象の機器をクリックしてください。" : customDef?.target === "pipes" ? "図面上で末端部の配管をクリックしてください。" : ""
                   }⑤ で組み立てた工程とルールでチェックリストを作ります。${customDef?.desc ? `（${customDef.desc}）` : ""}`
               : workType === "fireTest"
                 ? `図面上で試験対象タンクをクリックしてください。登録したルール（⑤ チェックリスト作成のルール）に従い、発泡装置・冷却散水・近くの消火栓（泡${fireRules.foamHydrants}口・水${fireRules.waterHydrants}口）を使う試験の操作バルブを作ります。`
@@ -689,7 +732,7 @@ export default function PlannerPage() {
               layers={layers}
               marks={marks}
               onNodeClick={handleNodeClick}
-              onPipeClick={workType === "tankIsolation" || workType === "fireTest" || workType === "custom" ? undefined : handlePipeClick}
+              onPipeClick={workType === "tankIsolation" || workType === "fireTest" || (workType === "custom" && !customFlush) ? undefined : handlePipeClick}
               clickableKinds={
                 workType === "flush"
                   ? []
@@ -1213,9 +1256,9 @@ export default function PlannerPage() {
               </Panel>
             )}
 
-            {isDay && workType !== "fireTest" && workType !== "custom" && (
+            {isDay && workType !== "fireTest" && (workType !== "custom" || customFlush || customTransfer) && (
               <Panel title="当日の運用（例）">
-                {workType === "flush" ? (
+                {workType === "flush" || customFlush ? (
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <PickSelect label="送り元タンク" value={flushSrc} options={TANKS} onChange={setFlushSrc} />
                     <PickSelect
@@ -1231,7 +1274,7 @@ export default function PlannerPage() {
                     <PickSelect
                       label="移送先タンク"
                       value={effDest}
-                      options={TANKS.filter((t) => t !== isoTank)}
+                      options={TANKS.filter((t) => t !== tTank)}
                       onChange={setDestTank}
                     />
                     <PickSelect label="払出ポンプ" value={effIssuePump ?? ""} options={issuePumpOptions} onChange={setIssuePump} />
@@ -1244,15 +1287,15 @@ export default function PlannerPage() {
                   </div>
                 )}
                 <p className="mt-2 text-[11px] text-zinc-500">
-                  {workType === "flush"
+                  {workType === "flush" || customFlush
                     ? "ポンプは末端部につながっているラインのもの（払出・移送を問わず）から選べます。"
                     : "払出系統（払出ポンプ → バイパス → 受入ライン）で移送し、吸えなくなったら移送系統（移送ポンプ → 受入ライン）で残りを移送します。"}
                   実際のタンク・ポンプは当日の運用に合わせて ② 現場点検・③ 制御室で選び直せます（ここでの選択は初期値）。
                 </p>
-                {workType === "flush" && flushT && (
+                {(workType === "flush" || customFlush) && flushT && (
                   <p className="mt-2 text-sm">
-                    末端部の容量 <b>{formatLiters(flushT.volumeL)}</b> ／ 循環量の目安（{flushRules.turnover}倍）
-                    <b> {formatLiters(flushT.volumeL * flushRules.turnover)}</b>
+                    末端部の容量 <b>{formatLiters(flushT.volumeL)}</b> ／ 循環量の目安（{customFlush ? customDef?.calc?.turnover : flushRules.turnover}倍）
+                    <b> {formatLiters(flushT.volumeL * ((customFlush ? customDef?.calc?.turnover : flushRules.turnover) ?? 3))}</b>
                   </p>
                 )}
                 {dayError && (
