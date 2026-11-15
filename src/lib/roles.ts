@@ -135,3 +135,52 @@ export function deniedMessage(perms: Permission[]) {
   const names = (roles.length ? roles : (["admin"] as Role[])).map((r) => ROLE_LABEL[r]);
   return `この操作には${names.join("・")}${names.length > 1 ? "のいずれかの" : ""}権限が必要です`;
 }
+
+// ───────────── 拠点ごとの権限 ─────────────
+// 利用者・承認者は拠点ごとに違うため、権限は拠点ごとに持つ（app_metadata.siteRoles = { 拠点ID: 権限[] }）。
+// 管理者だけは全拠点共通（app_metadata.roles の admin）。app_metadata.roles には全拠点を合わせた権限も入れる
+// （既存の QR チェックリスト系の画面と DB 側の RLS は拠点を区別しないため）。
+// siteRoles が未設定の利用者は、今までどおり roles がすべての拠点に効く。
+
+export type SiteRoles = Record<string, Role[]>;
+
+/** 拠点ごとの権限を持たない権限（全拠点共通） */
+export const GLOBAL_ROLES: Role[] = ["admin"];
+export const SITE_ROLES: Role[] = ROLES.filter((r) => !GLOBAL_ROLES.includes(r));
+
+export const FACILITY_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** 保存値を拠点ごとの権限にそろえる（未設定なら null） */
+export function parseSiteRoles(raw: unknown): SiteRoles | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: SiteRoles = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!FACILITY_ID_RE.test(k)) continue;
+    const roles = (parseRoles(v) ?? []).filter((r) => SITE_ROLES.includes(r));
+    if (roles.length) out[k] = roles;
+  }
+  return out;
+}
+
+/** 全拠点を合わせた権限（拠点の区別が無い画面・DB 用）＋管理者 */
+export function unionRoles(siteRoles: SiteRoles, admin: boolean): Role[] {
+  const all = new Set(Object.values(siteRoles).flat());
+  if (admin) all.add("admin");
+  return ROLES.filter((r) => all.has(r));
+}
+
+/** ある拠点での権限。roles は全拠点共通の保存値（siteRoles が無ければそのまま全拠点に効く） */
+export function rolesAt(access: { roles: readonly Role[]; siteRoles: SiteRoles | null }, facility: string): Role[] {
+  if (!access.siteRoles) return [...access.roles];
+  const here = access.siteRoles[facility] ?? [];
+  return access.roles.includes("admin") ? [...here, "admin"] : [...here];
+}
+
+/**
+ * 拠点の見え方：full＝権限のある拠点、view＝表示だけ（どこかの拠点で制御室の人は、ほかの拠点も表示できる）、none＝表示しない
+ */
+export function siteAccess(access: { roles: readonly Role[]; siteRoles: SiteRoles | null }, facility: string): "full" | "view" | "none" {
+  if (rolesAt(access, facility).length) return "full";
+  if (access.roles.includes("control")) return "view";
+  return "none";
+}

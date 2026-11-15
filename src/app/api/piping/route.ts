@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireAuth } from "@/lib/serverAuth";
+import { requireAuth, requireSite, rolesAtSite } from "@/lib/serverAuth";
 import { can, deniedMessage, STORE_ACTION_PERMS } from "@/lib/roles";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
@@ -436,6 +436,9 @@ export async function GET(request: Request) {
   if (auth instanceof Response) return auth;
   try {
     const facility = facilityOf(request);
+    // 権限のある拠点（どこかの拠点で制御室の人は、ほかの拠点も表示だけ）
+    const site = requireSite(auth, facility);
+    if (site instanceof Response) return site;
     return Response.json(BACKEND === "supabase" ? await loadDb(auth.client, facility) : await loadFile(facility));
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
@@ -449,24 +452,26 @@ export async function POST(request: Request) {
   // 操作ごとの権限（src/lib/roles.ts の STORE_ACTION_PERMS）。載っていない操作は受け付けない
   const perms = STORE_ACTION_PERMS[action?.action];
   if (!perms) return new Response("不明な操作です", { status: 400 });
-  if (!can(auth.roles, ...perms)) return new Response(deniedMessage(perms), { status: 403 });
   let facility: string;
   try {
     facility = facilityOf(request);
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 400 });
   }
+  // 操作はその拠点での権限で判断する（表示だけの拠点では何もできない）
+  const roles = rolesAtSite(auth, facility);
+  if (!can(roles, ...perms)) return new Response(roles.length ? deniedMessage(perms) : "この拠点で操作する権限がありません", { status: 403 });
   let res: Response;
   if (BACKEND === "supabase") {
     try {
-      res = await updateDb(auth.client, facility, action, { name: auth.name, userId: auth.userId, roles: auth.roles });
+      res = await updateDb(auth.client, facility, action, { name: auth.name, userId: auth.userId, roles });
     } catch (e) {
       return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   } else {
     const run = queue.then(async () => {
       const store = await loadFile(facility);
-      const err = applyAs(store, action, { name: auth.name, userId: auth.userId, roles: auth.roles });
+      const err = applyAs(store, action, { name: auth.name, userId: auth.userId, roles });
       if (err) return new Response(err, { status: 400 });
       store.version += 1;
       await saveFile(facility, store);

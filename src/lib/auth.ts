@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { Role } from "./roles";
+import type { Role, SiteRoles } from "./roles";
 
 // ログイン（Supabase Auth）。利用者は ID とパスワードでログインする。
 // ID はメールアドレスの @ より前（例：test@test.com なら「test」）。
@@ -38,6 +38,8 @@ export async function signIn(id: string, password: string) {
 
 export async function signOut() {
   await supabase.auth.signOut({ scope: "local" });
+  // 拠点の一覧は利用者ごとに違うので読み直させる（循環 import を避けて動的に読む）
+  (await import("./piping/usePiping")).resetFacilities();
 }
 
 /** ログイン中のセッション（読み込み中は undefined、未ログインは null） */
@@ -63,7 +65,16 @@ export async function authFetch(input: string, init: RequestInit = {}) {
 }
 
 /** ログイン中の利用者の権限（/api/me）。サーバーで Supabase Auth に問い合わせて決める */
-export type Me = { userId: string; name: string; loginId: string; roles: Role[]; envAdmin: boolean };
+export type Me = {
+  userId: string;
+  name: string;
+  loginId: string;
+  /** 全拠点を合わせた権限 */
+  roles: Role[];
+  /** 拠点ごとの権限（未設定なら null：roles がすべての拠点に効く） */
+  siteRoles: SiteRoles | null;
+  envAdmin: boolean;
+};
 
 // 同じ利用者のあいだは1回だけ問い合わせる（画面を移っても使い回す）
 let meCache: { userId: string; promise: Promise<Me | null> } | null = null;

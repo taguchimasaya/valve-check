@@ -6,10 +6,9 @@ import PipingDiagram, { DiagramLegend, FLUID_COLOR } from "@/components/piping/P
 import { FLUID_LABEL } from "@/lib/piping/types";
 import { liveDiagram, OUTAGE_COLOR } from "@/lib/piping/live";
 import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
-import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { useDiagramInfo, useGraph, usePipingStore, useSiteRoles } from "@/lib/piping/usePiping";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
 import UserBadge from "@/components/UserBadge";
-import { useMe } from "@/lib/auth";
 import { canOpen } from "@/lib/roles";
 
 const menus = [
@@ -63,9 +62,10 @@ const settings = [
 
 export default function PipingHome() {
   // 権限で開けないメニュー・管理設定は出さない
-  const me = useMe();
-  const visibleMenus = menus.filter((m) => canOpen(me?.roles, m.href));
-  const visibleSettings = settings.filter((m) => canOpen(me?.roles, m.href));
+  // 選択中の拠点での権限（表示だけの拠点では、メニューは出さず現在の状況だけ）
+  const roles = useSiteRoles();
+  const visibleMenus = menus.filter((m) => canOpen(roles, m.href));
+  const visibleSettings = settings.filter((m) => canOpen(roles, m.href));
   const graph = useGraph();
   const diagramInfo = useDiagramInfo();
   // 今の運用・点検状況（数秒ごとに更新）

@@ -4,7 +4,8 @@ import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMe, useSession } from "@/lib/auth";
-import { canOpen, deniedMessage, pagePerms, ROLE_LABEL } from "@/lib/roles";
+import { canOpen, deniedMessage, pagePerms, ROLE_LABEL, rolesAt } from "@/lib/roles";
+import { useEnsureFacility, useFacilityId } from "@/lib/piping/usePiping";
 
 // ログインしていなければログイン画面へ。ログイン後は元の画面（QRで開いた画面を含む）へ戻る。
 // ページごとに必要な権限（src/lib/roles.ts の PAGE_PERMS）が無ければ、中身を出さずに案内を出す。
@@ -26,6 +27,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  // 配管系統図の画面は拠点ごとの権限。見られない拠点を選んでいたら、見られる拠点に切り替える
+  const isPiping = pathname === "/piping" || pathname.startsWith("/piping/");
+  const facility = useFacilityId();
+  const facilities = useEnsureFacility(!isPublic && isPiping && !!session);
 
   useEffect(() => {
     if (isPublic || session !== null) return;
@@ -46,13 +51,27 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       </Message>
     );
   }
-  if (!canOpen(me.roles, pathname)) {
+  const roles = isPiping ? rolesAt(me, facility) : me.roles;
+  if (isPiping && facilities && facilities.length === 0) {
+    return (
+      <Message>
+        <p className="text-base font-semibold text-zinc-800 dark:text-zinc-100">見られる拠点がありません</p>
+        <p className="mt-2">配管系統図の拠点ごとの権限が付いていません。管理者に依頼してください。</p>
+        <Link href="/" className="mt-4 inline-block text-emerald-700 underline dark:text-emerald-400">
+          ホームに戻る
+        </Link>
+      </Message>
+    );
+  }
+  if (!canOpen(roles, pathname)) {
     return (
       <Message>
         <p className="text-base font-semibold text-zinc-800 dark:text-zinc-100">このページを開く権限がありません</p>
-        <p className="mt-2">{deniedMessage(pagePerms(pathname) ?? [])}。</p>
+        <p className="mt-2">
+          {isPiping && roles.length === 0 ? "この拠点は表示だけです（配管系統図トップで現在の状況を見られます）" : deniedMessage(pagePerms(pathname) ?? [])}。
+        </p>
         <p className="mt-1 text-xs">
-          あなたの権限：{me.roles.map((r) => ROLE_LABEL[r]).join("・") || "なし"}（変更は管理者に依頼してください）
+          {isPiping ? "この拠点での" : "あなたの"}権限：{roles.map((r) => ROLE_LABEL[r]).join("・") || "なし"}（変更は管理者に依頼してください）
         </p>
         <Link href="/" className="mt-4 inline-block text-emerald-700 underline dark:text-emerald-400">
           ホームに戻る

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import PlanApproval from "@/components/piping/PlanApproval";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
-import { useMe } from "@/lib/auth";
 import { can } from "@/lib/roles";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
@@ -34,7 +33,7 @@ import PlanPreview from "@/components/piping/PlanPreview";
 import { manualStepLabel, needsDayParams, workTypeOf } from "@/lib/piping/workTypes";
 
 const volumeLabel = (p: SavedPlan) => (workTypeOf(p) === "flush" ? "末端部容量" : "抜取量");
-import { useDiagramInfo, useGraph, useLocalValue, usePipingStore } from "@/lib/piping/usePiping";
+import { useDiagramInfo, useGraph, useLocalValue, usePipingStore, useSiteRoles } from "@/lib/piping/usePiping";
 import { isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
 
 const EXEC_KEY = "piping.field.execId";
@@ -46,7 +45,7 @@ export default function FieldPage() {
   const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1500);
   // 取込・削除・周期の変更は作成する人（作業者）だけ。開始は最後まで承認されたチェックリストだけ
-  const canCreate = can(useMe()?.roles, "create");
+  const canCreate = can(useSiteRoles(), "create");
   const stages = useMemo(() => approvalStages(store?.rules), [store?.rules]);
   const [execId, selectExec] = useLocalValue(EXEC_KEY);
   const [view, setView] = useState<"diagram" | "table">("diagram");

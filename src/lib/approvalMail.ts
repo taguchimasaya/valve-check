@@ -1,5 +1,6 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { adminClient, isDisabled, rolesOf } from "./serverAuth";
+import { rolesAt } from "./roles";
 import { approvalRulesOf, approvalStages, approvalState, STAGE_LABEL, STAGE_ROLE, type ApprovalStage } from "./piping/approval";
 import type { SavedPlan } from "./piping/checklist";
 import type { PipingStore, StoreAction } from "./piping/store";
@@ -9,7 +10,7 @@ import type { PipingStore, StoreAction } from "./piping/store";
 // - Resend：RESEND_API_KEY（SMTP の設定が無いとき）
 // 送信元は MAIL_FROM（無ければ SMTP_USER）。どちらも無ければ送らない。
 // ⑤ 共通の「承認フローのメールを送る」がオンの拠点だけ送る。宛先は利用者ごとの通知先メール（user_metadata.notify_email）。
-// - 承認依頼・各段の承認：次の段の権限を持つ全員（管理者だけの人には送らない）
+// - 承認依頼・各段の承認：その拠点で次の段の権限を持つ全員（管理者だけの人には送らない）
 // - 差し戻し・最後の段の承認：作成者
 // 送れなくても操作は成功のまま（ログに残すだけ）。
 
@@ -116,7 +117,7 @@ export async function notifyApproval(opts: {
     // 次の段の権限を持つ人（作成者本人は承認できないので除く）
     const role = STAGE_ROLE[next];
     for (const u of users) {
-      if (!rolesOf(u).roles.includes(role) || u.id === plan.updatedById) continue;
+      if (!rolesAt(rolesOf(u), facility).includes(role) || u.id === plan.updatedById) continue;
       mails.push({
         to: notifyEmailOf(u)!,
         subject: `【バルブ点検】承認のお願い（${STAGE_LABEL[next]}）：${plan.name}`,

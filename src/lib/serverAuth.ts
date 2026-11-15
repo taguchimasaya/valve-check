@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
-import { can, deniedMessage, parseRoles, type Permission, type Role } from "./roles";
+import { can, deniedMessage, parseRoles, parseSiteRoles, rolesAt, siteAccess, type Permission, type Role, type SiteRoles } from "./roles";
 
 // API 側のログイン確認。端末から送られたトークンを Supabase で確かめ、
 // その利用者として DB に接続するクライアント（RLS で authenticated として扱われる）と、利用者の権限を返す。
@@ -9,10 +9,22 @@ export type AuthContext = {
   userId: string;
   name: string;
   loginId: string;
+  /** 全拠点を合わせた権限（拠点の区別が無い画面・API 用）。拠点ごとの判断は rolesAtSite() を使う */
   roles: Role[];
+  /** 拠点ごとの権限（未設定なら null：roles がすべての拠点に効く） */
+  siteRoles: SiteRoles | null;
   /** 環境変数 ADMIN_LOGIN_IDS で管理者に指定された利用者 */
   envAdmin: boolean;
 };
+
+/** ある拠点での権限 */
+export const rolesAtSite = (auth: Pick<AuthContext, "roles" | "siteRoles">, facility: string) => rolesAt(auth, facility);
+
+/** 拠点を見られるか（none なら 403 を返す）。view は表示だけ（どこかの拠点で制御室の人） */
+export function requireSite(auth: Pick<AuthContext, "roles" | "siteRoles">, facility: string): "full" | "view" | Response {
+  const a = siteAccess(auth, facility);
+  return a === "none" ? Response.json({ error: "この拠点を見る権限がありません" }, { status: 403 }) : a;
+}
 
 /** ログイン ID：メールアドレスの @ より前 */
 export const loginIdOf = (email: string | null | undefined) => (email ?? "").split("@")[0].toLowerCase();
@@ -31,12 +43,18 @@ export function envAdminIds(): Set<string> {
  * 利用者の権限：app_metadata.roles。未設定の利用者は作業者として扱う。
  * ADMIN_LOGIN_IDS に書かれた利用者は、保存値にかかわらず管理者（管理者が誰もいなくなるのを防ぐ）。
  */
-export function rolesOf(user: Pick<User, "email" | "app_metadata">): { roles: Role[]; envAdmin: boolean; stored: Role[] | null } {
+export function rolesOf(user: Pick<User, "email" | "app_metadata">): {
+  roles: Role[];
+  siteRoles: SiteRoles | null;
+  envAdmin: boolean;
+  stored: Role[] | null;
+} {
   const stored = parseRoles(user.app_metadata?.roles);
+  const siteRoles = parseSiteRoles(user.app_metadata?.siteRoles);
   const envAdmin = envAdminIds().has(loginIdOf(user.email));
-  const roles = [...(stored ?? ["worker"])] as Role[];
+  const roles = [...(stored ?? (siteRoles ? [] : ["worker"]))] as Role[];
   if (envAdmin && !roles.includes("admin")) roles.push("admin");
-  return { roles, envAdmin, stored };
+  return { roles, siteRoles, envAdmin, stored };
 }
 
 /** 無効化（Supabase Auth の利用停止 banned_until）中か */
@@ -62,8 +80,8 @@ export async function requireAuth(request: Request): Promise<AuthContext | Respo
   const { data, error } = await client.auth.getUser(token);
   if (error || !data.user) return Response.json({ error: "ログインの有効期限が切れました。もう一度ログインしてください" }, { status: 401 });
   if (isDisabled(data.user)) return Response.json({ error: "この利用者は無効になっています。管理者に連絡してください" }, { status: 401 });
-  const { roles, envAdmin } = rolesOf(data.user);
-  return { client, userId: data.user.id, name: displayNameOf(data.user), loginId: loginIdOf(data.user.email), roles, envAdmin };
+  const { roles, siteRoles, envAdmin } = rolesOf(data.user);
+  return { client, userId: data.user.id, name: displayNameOf(data.user), loginId: loginIdOf(data.user.email), roles, siteRoles, envAdmin };
 }
 
 /** ログインに加えて、いずれかの権限を持っているかを確かめる。足りなければ 403 */

@@ -1,5 +1,7 @@
 "use client";
 
+import { useMe } from "../auth";
+import { rolesAt, type Role } from "../roles";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getFacility } from "./facility";
 import { buildGraph, type Graph } from "./graph";
@@ -45,13 +47,25 @@ export function useFacilityId(): string {
   );
 }
 
-export type FacilityItem = { id: string; name: string; activeVersionNo: number | null };
+export type FacilityItem = {
+  id: string;
+  name: string;
+  activeVersionNo: number | null;
+  /** 表示だけの拠点（どこかの拠点で制御室の人が見る、権限の無い拠点） */
+  viewOnly?: boolean;
+};
 let facilitiesCache: Promise<FacilityItem[]> | null = null;
 
-/** 拠点の一覧（DBの施設。読めなければ仮想施設だけ） */
-export function useFacilities(): FacilityItem[] | null {
+/** 拠点の一覧を読み直す（ログアウト・利用者の切替で、前の人の一覧を使わないように） */
+export function resetFacilities() {
+  facilitiesCache = null;
+}
+
+/** 拠点の一覧（DBの施設のうち、この利用者が見られるもの。読めなければ仮想施設だけ） */
+export function useFacilities(enabled = true): FacilityItem[] | null {
   const [list, setList] = useState<FacilityItem[] | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     facilitiesCache ??= authFetch("/api/piping/facilities", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { facilities: [] }))
       .then((j: { facilities: FacilityItem[] }) => j.facilities)
@@ -63,7 +77,29 @@ export function useFacilities(): FacilityItem[] | null {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [enabled]);
+  return list;
+}
+
+/** 選択中の拠点での権限（読み込み中は undefined）。拠点ごとの権限が未設定の人は全拠点共通の権限 */
+export function useSiteRoles(): Role[] | undefined {
+  const me = useMe();
+  const facility = useFacilityId();
+  if (me === undefined) return undefined;
+  return me ? rolesAt(me, facility) : [];
+}
+
+/**
+ * 選択中の拠点が見られない拠点なら、見られる最初の拠点に切り替える（拠点の選択は端末ごとに記憶しているため）。
+ * 見られる拠点が無ければ何もしない（各画面が 403 の案内を出す）。
+ */
+export function useEnsureFacility(enabled: boolean) {
+  const list = useFacilities(enabled);
+  const current = useFacilityId();
+  useEffect(() => {
+    if (!enabled || !list?.length || list.some((f) => f.id === current)) return;
+    selectFacility(list[0].id);
+  }, [enabled, list, current]);
   return list;
 }
 

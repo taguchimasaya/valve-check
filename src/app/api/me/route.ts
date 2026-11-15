@@ -21,5 +21,12 @@ export async function GET(request: Request) {
       }
     }
   }
-  return Response.json({ userId: auth.userId, name: auth.name, loginId: auth.loginId, roles: auth.roles, envAdmin: auth.envAdmin });
+  return Response.json({
+    userId: auth.userId,
+    name: auth.name,
+    loginId: auth.loginId,
+    roles: auth.roles,
+    siteRoles: auth.siteRoles,
+    envAdmin: auth.envAdmin,
+  });
 }

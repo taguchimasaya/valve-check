@@ -49,7 +49,7 @@ import {
   rowGlyph,
   type SavedPlan,
 } from "@/lib/piping/checklist";
-import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
+import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore, useSiteRoles } from "@/lib/piping/usePiping";
 import { buildFireTestChecklist, FIRE_TEST_STEPS, fireTestTanks } from "@/lib/piping/fireTest";
 import {
   blockMethodOf,
@@ -86,9 +86,11 @@ const yardOf = (tank: string) => tank.slice(2, 3);
 export default function PlannerPage() {
   // ⑤ ルールへのリンクは管理者だけに出す
   const me = useMe();
-  const isAdmin = can(me?.roles, "admin");
+  // 権限は選択中の拠点での権限（拠点ごとに担当者が違う）
+  const siteRoles = useSiteRoles();
+  const isAdmin = can(siteRoles, "admin");
   // ① の作成は作業者（現場担当者）だけ。チームリーダー・G長・制御室は承認の画面になる
-  const canCreate = can(me?.roles, "create");
+  const canCreate = can(siteRoles, "create");
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act } = usePipingStore(0);
@@ -758,7 +760,7 @@ export default function PlannerPage() {
 
 
   // 作成しない人（チームリーダー・G長・制御室）：承認の画面だけ
-  if (me && !canCreate) {
+  if (me && siteRoles && !canCreate) {
     return (
       <main className="min-h-screen bg-zinc-50 px-4 py-6 dark:bg-black">
         <div className="mx-auto max-w-4xl">
@@ -1569,7 +1571,7 @@ export default function PlannerPage() {
           </aside>
         </div>
       </div>
-      {isApprover(me?.roles) && (
+      {isApprover(siteRoles) && (
         <div className="mx-auto mt-6 max-w-[1800px]">
           <ApprovalBoard graph={g} store={store} base={baseline} act={act} />
         </div>

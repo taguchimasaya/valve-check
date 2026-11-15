@@ -1,11 +1,13 @@
 import type { User } from "@supabase/supabase-js";
 import { adminClient, displayNameOf, envAdminIds, isDisabled, loginIdOf, requirePerm, rolesOf } from "@/lib/serverAuth";
-import { parseRoles, type Role } from "@/lib/roles";
+import { parseRoles, parseSiteRoles, unionRoles, type Role, type SiteRoles } from "@/lib/roles";
 import { mailMethod, notifyEmailOf, sendMails } from "@/lib/approvalMail";
 
 // ユーザー管理 API（管理者のみ）。利用者の作成・権限変更・無効化は service role キーで Supabase Auth を操作する。
 // GET                                        … 利用者の一覧
-// POST {action:"create", loginId, name, password, roles} … 利用者を作成（メールの確認なしですぐ使える）
+// POST {action:"create", loginId, name, password, siteRoles, admin, roles} … 利用者を作成（メールの確認なしですぐ使える）
+//   権限は拠点ごと（siteRoles = { 拠点ID: 権限[] }）＋全拠点共通の管理者（admin）。
+//   siteRoles を null にすると、roles が全拠点に効く（拠点ごとの権限を付ける前の利用者と同じ扱い）
 // POST {action:"update", id, name?, roles?, notifyEmail?} … 名前・権限・通知先メール（承認フローのメールの宛先）の変更
 // POST {action:"password", id, password}     … パスワードの再設定
 // POST {action:"disable" | "enable", id}     … 無効化（ログインできなくする）・有効に戻す
@@ -22,7 +24,10 @@ export type AdminUser = {
   name: string;
   /** 承認フローのメールの宛先（ログイン用のアドレスとは別。空なら送らない） */
   notifyEmail: string;
+  /** 全拠点を合わせた権限 */
   roles: Role[];
+  /** 拠点ごとの権限（null なら roles が全拠点に効く） */
+  siteRoles: SiteRoles | null;
   /** 権限が未設定（作業者として扱っている） */
   rolesUnset: boolean;
   envAdmin: boolean;
@@ -34,7 +39,7 @@ export type AdminUser = {
 const fail = (message: string, status = 400) => Response.json({ error: message }, { status });
 
 function toAdminUser(u: User): AdminUser {
-  const { roles, envAdmin, stored } = rolesOf(u);
+  const { roles, siteRoles, envAdmin, stored } = rolesOf(u);
   return {
     id: u.id,
     loginId: loginIdOf(u.email),
@@ -42,7 +47,8 @@ function toAdminUser(u: User): AdminUser {
     name: displayNameOf(u),
     notifyEmail: notifyEmailOf(u) ?? "",
     roles,
-    rolesUnset: stored === null,
+    siteRoles,
+    rolesUnset: stored === null && !siteRoles,
     envAdmin,
     disabled: isDisabled(u),
     createdAt: u.created_at,
@@ -80,9 +86,25 @@ export async function GET(request: Request) {
   }
 }
 
+/** 権限の指定：拠点ごとの権限（siteRoles）＋管理者（admin）。siteRoles が null なら roles を全拠点に */
+type AccessInput = { roles?: Role[]; siteRoles?: SiteRoles | null; admin?: boolean };
+
+/** 保存する app_metadata（roles には全拠点を合わせた権限も入れる：既存系の画面と DB 側の RLS 用） */
+function accessOf(a: AccessInput): { roles: Role[]; siteRoles: SiteRoles | null } | string {
+  const legacy = parseRoles(a.roles) ?? [];
+  const admin = a.admin ?? legacy.includes("admin");
+  if (a.siteRoles) {
+    const siteRoles = parseSiteRoles(a.siteRoles) ?? {};
+    const roles = unionRoles(siteRoles, admin);
+    return roles.length ? { roles, siteRoles } : "権限を1つ以上選んでください（管理者でなければ、どこかの拠点に権限が必要です）";
+  }
+  const roles = [...legacy.filter((r) => r !== "admin"), ...(admin ? (["admin"] as Role[]) : [])];
+  return roles.length ? { roles, siteRoles: null } : "権限を1つ以上選んでください";
+}
+
 type Action =
-  | { action: "create"; loginId: string; name?: string; password: string; roles: Role[]; notifyEmail?: string }
-  | { action: "update"; id: string; name?: string; roles?: Role[]; notifyEmail?: string }
+  | ({ action: "create"; loginId: string; name?: string; password: string; notifyEmail?: string } & AccessInput)
+  | ({ action: "update"; id: string; name?: string; notifyEmail?: string } & AccessInput)
   | { action: "password"; id: string; password: string }
   | { action: "disable" | "enable"; id: string }
   | { action: "testMail"; id: string };
@@ -105,8 +127,8 @@ export async function POST(request: Request) {
         if (!/^[a-z0-9._-]{2,64}$/.test(loginId)) return fail("ログインIDは半角の英小文字・数字・「. _ -」で2〜64文字にしてください");
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail("メールアドレスの形式が正しくありません");
         if (String(a.password ?? "").length < 8) return fail("パスワードは8文字以上にしてください");
-        const roles = parseRoles(a.roles);
-        if (!roles?.length) return fail("権限を1つ以上選んでください");
+        const access = accessOf(a);
+        if (typeof access === "string") return fail(access);
         // ログイン画面は @ より前で探すため、同じログイン ID の利用者は作らない
         const users = await listAll(admin);
         if (users.some((u) => loginIdOf(u.email) === loginId)) return fail(`ログインID「${loginId}」はすでに使われています`);
@@ -117,7 +139,7 @@ export async function POST(request: Request) {
           email,
           password: a.password,
           email_confirm: true,
-          app_metadata: { roles },
+          app_metadata: access,
           user_metadata: { ...(name ? { name } : {}), ...(notify ? { notify_email: notify } : {}) },
         });
         if (error) return fail(error.message);
@@ -127,16 +149,17 @@ export async function POST(request: Request) {
         const { data: cur, error: e1 } = await admin.auth.admin.getUserById(a.id);
         if (e1 || !cur.user) return fail("利用者が見つかりません", 404);
         const patch: { app_metadata?: object; user_metadata?: object } = {};
-        if (a.roles !== undefined) {
-          const roles = parseRoles(a.roles);
-          if (!roles?.length) return fail("権限を1つ以上選んでください");
+        if (a.roles !== undefined || a.siteRoles !== undefined || a.admin !== undefined) {
+          const access = accessOf(a);
+          if (typeof access === "string") return fail(access);
+          const roles = access.roles;
           if (a.id === auth.userId && !roles.includes("admin") && !auth.envAdmin && !otherAdminExists(await listAll(admin), auth.userId)) {
             return fail("ほかに管理者がいないため、自分の管理者権限は外せません");
           }
           if (envAdminIds().has(loginIdOf(cur.user.email)) && !roles.includes("admin")) {
             return fail("この利用者は環境変数 ADMIN_LOGIN_IDS で管理者に指定されているため、管理者権限は外せません");
           }
-          patch.app_metadata = { roles };
+          patch.app_metadata = access;
         }
         if (a.name !== undefined || a.notifyEmail !== undefined) {
           const notify = a.notifyEmail === undefined ? notifyEmailOf(cur.user) ?? "" : String(a.notifyEmail).trim();

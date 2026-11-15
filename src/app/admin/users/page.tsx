@@ -4,10 +4,82 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import UserBadge from "@/components/UserBadge";
 import { authFetch, refreshMe } from "@/lib/auth";
-import { ROLE_DESC, ROLE_LABEL, ROLES, type Role } from "@/lib/roles";
+import { ROLE_DESC, ROLE_LABEL, ROLES, SITE_ROLES, type Role, type SiteRoles } from "@/lib/roles";
+import { useFacilities, type FacilityItem } from "@/lib/piping/usePiping";
 import type { AdminUser } from "@/app/api/admin/users/route";
 
 // ユーザー管理（管理者のみ）。利用者の作成・権限の変更・無効化は /api/admin/users（service role キー）で行う。
+// 権限は拠点ごと（作業者・チームリーダー・G長・制御室）。管理者だけは全拠点共通。
+
+/** 権限の編集値：管理者（全拠点）＋拠点ごとの権限。siteRoles が null の人は roles が全拠点に効く（拠点ごとに分ける前） */
+type Access = { admin: boolean; siteRoles: SiteRoles | null; roles: Role[] };
+
+const accessOfUser = (u: AdminUser): Access => ({
+  admin: u.roles.includes("admin"),
+  siteRoles: u.siteRoles,
+  roles: u.siteRoles ? [] : u.roles.filter((r) => r !== "admin"),
+});
+const sameAccess = (a: Access, b: Access) => JSON.stringify(a) === JSON.stringify(b);
+const hasAnyRole = (a: Access) => a.admin || (a.siteRoles ? Object.values(a.siteRoles).some((r) => r.length) : a.roles.length > 0);
+
+function AccessEditor({
+  value,
+  onChange,
+  facilities,
+  lockAdmin,
+  disabled,
+}: {
+  value: Access;
+  onChange: (v: Access) => void;
+  facilities: FacilityItem[];
+  lockAdmin?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={`space-y-1 ${disabled ? "pointer-events-none" : ""}`}>
+      {lockAdmin ? (
+        <span title="環境変数 ADMIN_LOGIN_IDS で指定" className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+          ✔ 管理者（全拠点・固定）
+        </span>
+      ) : (
+        <label title={ROLE_DESC.admin} className="flex items-center gap-1 text-sm">
+          <input type="checkbox" checked={value.admin} onChange={(e) => onChange({ ...value, admin: e.target.checked })} />
+          管理者（全拠点）
+        </label>
+      )}
+      {value.siteRoles ? (
+        <table className="min-w-[420px] text-xs">
+          <tbody>
+            {facilities.map((f) => (
+              <tr key={f.id} className="align-top">
+                <td className="max-w-[140px] pr-2 pt-0.5 text-zinc-500">{f.name}</td>
+                <td className="whitespace-nowrap [&>div]:flex-nowrap">
+                  <RoleChecks
+                    options={SITE_ROLES}
+                    value={value.siteRoles?.[f.id] ?? []}
+                    onChange={(r) => onChange({ ...value, siteRoles: { ...(value.siteRoles ?? {}), [f.id]: r } })}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div>
+          <span className="text-[11px] text-zinc-500">全拠点で共通：</span>
+          <RoleChecks options={SITE_ROLES} value={value.roles} onChange={(r) => onChange({ ...value, roles: r })} />
+          <button
+            type="button"
+            onClick={() => onChange({ ...value, siteRoles: Object.fromEntries(facilities.map((f) => [f.id, value.roles])), roles: [] })}
+            className="mt-0.5 text-[11px] text-sky-700 underline"
+          >
+            拠点ごとに分ける
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 async function api<T>(init?: RequestInit): Promise<T> {
   const res = await authFetch("/api/admin/users", { cache: "no-store", ...init });
@@ -22,10 +94,20 @@ const post = <T,>(body: object) =>
 const fmt = (at: string | null) =>
   at ? new Date(at).toLocaleString("ja-JP", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
-function RoleChecks({ value, onChange, lock }: { value: Role[]; onChange: (v: Role[]) => void; lock?: Role[] }) {
+function RoleChecks({
+  value,
+  onChange,
+  lock,
+  options = ROLES,
+}: {
+  value: Role[];
+  onChange: (v: Role[]) => void;
+  lock?: Role[];
+  options?: readonly Role[];
+}) {
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
-      {ROLES.map((r) => {
+      {options.map((r) => {
         // ADMIN_LOGIN_IDS で決まっている権限は変えられないので、チェックボックスではなく文字で出す
         if (lock?.includes(r)) {
           return (
@@ -58,15 +140,12 @@ export default function UsersPage() {
   const [busy, setBusy] = useState(false);
   const [showDisabled, setShowDisabled] = useState(true);
   // 権限・名前の編集中の値（利用者ID → 値）
-  const [edits, setEdits] = useState<Record<string, { roles: Role[]; name: string; notifyEmail: string }>>({});
+  const [edits, setEdits] = useState<Record<string, { access: Access; name: string; notifyEmail: string }>>({});
+  // 拠点の一覧（管理者はすべての拠点が見える）
+  const facilities = useFacilities() ?? [];
   // 新しい利用者
-  const [form, setForm] = useState<{ loginId: string; name: string; password: string; roles: Role[]; notifyEmail: string }>({
-    loginId: "",
-    name: "",
-    password: "",
-    roles: ["worker"],
-    notifyEmail: "",
-  });
+  const emptyForm = { loginId: "", name: "", password: "", access: { admin: false, siteRoles: {}, roles: [] } as Access, notifyEmail: "" };
+  const [form, setForm] = useState(emptyForm);
 
   const load = useCallback(async () => {
     try {
@@ -106,8 +185,9 @@ export default function UsersPage() {
 
   const create = () =>
     run(async () => {
-      await post({ action: "create", ...form });
-      setForm({ loginId: "", name: "", password: "", roles: ["worker"], notifyEmail: "" });
+      const { access, ...rest } = form;
+      await post({ action: "create", ...rest, ...access });
+      setForm(emptyForm);
     }, `利用者「${form.loginId}」を作成しました。ログインIDとパスワードを本人に伝えてください。`);
 
   return (
@@ -126,7 +206,7 @@ export default function UsersPage() {
         </div>
         <h1 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">👥 ユーザー管理</h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          利用者の作成・権限の変更・無効化を行います。権限は複数付けられます（例：承認者＋制御室）。権限の変更は次に画面を開いたときから反映されます。
+          利用者の作成・権限の変更・無効化を行います。権限は拠点ごとに付けます（拠点ごとに担当者が違うため）。1つの拠点に複数の権限も付けられます（例：チームリーダー＋制御室）。管理者は全拠点共通です。どこかの拠点で制御室の人は、ほかの拠点も表示だけできます。権限の変更は次に画面を開いたときから反映されます。
         </p>
         <ul className="mt-2 grid gap-1 text-xs text-zinc-600 sm:grid-cols-2 dark:text-zinc-400">
           {ROLES.map((r) => (
@@ -182,7 +262,7 @@ export default function UsersPage() {
             </label>
             <button
               onClick={create}
-              disabled={busy || !form.loginId.trim() || form.password.length < 8 || form.roles.length === 0}
+              disabled={busy || !form.loginId.trim() || form.password.length < 8 || !hasAnyRole(form.access)}
               className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
             >
               作成する
@@ -190,8 +270,8 @@ export default function UsersPage() {
           </div>
           <div className="mt-2 grid gap-3 md:grid-cols-[1fr_1fr] md:items-end">
             <div>
-              <span className="text-xs text-zinc-500">権限</span>
-              <RoleChecks value={form.roles} onChange={(roles) => setForm({ ...form, roles })} />
+              <span className="text-xs text-zinc-500">権限（拠点ごと）</span>
+              <AccessEditor value={form.access} onChange={(access) => setForm({ ...form, access })} facilities={facilities} />
             </div>
             <label className="text-sm">
               <span className="text-xs text-zinc-500">通知先メール（承認依頼などのメールの宛先。空欄なら送らない）</span>
@@ -218,7 +298,7 @@ export default function UsersPage() {
             <p className="mt-2 text-sm text-zinc-500">読み込み中…</p>
           ) : (
             <div className="mt-2 overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
+              <table className="w-full min-w-[1100px] text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
                     <th className="py-1.5 pr-2">ログインID</th>
@@ -232,14 +312,15 @@ export default function UsersPage() {
                 <tbody>
                   {shown.map((u) => {
                     const edit = edits[u.id];
-                    const roles = edit?.roles ?? u.roles;
+                    const access = edit?.access ?? accessOfUser(u);
                     const name = edit?.name ?? u.name;
                     const notifyEmail = edit?.notifyEmail ?? u.notifyEmail;
                     const dirty =
-                      u.rolesUnset || (!!edit && (edit.name !== u.name || edit.roles.join() !== u.roles.join() || edit.notifyEmail !== u.notifyEmail));
+                      u.rolesUnset ||
+                      (!!edit && (edit.name !== u.name || !sameAccess(edit.access, accessOfUser(u)) || edit.notifyEmail !== u.notifyEmail));
                     const isMe = u.id === meId;
-                    const setEdit = (patch: Partial<{ roles: Role[]; name: string; notifyEmail: string }>) =>
-                      setEdits((m) => ({ ...m, [u.id]: { roles, name, notifyEmail, ...patch } }));
+                    const setEdit = (patch: Partial<{ access: Access; name: string; notifyEmail: string }>) =>
+                      setEdits((m) => ({ ...m, [u.id]: { access, name, notifyEmail, ...patch } }));
                     return (
                       <tr key={u.id} className={`border-b border-zinc-100 align-top dark:border-zinc-900 ${u.disabled ? "opacity-50" : ""}`}>
                         <td className="py-2 pr-2">
@@ -265,9 +346,15 @@ export default function UsersPage() {
                           />
                         </td>
                         <td className="py-2 pr-2">
-                          <RoleChecks value={roles} onChange={(r) => setEdit({ roles: r })} lock={u.envAdmin ? ["admin"] : undefined} />
-                          {u.rolesUnset && <span className="text-[10px] text-amber-700">権限が未設定のため作業者として扱っています</span>}
-                          {u.envAdmin && <span className="block text-[10px] text-zinc-500">ADMIN_LOGIN_IDS で管理者に指定</span>}
+                          <AccessEditor
+                            value={access}
+                            onChange={(a) => setEdit({ access: a })}
+                            facilities={facilities}
+                            lockAdmin={u.envAdmin}
+                            disabled={u.disabled}
+                          />
+                          {u.rolesUnset && <span className="text-[10px] text-amber-700">権限が未設定のため、全拠点で作業者として扱っています</span>}
+                          {!u.siteRoles && !u.rolesUnset && <span className="block text-[10px] text-amber-700">拠点ごとに分けるまでは、全拠点で同じ権限です</span>}
                         </td>
                         <td className="py-2 pr-2 text-xs text-zinc-500">{fmt(u.lastSignInAt)}</td>
                         <td className="py-2 pr-2">
@@ -280,10 +367,10 @@ export default function UsersPage() {
                         <td className="whitespace-nowrap py-1.5 text-right">
                           {!u.disabled && (
                             <button
-                              disabled={busy || !dirty || roles.length === 0}
+                              disabled={busy || !dirty || !hasAnyRole(access)}
                               onClick={() =>
                                 run(async () => {
-                                  await post({ action: "update", id: u.id, name, roles, notifyEmail });
+                                  await post({ action: "update", id: u.id, name, notifyEmail, ...access });
                                   if (isMe) refreshMe();
                                 }, `「${u.loginId}」を保存しました`)
                               }

@@ -22,6 +22,7 @@ export default function FacilitySwitcher() {
           <option key={f.id} value={f.id}>
             {f.name}
             {f.activeVersionNo ? `（第${f.activeVersionNo}版）` : "（系統図なし）"}
+            {f.viewOnly ? "【表示のみ】" : ""}
           </option>
         ))}
       </select>

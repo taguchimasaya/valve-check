@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import PlanApproval from "@/components/piping/PlanApproval";
 import PlanPreview from "@/components/piping/PlanPreview";
 import { useMe } from "@/lib/auth";
+import { useSiteRoles } from "@/lib/piping/usePiping";
 import type { Graph } from "@/lib/piping/graph";
 import type { SavedPlan } from "@/lib/piping/checklist";
 import type { PipingStore, StoreAction } from "@/lib/piping/store";
@@ -26,6 +27,8 @@ export default function ApprovalBoard({
   act: (a: StoreAction) => Promise<unknown>;
 }) {
   const me = useMe();
+  // 承認できるかは、選択中の拠点での権限で決める
+  const roles = useSiteRoles();
   const [tab, setTab] = useState<"mine" | "all">("mine");
   const [preview, setPreview] = useState<SavedPlan | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -36,7 +39,7 @@ export default function ApprovalBoard({
   const canApproveNow = (p: SavedPlan) => {
     if (!me || p.rejection || isCreator(p, me.userId, me.name)) return false;
     const { next } = approvalState(p, stages);
-    return !!next && canApproveStage(me.roles, next);
+    return !!next && canApproveStage(roles, next);
   };
   const waiting = plans.filter(canApproveNow);
   const shown = tab === "mine" ? waiting : plans;
@@ -122,7 +125,7 @@ export default function ApprovalBoard({
                   承認する
                 </button>
               )}
-              {isApprover(me?.roles) && !p.rejection && me && !isCreator(p, me.userId, me.name) && (
+              {isApprover(roles) && !p.rejection && me && !isCreator(p, me.userId, me.name) && (
                 <button
                   onClick={() => reject(p)}
                   className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
@@ -146,7 +149,7 @@ export default function ApprovalBoard({
           })()}
           onStart={canApproveNow(preview) ? () => approve(preview) : undefined}
           deleteLabel="差し戻す"
-          onDelete={isApprover(me?.roles) && !preview.rejection && me && !isCreator(preview, me.userId, me.name) ? () => reject(preview) : undefined}
+          onDelete={isApprover(roles) && !preview.rejection && me && !isCreator(preview, me.userId, me.name) ? () => reject(preview) : undefined}
         />
       )}
     </section>

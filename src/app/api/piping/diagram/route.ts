@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/serverAuth";
+import { requireAuth, requireSite } from "@/lib/serverAuth";
 import { getFacility } from "@/lib/piping/facility";
 import {
   rowsToFacility,
@@ -34,6 +34,8 @@ export async function GET(request: Request) {
   if (auth instanceof Response) return auth;
   const params = new URL(request.url).searchParams;
   const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
+  const site = requireSite(auth, facilityId);
+  if (site instanceof Response) return site;
   // version を指定すると、その版（下書き・保管を含む）を返す（④ 系統図データ管理のプレビュー用）
   const versionParam = params.get("version");
   if (process.env.PIPING_DIAGRAM === "builtin") {
