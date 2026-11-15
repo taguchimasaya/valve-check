@@ -101,7 +101,7 @@ export async function GET(request: Request) {
 }
 
 type Action =
-  | { action: "import"; data: DiagramData; createdBy?: string }
+  | { action: "import"; data: DiagramData; createdBy?: string; /** 取込の方法：Excel（既定）か、系統図エディタでの編集 */ method?: "excel" | "manual" }
   | { action: "activate"; versionId: string }
   | { action: "delete"; versionId: string };
 
@@ -161,7 +161,7 @@ export async function POST(request: Request) {
         await insertChunks(c, "piping_node_symbols", d.symbols.map((s) => ({ version_id: versionId, node_code: s.node_code, sheet_id: sheetId(s.sheet_no), x: s.x, y: s.y, rotation: s.rotation ?? 0, show_label: s.show_label ?? true })));
         await insertChunks(c, "piping_pipe_geometries", d.geometries.map((g) => ({ version_id: versionId, pipe_code: g.pipe_code, sheet_id: sheetId(g.sheet_no), points: g.points })));
         await insertChunks(c, "piping_validation_issues", issues.map((i) => ({ ...i, version_id: versionId })));
-        await insertChunks(c, "piping_import_batches", [{ version_id: versionId, method: "excel", summary: { nodes: d.nodes.length, pipes: d.pipes.length, sheets: d.sheets.length, warnings: issues.length }, imported_by: a.createdBy ?? null }]);
+        await insertChunks(c, "piping_import_batches", [{ version_id: versionId, method: a.method === "manual" ? "manual" : "excel", summary: { nodes: d.nodes.length, pipes: d.pipes.length, sheets: d.sheets.length, warnings: issues.length }, imported_by: a.createdBy ?? null }]);
       } catch (e) {
         // 途中で失敗したら、作りかけの版を消す（下の行は版の削除で一緒に消える）
         await c.from("piping_diagram_versions").delete().eq("id", versionId);

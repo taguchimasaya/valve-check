@@ -9,7 +9,10 @@ import {
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
   type Ref,
+  type RefObject,
 } from "react";
 import { pipePoints, type Graph } from "@/lib/piping/graph";
 import { FLUID_LABEL, type Fluid, type PNode, type ValveState } from "@/lib/piping/types";
@@ -104,8 +107,42 @@ export type DiagramHandle = {
   fitNodes: (ids: string[]) => void;
 };
 
+/** 系統図エディタ用：図面上で機器・配管を選び、ドラッグで位置を変える */
+export type DiagramEdit = {
+  selected: { type: "node" | "pipe"; id: string } | null;
+  /** 機器・配管をクリックしたとき（何も無い所なら null） */
+  onSelect: (sel: { type: "node" | "pipe"; id: string } | null) => void;
+  /** 配管をクリックした位置（系統図の座標）。指定すると配管のクリックは onSelect でなくこちらに来る（弁の挿入など） */
+  onPipePoint?: (pipeId: string, x: number, y: number) => void;
+  /** ドラッグ中の機器の位置（系統図の座標） */
+  onNodeMove: (id: string, x: number, y: number) => void;
+  /** ドラッグ中の経由点の位置 */
+  onViaMove: (pipeId: string, index: number, x: number, y: number) => void;
+  /** ドラッグを終えたとき（元に戻すための区切り） */
+  onDragEnd: () => void;
+  /** 選択中の配管をダブルクリック：その位置に経由点を足す */
+  onViaAdd?: (pipeId: string, x: number, y: number) => void;
+  /** 経由点をダブルクリック：その経由点を消す */
+  onViaRemove?: (pipeId: string, index: number) => void;
+  /** 入力チェックで問題のある機器・配管（赤い印） */
+  problemIds?: Set<string>;
+  /** 機器をクリックしたとき（配管を引く・枝を出すなど）。指定すると機器のクリックは onSelect でなくこちらに来る */
+  onNodePick?: (id: string) => void;
+  /** 図面の何も無い所をクリックした位置（機器を置く・配管を引くなど）。指定すると onSelect(null) の代わりに来る */
+  onCanvasPoint?: (x: number, y: number) => void;
+  /** 配管を引いている途中：この点からカーソルまで仮の線を描く */
+  rubberFrom?: [number, number] | null;
+  /** 区画枠の編集（指定したときだけ枠をつかめる）：枠の線・名前をドラッグで移動、右下の角で大きさを変える */
+  areas?: {
+    selected: string | null;
+    onSelect: (name: string) => void;
+    onChange: (name: string, box: { x: number; y: number; w: number; h: number }) => void;
+  };
+};
+
 type Props = {
   ref?: Ref<DiagramHandle>;
+  edit?: DiagramEdit;
   graph: Graph;
   valveState: Record<string, ValveState>;
   layers?: PipeLayer[];
@@ -151,6 +188,7 @@ function pts(points: [number, number][]) {
 
 export default function PipingDiagram({
   ref,
+  edit,
   graph,
   valveState,
   layers = [],
@@ -367,6 +405,8 @@ export default function PipingDiagram({
     let suppressClick = false;
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
+      // エディタの機器・経由点のつまみはドラッグで位置を変えるため、図面のスクロールはしない
+      if ((e.target as Element | null)?.closest?.("[data-edit-handle]")) return;
       drag = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false };
       e.preventDefault(); // ドラッグ中の文字選択を防ぐ
     };
@@ -424,6 +464,8 @@ export default function PipingDiagram({
       el.removeEventListener("click", onClickCapture, true);
     };
   }, []);
+
+  const svgRef = useRef<SVGSVGElement>(null);
 
   function renderNode(n: PNode) {
     const o = orient.get(n.id);
@@ -810,6 +852,9 @@ export default function PipingDiagram({
             );
           })}
 
+          {/* エディタ：配管・機器のつまみ、選択中の表示、入力チェックの印 */}
+          {edit && <EditLayer ed={edit} graph={graph} pipeGeom={pipeGeom} svgRef={svgRef} />}
+
           {/* 済みマークのチェック */}
           {Object.entries(marks).map(([id, mark]) => {
             if (mark !== "done" && mark !== "confirmed") return null;
@@ -883,9 +928,21 @@ export default function PipingDiagram({
       >
         {mounted && (
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${f.width} ${f.height}`}
           style={{ width: `${zoom * 100}%`, minWidth: zoom * 1100 }}
           className="block select-none"
+          onClick={
+            edit
+              ? (e) => {
+                  const m = svgRef.current?.getScreenCTM();
+                  if (edit.onCanvasPoint && m) {
+                    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+                    edit.onCanvasPoint(p.x, p.y);
+                  } else edit.onSelect(null);
+                }
+              : undefined
+          }
         >
           {body}
         </svg>
@@ -893,6 +950,254 @@ export default function PipingDiagram({
       </div>
     </div>
   );
+}
+
+/** エディタ：配管・機器のつまみ、選択中の表示、入力チェックの印（機器・経由点のドラッグ） */
+function EditLayer({
+  ed,
+  graph,
+  pipeGeom,
+  svgRef,
+}: {
+  ed: DiagramEdit;
+  graph: Graph;
+  pipeGeom: Map<string, [number, number][]>;
+  svgRef: RefObject<SVGSVGElement | null>;
+}) {
+  const f = graph.facility;
+  // 配管を引いている途中の仮の線（カーソルの位置）
+  const [cursor, setCursor] = useState<[number, number] | null>(null);
+  const rubber = ed.rubberFrom ?? null;
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !rubber) return;
+    const onMove = (e: PointerEvent) => {
+      const m = svg.getScreenCTM();
+      if (!m) return;
+      const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+      setCursor([p.x, p.y]);
+    };
+    svg.addEventListener("pointermove", onMove);
+    return () => svg.removeEventListener("pointermove", onMove);
+  }, [svgRef, rubber]);
+  const dragRef = useRef<{
+    kind: "node" | "via" | "area" | "areaResize";
+    id: string;
+    index: number;
+    x0: number;
+    y0: number;
+    moved: boolean;
+    /** 区画枠：つかんだ位置（系統図の座標）と元の枠 */
+    p0?: [number, number];
+    box0?: { x: number; y: number; w: number; h: number };
+  } | null>(null);
+
+  /** 画面上の位置 → 系統図の座標 */
+  function toDiagram(clientX: number, clientY: number): [number, number] | null {
+    const svg = svgRef.current;
+    const m = svg?.getScreenCTM();
+    if (!svg || !m) return null;
+    const p = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+    return [p.x, p.y];
+  }
+
+    const sel = ed.selected;
+    const down = (e: ReactPointerEvent, kind: "node" | "via" | "area" | "areaResize", id: string, index = 0) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const a = kind === "area" || kind === "areaResize" ? f.areas.find((x) => x.label === id) : undefined;
+      const p0 = toDiagram(e.clientX, e.clientY) ?? undefined;
+      dragRef.current = { kind, id, index, x0: e.clientX, y0: e.clientY, moved: false, p0, box0: a ? { x: a.x, y: a.y, w: a.w, h: a.h } : undefined };
+    };
+    const move = (e: ReactPointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 3) return;
+      d.moved = true;
+      const p = toDiagram(e.clientX, e.clientY);
+      if (!p) return;
+      if (d.kind === "node") ed.onNodeMove(d.id, p[0], p[1]);
+      else if (d.kind === "via") ed.onViaMove(d.id, d.index, p[0], p[1]);
+      else if (d.box0 && d.p0) {
+        const [dx, dy] = [p[0] - d.p0[0], p[1] - d.p0[1]];
+        const b = d.box0;
+        ed.areas?.onChange(
+          d.id,
+          d.kind === "area" ? { ...b, x: b.x + dx, y: b.y + dy } : { ...b, w: Math.max(60, b.w + dx), h: Math.max(40, b.h + dy) }
+        );
+      }
+    };
+    const up = () => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) return;
+      if (d.moved) ed.onDragEnd();
+      else if (d.kind === "area" || d.kind === "areaResize") ed.areas?.onSelect(d.id);
+      else if (d.kind === "node") {
+        if (ed.onNodePick) ed.onNodePick(d.id);
+        else ed.onSelect({ type: "node", id: d.id });
+      }
+    };
+    const stop = (e: ReactMouseEvent) => e.stopPropagation();
+    const selPipe = sel?.type === "pipe" ? graph.pipeById.get(sel.id) : undefined;
+    const selNode = sel?.type === "node" ? graph.nodeById.get(sel.id) : undefined;
+    const handleR = (n: PNode) => (n.kind === "tank" ? (n.recovery || n.small ? 28 : 52) : n.kind === "pump" || n.kind === "transferPump" ? 17 : n.kind === "filter" ? 20 : 11);
+    return (
+      <g>
+        {/* 配管を引いている途中の仮の線 */}
+        {rubber && cursor && (
+          <line x1={rubber[0]} y1={rubber[1]} x2={cursor[0]} y2={cursor[1]} stroke="#0891b2" strokeWidth={3} strokeDasharray="8 5" pointerEvents="none" />
+        )}
+        {rubber && <circle cx={rubber[0]} cy={rubber[1]} r={6} fill="#0891b2" pointerEvents="none" />}
+        {/* 区画枠のつまみ（枠の線・名前で移動、右下の角で大きさ） */}
+        {ed.areas &&
+          f.areas.map((a) => {
+            const on = ed.areas!.selected === a.label;
+            const grab = { onPointerMove: move, onPointerUp: up, onPointerCancel: up, onClick: stop };
+            return (
+              <g key={`area-${a.label}`}>
+                <rect
+                  data-edit-handle=""
+                  x={a.x}
+                  y={a.y}
+                  width={a.w}
+                  height={a.h}
+                  rx={12}
+                  fill="none"
+                  stroke={on ? "#7c3aed" : "#a78bfa"}
+                  strokeOpacity={on ? 0.9 : 0.35}
+                  strokeWidth={on ? 5 : 10}
+                  pointerEvents="stroke"
+                  style={{ cursor: "move", touchAction: "none" }}
+                  onPointerDown={(e) => down(e, "area", a.label)}
+                  {...grab}
+                >
+                  <title>区画「{a.label}」（線をドラッグで移動・右下の角で大きさ）</title>
+                </rect>
+                <rect
+                  data-edit-handle=""
+                  x={a.x + 4}
+                  y={a.y + 2}
+                  width={Math.min(a.w - 8, a.label.length * 13 + 16)}
+                  height={20}
+                  fill={on ? "rgba(124,58,237,0.15)" : "transparent"}
+                  style={{ cursor: "move", touchAction: "none" }}
+                  onPointerDown={(e) => down(e, "area", a.label)}
+                  {...grab}
+                />
+                {on && (
+                  <rect
+                    data-edit-handle=""
+                    x={a.x + a.w - 9}
+                    y={a.y + a.h - 9}
+                    width={18}
+                    height={18}
+                    fill="#ffffff"
+                    stroke="#7c3aed"
+                    strokeWidth={2.5}
+                    style={{ cursor: "nwse-resize", touchAction: "none" }}
+                    onPointerDown={(e) => down(e, "areaResize", a.label)}
+                    {...grab}
+                  />
+                )}
+              </g>
+            );
+          })}
+        {/* 入力チェックで問題のある配管 */}
+        {f.pipes.map((p) =>
+          ed.problemIds?.has(p.id) ? (
+            <polyline key={`prob-${p.id}`} points={pts(pipeGeom.get(p.id)!)} fill="none" stroke="#dc2626" strokeWidth={6} strokeOpacity={0.45} strokeDasharray="6 4" pointerEvents="none" />
+          ) : null
+        )}
+        {/* 配管のクリック（選択・弁の挿入） */}
+        {f.pipes.map((p) => (
+          <polyline
+            key={`ehit-${p.id}`}
+            points={pts(pipeGeom.get(p.id)!)}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={12}
+            style={{ cursor: ed.onPipePoint ? "copy" : "pointer" }}
+            className="piping-hit"
+            onClick={(e) => {
+              e.stopPropagation();
+              const pt = toDiagram(e.clientX, e.clientY);
+              if (ed.onPipePoint && pt) ed.onPipePoint(p.id, pt[0], pt[1]);
+              else ed.onSelect({ type: "pipe", id: p.id });
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              const pt = toDiagram(e.clientX, e.clientY);
+              if (pt && sel?.type === "pipe" && sel.id === p.id) ed.onViaAdd?.(p.id, pt[0], pt[1]);
+            }}
+          >
+            <title>
+              配管 {p.id}（{p.sizeA}A）
+            </title>
+          </polyline>
+        ))}
+        {/* 選択中の配管 */}
+        {selPipe && (
+          <polyline points={pts(pipeGeom.get(selPipe.id)!)} fill="none" stroke="#06b6d4" strokeWidth={pipeWidth(selPipe.sizeA) + 6} strokeOpacity={0.55} strokeLinejoin="round" pointerEvents="none" />
+        )}
+        {/* 入力チェックで問題のある機器・選択中の機器 */}
+        {f.nodes.map((n) =>
+          ed.problemIds?.has(n.id) ? (
+            <circle key={`probn-${n.id}`} cx={n.x} cy={n.y} r={handleR(n) + 5} fill="none" stroke="#dc2626" strokeWidth={2.5} strokeDasharray="4 3" pointerEvents="none" />
+          ) : null
+        )}
+        {selNode && <circle cx={selNode.x} cy={selNode.y} r={handleR(selNode) + 6} fill="rgba(6,182,212,0.18)" stroke="#06b6d4" strokeWidth={3} pointerEvents="none" />}
+        {/* 機器のつまみ（ドラッグで移動・クリックで選択） */}
+        {f.nodes.map((n) => (
+          <circle
+            key={`eh-${n.id}`}
+            data-edit-handle=""
+            cx={n.x}
+            cy={n.y}
+            r={handleR(n)}
+            fill="transparent"
+            style={{ cursor: "move", touchAction: "none" }}
+            onPointerDown={(e) => down(e, "node", n.id)}
+            onPointerMove={move}
+            onPointerUp={up}
+            onPointerCancel={up}
+            onClick={stop}
+          >
+            <title>
+              {n.label || n.id}　{n.name}
+            </title>
+          </circle>
+        ))}
+        {/* 選択中の配管の経由点（ドラッグで移動・ダブルクリックで削除） */}
+        {selPipe &&
+          (selPipe.via ?? []).map(([x, y], i) => (
+            <rect
+              key={`via-${i}`}
+              data-edit-handle=""
+              x={x - 5}
+              y={y - 5}
+              width={10}
+              height={10}
+              fill="#ffffff"
+              stroke="#0891b2"
+              strokeWidth={2}
+              style={{ cursor: "move", touchAction: "none" }}
+              onPointerDown={(e) => down(e, "via", selPipe.id, i)}
+              onPointerMove={move}
+              onPointerUp={up}
+              onPointerCancel={up}
+              onClick={stop}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                ed.onViaRemove?.(selPipe.id, i);
+              }}
+            >
+              <title>経由点（ドラッグで移動・ダブルクリックで削除）</title>
+            </rect>
+          ))}
+      </g>
+    );
 }
 
 export function DiagramLegend({ items }: { items: { color: string; label: string; kind?: "line" | "ring" | "blink" }[] }) {

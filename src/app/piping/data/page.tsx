@@ -266,6 +266,12 @@ export default function DiagramDataPage() {
                           <SmallButton onClick={() => exportVersion(v)} disabled={busy !== null}>
                             Excel出力
                           </SmallButton>
+                          <Link
+                            href={`/piping/editor?version=${encodeURIComponent(v.id)}`}
+                            className="rounded border border-cyan-600 px-2 py-1 text-xs text-cyan-700 hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950"
+                          >
+                            エディタで編集
+                          </Link>
                           {v.status === "draft" && (
                             <>
                               <SmallButton onClick={() => act(v, "activate")} disabled={busy !== null} primary>
@@ -285,7 +291,7 @@ export default function DiagramDataPage() {
             </div>
           )}
           <p className="mt-2 text-xs text-zinc-500">
-            設備を更新したときは、使用中の版を「Excel出力」して変更箇所を直し、取り込んでください。機器番号・配管番号は変えずに残すと、過去のチェックリストとのつながりが保てます。
+            設備を更新したときは、使用中の版を「エディタで編集」して図面上で弁の追加・位置の変更をするか、「Excel出力」して変更箇所を直し、取り込んでください。どちらも新しい版（下書き）として保存されます。機器番号・配管番号は変えずに残すと、過去のチェックリストとのつながりが保てます。
           </p>
         </Panel>
 
