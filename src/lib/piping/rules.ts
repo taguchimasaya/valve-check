@@ -38,12 +38,14 @@ export type DrainRules = {
   openInternal: boolean;
   /** 充填ラインが無いとき、遮断弁を微開して充填する（しない場合は充填工程で操作しない） */
   crackFillWithoutLine: boolean;
-  /** 可搬ポンプの能力（L/min・作成画面の初期値） */
-  portableLpm: number;
   /** 充填の流量（L/min・作成画面の初期値） */
   fillLpm: number;
-  /** 自然流下の抜取能力（口径別 L/min） */
-  gravityLpm: { "25": number; "40": number; "50": number; "80": number };
+  /** ローリーの抜取能力（L/min・作成画面の初期値）。抜取ポンプの無いドレン口から抜くときに使う */
+  lorryLpm: number;
+  /** ローリー1台の容量（kL） */
+  lorryCapacityKL: number;
+  /** 用意できるローリーの台数（必要な台数がこれを超えると注意を出す） */
+  lorryCount: number;
 };
 
 /** 燃料末端部作業（循環）のルール */
@@ -155,8 +157,7 @@ export type CalcSetting = {
   kind: CalcKind;
   /** 遮断範囲：対象区間にドレン口が無ければ、ドレン口のある区間まで広げる */
   expandToDrain: boolean;
-  /** 遮断範囲：抜取・充填の時間の試算に使う能力（L/min） */
-  portableLpm: number;
+  /** 遮断範囲：充填の時間の試算に使う流量（L/min）。抜取時間は ⑤ 燃料抜取のポンプ・ローリーの設定で計算する */
   fillLpm: number;
   /** 循環経路：循環量の目安（末端部の配管容量の何倍か）と、時間の試算に使うポンプ能力（L/min） */
   turnover: number;
@@ -175,7 +176,6 @@ export type CalcSetting = {
 export const DEFAULT_CALC: CalcSetting = {
   kind: "none",
   expandToDrain: true,
-  portableLpm: 200,
   fillLpm: 200,
   turnover: 3,
   pumpLpm: 2000,
@@ -360,16 +360,21 @@ export const DEFAULT_DRAIN_RULES: DrainRules = {
   expandToDrain: true,
   openInternal: true,
   crackFillWithoutLine: true,
-  portableLpm: 300,
   fillLpm: 200,
-  gravityLpm: { "25": 40, "40": 90, "50": 150, "80": 350 },
+  lorryLpm: 500,
+  lorryCapacityKL: 16,
+  lorryCount: 1,
 };
 export const DEFAULT_FLUSH_RULES: FlushRules = { turnover: 3, pumpLpm: 2000, transferPumpLpm: 1000, closeSide: true };
 export const DEFAULT_ISOLATION_RULES: IsolationRules = { closeSide: true, blindNote: true };
 
 export function drainRulesOf(rules: ChecklistRules | null | undefined): DrainRules {
   const r = rules?.drain ?? {};
-  return { ...DEFAULT_DRAIN_RULES, ...r, gravityLpm: { ...DEFAULT_DRAIN_RULES.gravityLpm, ...(r.gravityLpm ?? {}) } };
+  // 以前の設定（可搬ポンプ・自然流下）は使わない
+  const { portableLpm: _p, gravityLpm: _g, ...rest } = r as Partial<DrainRules> & { portableLpm?: unknown; gravityLpm?: unknown };
+  void _p;
+  void _g;
+  return { ...DEFAULT_DRAIN_RULES, ...rest };
 }
 export function flushRulesOf(rules: ChecklistRules | null | undefined): FlushRules {
   return { ...DEFAULT_FLUSH_RULES, ...(rules?.flush ?? {}) };
@@ -387,9 +392,10 @@ const num = (v: number, name: string, min: number, max: number, errs: string[]) 
 
 export function validateDrainRules(r: DrainRules) {
   const errs: string[] = [];
-  num(r.portableLpm, "可搬ポンプの能力", 1, 100000, errs);
   num(r.fillLpm, "充填の流量", 1, 100000, errs);
-  Object.entries(r.gravityLpm).forEach(([k, v]) => num(v, `自然流下 ${k}A の能力`, 1, 100000, errs));
+  num(r.lorryLpm, "ローリーの抜取能力", 1, 100000, errs);
+  num(r.lorryCapacityKL, "ローリー1台の容量", 0.1, 1000, errs);
+  num(r.lorryCount, "ローリーの台数", 1, 100, errs);
   return errs;
 }
 export function validateFlushRules(r: FlushRules) {

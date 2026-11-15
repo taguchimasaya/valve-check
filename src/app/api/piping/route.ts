@@ -6,6 +6,7 @@ import { can, deniedMessage, STORE_ACTION_PERMS } from "@/lib/roles";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
 import { outageDefOf } from "@/lib/piping/outages";
+import { PERIOD_MAX } from "@/lib/piping/period";
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -173,6 +174,15 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       }
       store.log.unshift({ at: now, type: "info", text: `チェックリスト「${plan.name}」を${a.approve ? "承認" : "承認取り消し"}しました` });
       store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "setPlanPeriod": {
+      const plan = store.plans.find((p) => p.id === a.id);
+      if (!plan) return "チェックリストが見つかりません";
+      const period = typeof a.period === "string" ? a.period.trim() : "";
+      if (period.length > PERIOD_MAX) return `周期は${PERIOD_MAX}文字以内にしてください`;
+      if (period) plan.period = period;
+      else delete plan.period;
       return null;
     }
     case "deletePlan":

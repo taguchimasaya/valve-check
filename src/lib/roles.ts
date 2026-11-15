@@ -93,6 +93,7 @@ export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
   // チェックリストの作成・実施（作業者）
   savePlan: ["checklist"],
   deletePlan: ["checklist"],
+  setPlanPeriod: ["checklist"],
   startExecution: ["checklist"],
   record: ["checklist"],
   undoRecord: ["checklist"],

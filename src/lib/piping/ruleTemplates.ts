@@ -58,7 +58,7 @@ export function templateFromBuiltin(type: TemplateKey, rules: ChecklistRules | n
           "燃料抜取の設定をもとにした例です。計算の部品「遮断範囲」で範囲（ドレン口のある区間まで広げる）・ドレン口・充填・液封を計算し、" +
           "ルールで各工程の操作を決めています。プログラムの燃料抜取と同じ操作になります（作成画面での範囲の手動追加・ドレン口の除外・圧力計の選択は、この作業では行いません）。",
         target: "equipment",
-        calc: { ...DEFAULT_CALC, kind: "isolation", expandToDrain: r.expandToDrain, portableLpm: r.portableLpm, fillLpm: r.fillLpm },
+        calc: { ...DEFAULT_CALC, kind: "isolation", expandToDrain: r.expandToDrain, fillLpm: r.fillLpm },
         steps: [
           step("ラインナップ", false, "遮断弁を閉めて抜取範囲を構成する"),
           step("抜取", true, "{ドレン口} から抜き取る（抜取量 {抜取量}・目安 {抜取時間}）"),

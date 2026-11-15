@@ -69,6 +69,8 @@ export type SavedPlan = {
   createdAt: string;
   /** 最後に保存した人 */
   updatedBy?: string;
+  /** 点検の周期（月次・年次など。任意の文字）。② で「機器名×周期」で探すのに使う */
+  period?: string;
   /** 確認（承認）した日時と人。保存し直すと外れる（サーバー側で付け外しする） */
   approvedAt?: string;
   approvedBy?: string;
@@ -91,7 +93,10 @@ export type SavedPlan = {
     extraSectionIds: string[];
     excludedDrains: string[];
     gaugeIds: string[];
-    portableLpm: number;
+    /** 以前の可搬ポンプの能力（今は使わない） */
+    portableLpm?: number;
+    /** ① で変えたローリーの抜取能力 */
+    lorryLpm?: number;
     fillLpm?: number;
   };
   summary: {

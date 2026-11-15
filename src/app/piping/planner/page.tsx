@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import PlanApproval from "@/components/piping/PlanApproval";
+import { PERIOD_MAX, periodOptions } from "@/lib/piping/period";
 import { useMe } from "@/lib/auth";
 import { can } from "@/lib/roles";
 import PipingDiagram, { DiagramLegend, type DiagramHandle, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
@@ -18,7 +19,7 @@ import {
 } from "@/lib/piping/isolation";
 import { currentValveState, describeOperation, OPERATION_META, TANKS, type OperationKind } from "@/lib/piping/operations";
 import { planConflicts } from "@/lib/piping/execution";
-import { flowColor, stepFlow } from "@/lib/piping/flow";
+import { routeFlowGroups, stepFlow, type RouteFlowKind } from "@/lib/piping/flow";
 import {
   ALL_PUMPS,
   buildDayChecklist,
@@ -96,6 +97,8 @@ export default function PlannerPage() {
   const customTypes = useMemo(() => storeRules?.customTypes ?? [], [storeRules]);
 
   const [name, setName] = useState("");
+  // 点検の周期（月次・年次など。② で「機器名×周期」で探すのに使う）
+  const [period, setPeriod] = useState("");
   const [workType, setWorkType] = useState<WorkType>("drain");
   // 燃料末端部作業：末端部として選んだ配管、タンク縁切り：対象タンク
   const [flushPipes, setFlushPipes] = useState<string[]>([]);
@@ -120,15 +123,16 @@ export default function PlannerPage() {
   const [extraSectionIds, setExtraSectionIds] = useState<string[]>([]);
   const [excludedDrains, setExcludedDrains] = useState<string[]>([]);
   const [gaugeIds, setGaugeIds] = useState<string[]>([]);
-  const [portableLpmS, setPortableLpm] = useState<number | null>(null);
+  const [lorryLpmS, setLorryLpm] = useState<number | null>(null);
   const [fillLpmS, setFillLpm] = useState<number | null>(null);
   // 未入力ならルールの値
   const expandToDrain = expandToDrainS ?? drainRules.expandToDrain;
-  const portableLpm = portableLpmS ?? drainRules.portableLpm;
+  const lorryLpm = lorryLpmS ?? drainRules.lorryLpm;
   const fillLpm = fillLpmS ?? drainRules.fillLpm;
-  const gravity = useMemo(
-    () => Object.fromEntries(Object.entries(drainRules.gravityLpm).map(([k, v]) => [Number(k), v])) as Record<number, number>,
-    [drainRules]
+  // ローリーの設定（台数・容量は ⑤、抜取能力はここで変えられる）
+  const lorry = useMemo(
+    () => ({ lpm: lorryLpm, capacityKL: drainRules.lorryCapacityKL, count: drainRules.lorryCount }),
+    [lorryLpm, drainRules]
   );
   const [mode, setMode] = useState<"target" | "expand">("target");
   const [previewStep, setPreviewStep] = useState(0);
@@ -230,14 +234,14 @@ export default function PlannerPage() {
     () =>
       workType === "custom" && customDef
         ? buildCustomChecklist(g, customDef, customTarget, baseline, {
-            gravity,
+            lorry,
             flushPipes,
             day: customFlush && effFlushPump ? { srcTank: flushSrc, pump: effFlushPump, returnTank: flushRet } : undefined,
             transferDay:
               customTransfer && effIssuePump && effTransferPump ? { destTank: effDest, issuePump: effIssuePump, transferPump: effTransferPump } : undefined,
           })
         : null,
-    [g, workType, customDef, customTarget, baseline, gravity, flushPipes, customFlush, effFlushPump, flushSrc, flushRet, customTransfer, effDest, effIssuePump, effTransferPump]
+    [g, workType, customDef, customTarget, baseline, lorry, flushPipes, customFlush, effFlushPump, flushSrc, flushRet, customTransfer, effDest, effIssuePump, effTransferPump]
   );
   const dayResult = workType === "fireTest" ? fireResult : workType === "custom" ? customResult : dayResultOf;
   const dayError =
@@ -311,8 +315,8 @@ export default function PlannerPage() {
     [iso, rows, hasCurrentState, opState]
   );
   const estimate = useMemo(
-    () => (iso ? estimateDrain(g, drains, iso.volumeL, portableLpm, gravity) : null),
-    [g, iso, drains, portableLpm, gravity]
+    () => (iso ? estimateDrain(g, drains, iso.volumeL, lorry) : null),
+    [g, iso, drains, lorry]
   );
   const equipmentVolume = useMemo(
     () => (iso ? iso.regionNodeIds.reduce((a, id) => a + (g.nodeById.get(id)!.volumeL ?? 0), 0) : 0),
@@ -328,6 +332,37 @@ export default function PlannerPage() {
     const plan = { steps: PLAN_STEPS, rows, regionPipeIds: iso.regionPipeIds, regionNodeIds: iso.regionNodeIds } as Parameters<typeof stepFlow>[1];
     return stepFlow(g, plan, step, stateAtStep(baseline, rows, step));
   }, [g, iso, rows, baseline]);
+  // 燃料末端部作業・タンク縁切り・消火設備機能試験・ユーザー定義の作業：工程ごとの経路を流れの種類ごとにまとめる
+  const routeKind: RouteFlowKind =
+    workType === "flush" || customFlush
+      ? "flush"
+      : workType === "tankIsolation" || customTransfer
+        ? "transfer"
+        : workType === "fireTest" || (workType === "custom" && customDef?.calc?.kind === "fireTest")
+          ? "fire"
+          : "route";
+  const dayStepRoutes = dayResult?.stepRoutes;
+  const routeFlows = useMemo(
+    () => (isDay ? routeFlowGroups(dayStepRoutes, steps, routeKind) : []),
+    [isDay, dayStepRoutes, steps, routeKind]
+  );
+  // ユーザー定義の作業で計算の部品「遮断範囲」を使うとき：工程名が「抜取」「充填」の工程の流れ（燃料抜取と同じ求め方）
+  const customIsoR = workType === "custom" ? customResult?.iso : undefined;
+  const customIsoFlows = useMemo(() => {
+    if (!customIsoR) return [];
+    const plan = {
+      steps,
+      rows,
+      regionPipeIds: customIsoR.regionPipeIds,
+      regionNodeIds: customIsoR.regionNodeIds,
+      fillPipeIds: customIsoR.fillPipeIds,
+    } as Parameters<typeof stepFlow>[1];
+    return steps.flatMap((name, i) => {
+      if (name !== "抜取") return [];
+      const f = stepFlow(g, plan, i, stateAtStep(baseline, rows, i));
+      return f ? [{ key: `flow-${i}`, color: "#0284c7", directions: f.directions }] : [];
+    });
+  }, [g, customIsoR, steps, rows, baseline]);
   const layers: PipeLayer[] = [];
   const marks: Record<string, NodeMark> = {};
   if (iso) {
@@ -364,30 +399,32 @@ export default function PlannerPage() {
     if (focusSeal !== null) iso.sealGroups[focusSeal]?.ventValves.forEach((v) => (marks[v] = "vent"));
   }
   // ユーザー定義の作業で計算の部品「遮断範囲」を使うとき：範囲・充填・液封の区間を表示する
-  const customIso = workType === "custom" ? customResult?.iso : undefined;
+  const customIso = customIsoR;
   if (customIso) {
     layers.push({ key: "c-region", pipeIds: customIso.regionPipeIds, color: "#ef4444", opacity: 0.4 });
     layers.push({ key: "c-fill", pipeIds: customIso.fillPipeIds, color: "#0d9488", opacity: 0.6 });
     layers.push({ key: "c-seal", pipeIds: customIso.sealPipeIds, color: "#f59e0b", opacity: 0.55 });
+    // 燃料抜取と同じく、抜取の流れ（抜取系統）を向き付きで描く
+    customIsoFlows.forEach((f) =>
+      layers.push({ key: `c-${f.key}`, pipeIds: [...f.directions.keys()], directions: f.directions, color: f.color, width: 5, flow: true })
+    );
   }
   if (isDay) {
     if (flushT) layers.push({ key: "flush-target", pipeIds: flushT.pipeIds, color: "#06b6d4", opacity: 0.5 });
-    const routes = dayResult?.stepRoutes ?? {};
-    const route = routes[previewStep];
-    const shown = route ? [route] : Object.values(routes);
-    shown.forEach((r, i) => {
-      const directions = new Map<string, string>();
-      r.pipeIds.forEach((pid, k) => directions.set(pid, r.nodeIds[k]));
+    // 燃料抜取の「抜取の流れ」「充填ライン」と同じく、経路ごとの流れを種類別の色・向き付きで常に描く。
+    // 表示中の工程が経路を使うときは、その経路を手前に強調し、ほかの経路は薄くする
+    const active = routeFlows.find((f) => f.steps.includes(previewStep));
+    [...routeFlows.filter((f) => f !== active), ...(active ? [active] : [])].forEach((f) =>
       layers.push({
-        key: `route-${i}`,
-        pipeIds: r.pipeIds,
-        directions,
-        color: flowColor("route"),
+        key: f.key,
+        pipeIds: f.pipeIds,
+        directions: f.directions,
+        color: f.color,
         width: 5,
-        opacity: route ? 1 : 0.35,
-        flow: !!route,
-      });
-    });
+        opacity: !active || f === active ? 1 : 0.3,
+        flow: !active || f === active,
+      })
+    );
     // 作業前：チェックリストの弁・ポンプすべて。各工程：開操作（緑）・閉操作（赤）・確認（水色）
     rows.forEach((r) => {
       if (!r.nodeId) return;
@@ -471,6 +508,7 @@ export default function PlannerPage() {
   function reset() {
     setEditingId(null);
     setName("");
+    setPeriod("");
     setTargets([]);
     setFlushPipes([]);
     setIsoTank(null);
@@ -511,7 +549,7 @@ export default function PlannerPage() {
       stepNotes: dayResult.stepNotes,
       stepRoutes: dayResult.stepRoutes,
       dayDefaults: dayParams,
-      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], lorryLpm, fillLpm },
       summary: {
         volumeL: flush ? flushT!.volumeL : null,
         drainMinutes: null,
@@ -558,7 +596,7 @@ export default function PlannerPage() {
       rows,
       stepNotes: customResult.stepNotes,
       stepRoutes: customResult.stepRoutes,
-      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], lorryLpm, fillLpm },
       summary: {
         volumeL: customResult.iso?.volumeL ?? customResult.flush?.volumeL ?? null,
         drainMinutes: customResult.iso?.drainMinutes ?? null,
@@ -592,7 +630,7 @@ export default function PlannerPage() {
       rows,
       stepNotes: fireResult.stepNotes,
       stepRoutes: fireResult.stepRoutes,
-      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], portableLpm, fillLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], lorryLpm, fillLpm },
       summary: {
         volumeL: null,
         drainMinutes: null,
@@ -605,7 +643,14 @@ export default function PlannerPage() {
     };
   }
 
+  /** チェックリストを組み立て、入力した周期を付ける */
   function buildPlan(): SavedPlan | null {
+    const plan = buildPlanBody();
+    const p = period.trim().slice(0, PERIOD_MAX);
+    return plan && p ? { ...plan, period: p } : plan;
+  }
+
+  function buildPlanBody(): SavedPlan | null {
     if (isDay) return buildDayPlan();
     if (!iso || !rows.length) return null;
     const warnings = [
@@ -631,7 +676,7 @@ export default function PlannerPage() {
       fillPipeIds: iso.fill.pipeIds,
       steps: PLAN_STEPS,
       rows,
-      planner: { expandToDrain, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, portableLpm, fillLpm },
+      planner: { expandToDrain, baselineMode, extraSectionIds, excludedDrains, gaugeIds: activeGauges, lorryLpm, fillLpm },
       summary: {
         volumeL: iso.volumeL,
         drainMinutes: estimate?.minutes ?? null,
@@ -671,6 +716,7 @@ export default function PlannerPage() {
   function loadPlan(p: SavedPlan) {
     setEditingId(p.id);
     setName(p.name);
+    setPeriod(p.period ?? "");
     const type = workTypeOf(p);
     setWorkType(type);
     setTargets(type === "drain" ? p.targets : []);
@@ -698,7 +744,7 @@ export default function PlannerPage() {
       setExtraSectionIds(p.planner.extraSectionIds);
       setExcludedDrains(p.planner.excludedDrains);
       setGaugeIds(p.planner.gaugeIds);
-      setPortableLpm(p.planner.portableLpm);
+      setLorryLpm(p.planner.lorryLpm ?? null);
       setFillLpm(p.planner.fillLpm ?? DEFAULT_FILL_LPM);
     }
     setPreviewStep(0);
@@ -713,7 +759,18 @@ export default function PlannerPage() {
         <Link href="/piping" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
           ← 配管系統図メニュー
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">① チェックリスト作成</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">① チェックリスト作成</h1>
+          {/* プレビューは右上に置き、チェックリストが長くてもスクロールせずに押せるようにする */}
+          <button
+            onClick={() => setPreviewPlan(buildPlan())}
+            disabled={!rows.length}
+            title={rows.length ? "② 現場点検と同じ表示で、工程ごとに確認します" : "図面で対象を選ぶとプレビューできます"}
+            className="rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-40 dark:bg-zinc-950 dark:text-emerald-300 dark:hover:bg-emerald-950"
+          >
+            👁 プレビュー（工程ごとに確認）
+          </button>
+        </div>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           {workType === "drain"
             ? "図面上で抜取対象の機器・配管をクリックしてください。ドレン口のある区間まで遮断範囲を自動算定し、操作バルブ・液封リスク・抜取量を表示します。"
@@ -793,7 +850,16 @@ export default function PlannerPage() {
             <DiagramLegend
               items={isDay ? [
                 { color: "#06b6d4", label: workType === "flush" ? "末端部（選択した区間）" : workType === "fireTest" ? "試験対象タンク" : workType === "custom" ? "対象" : "縁切りするタンク", kind: workType === "flush" ? "line" : "ring" },
-                { color: flowColor("route"), label: workType === "flush" ? "循環経路" : workType === "fireTest" ? "放水・泡放射の経路（表示中の工程）" : workType === "custom" ? "作業の経路（表示中の工程）" : "移送経路（表示中の工程）" },
+                // 経路ごとの流れ（燃料抜取の「抜取の流れ（抜取系統）」と同じく、流れの種類と使う工程を並べる）
+                ...routeFlows.map((f) => ({ color: f.color, label: f.label })),
+                ...(customIso
+                  ? [
+                      { color: "#ef4444", label: "抜取範囲（遮断範囲）" },
+                      ...(customIsoFlows.length ? [{ color: "#0284c7", label: "抜取の流れ（抜取系統）" }] : []),
+                      { color: "#0d9488", label: "充填ライン" },
+                      { color: "#f59e0b", label: "液封の恐れ" },
+                    ]
+                  : []),
                 { color: "#16a34a", label: "開操作・ポンプ起動", kind: "ring" },
                 { color: "#dc2626", label: "閉操作・ポンプ停止", kind: "ring" },
                 { color: "#06b6d4", label: previewStep === 0 ? "チェックリストの弁・ポンプ" : "確認（状態変化なし）", kind: "ring" },
@@ -893,6 +959,25 @@ export default function PlannerPage() {
                 placeholder="作業名（空欄なら自動）"
                 className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
               />
+              <div className="mt-1.5 flex items-center gap-2">
+                <label htmlFor="plan-period" className="shrink-0 text-xs text-zinc-500">
+                  周期
+                </label>
+                <input
+                  id="plan-period"
+                  list="plan-period-options"
+                  value={period}
+                  maxLength={PERIOD_MAX}
+                  onChange={(e) => setPeriod(e.target.value)}
+                  placeholder="月次・年次など（選ぶか入力）"
+                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
+                />
+                <datalist id="plan-period-options">
+                  {periodOptions(store?.plans ?? []).map((o) => (
+                    <option key={o} value={o} />
+                  ))}
+                </datalist>
+              </div>
               {workType === "custom" ? (
                 <div className="mt-3">
                   <p className="text-xs font-medium text-zinc-500">
@@ -1111,8 +1196,8 @@ export default function PlannerPage() {
                               />
                             </td>
                             <td title={n.name}>{d}</td>
-                            <td>{n.drainPumpLpm ? "抜取ポンプ" : `自然流下 ${n.drainSizeA}A`}</td>
-                            <td className="text-right">{n.drainPumpLpm ?? gravity[n.drainSizeA ?? 50]} L/min</td>
+                            <td>{n.drainPumpLpm ? "抜取ポンプ" : "ローリー"}</td>
+                            <td className="text-right">{n.drainPumpLpm ?? lorryLpm} L/min</td>
                           </tr>
                         );
                       })}
@@ -1121,24 +1206,38 @@ export default function PlannerPage() {
                   {estimate && (
                     <div className="mt-2 space-y-1 text-sm">
                       <p>
-                        設置設備での抜取：<b>{formatMinutes(estimate.minutes)}</b>
-                        <span className="text-xs text-zinc-500">（合計 {estimate.totalLpm} L/min）</span>
+                        抜取方法：
+                        <b>{estimate.method === "pump" ? "抜取ポンプ" : estimate.method === "lorry" ? "ドレン口からローリー" : "なし"}</b>
+                        {estimate.method === "pump" && (
+                          <span className="text-xs text-zinc-500">
+                            （{g.nodeById.get(estimate.pumpDrain!)?.label}・{estimate.rateLpm} L/min。抜き取りは1か所で行うため、ポンプのあるドレン口を使います）
+                          </span>
+                        )}
                       </p>
-                      <p className="flex items-center gap-1">
-                        可搬ポンプ使用時：<b>{formatMinutes(estimate.portableMinutes)}</b>
-                        <input
-                          type="number"
-                          value={portableLpm}
-                          min={10}
-                          step={10}
-                          onChange={(e) => setPortableLpm(Number(e.target.value))}
-                          className="ml-2 w-20 rounded border border-zinc-300 bg-transparent px-1 text-xs dark:border-zinc-700"
-                        />
-                        <span className="text-xs text-zinc-500">L/min</span>
+                      <p className="flex flex-wrap items-center gap-1">
+                        抜取時間：<b>{formatMinutes(estimate.minutes)}</b>
+                        {estimate.method === "lorry" && (
+                          <>
+                            <span className="ml-2 text-xs text-zinc-500">ローリーの抜取能力</span>
+                            <input
+                              type="number"
+                              value={lorryLpm}
+                              min={10}
+                              step={10}
+                              onChange={(e) => setLorryLpm(Number(e.target.value))}
+                              className="w-20 rounded border border-zinc-300 bg-transparent px-1 text-xs dark:border-zinc-700"
+                            />
+                            <span className="text-xs text-zinc-500">L/min</span>
+                          </>
+                        )}
                       </p>
-                      <p className="text-xs text-zinc-500">
-                        受け容器の目安：ドラム缶（200L）{estimate.drums}本 ／ ローリー（16kL）{estimate.lorries}台
-                      </p>
+                      {estimate.method === "lorry" && (
+                        <p className={`text-xs ${estimate.lorriesNeeded > estimate.lorry.count ? "font-semibold text-amber-700 dark:text-amber-400" : "text-zinc-500"}`}>
+                          ローリー（{estimate.lorry.capacityKL}kL）：必要 {estimate.lorriesNeeded}台 ／ 用意 {estimate.lorry.count}台
+                          {estimate.lorriesNeeded > estimate.lorry.count && "（台数が足りません。往復するか、⑤ で台数を見直してください）"}
+                          {estimate.lorriesNeeded > 1 && "。1台ずつ順に抜き取る前提の時間です（入れ替えの時間は含みません）"}
+                        </p>
+                      )}
                       <div className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
                         <p className="text-xs font-semibold text-teal-700 dark:text-teal-400">作業後の充填</p>
                         {iso.fill.method === "none" ? (
@@ -1174,7 +1273,7 @@ export default function PlannerPage() {
                         )}
                       </div>
                       <p className="text-[11px] text-zinc-400">
-                        ※配管長は図面縮尺（1px＝{g.facility.metersPerPx}m）からの概算、内径はSch40相当。自然流下の能力は口径別の目安値です。
+                        ※配管長は図面縮尺（1px＝{g.facility.metersPerPx}m）からの概算、内径はSch40相当。ローリーの台数・容量・抜取能力は ⑤ 燃料抜取のルールで設定します。
                       </p>
                     </div>
                   )}
@@ -1382,13 +1481,6 @@ export default function PlannerPage() {
                 </Panel>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setPreviewPlan(buildPlan())}
-                    disabled={!rows.length}
-                    className="col-span-2 rounded-lg border border-emerald-700 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-950"
-                  >
-                    プレビュー（② 現場点検と同じ表示で工程ごとに確認）
-                  </button>
                   <button
                     onClick={save}
                     disabled={!rows.length}

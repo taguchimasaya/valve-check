@@ -141,13 +141,13 @@ DB（版：論理データ＋図面データ）
 |---|---|
 | `types.ts` | ノード種別（弁・逆止弁・タンク・ポンプ・ドレン・消火設備など）・配管・施設の型 |
 | `graph.ts` | グラフ構築、区間分割、最短経路、ダブルブロック（`secondBlock`）、経路側の分岐弁 |
-| `isolation.ts` | 遮断範囲・液封リスク・抜取量／時間・充填計画の算定（燃料抜取） |
+| `isolation.ts` | 遮断範囲・液封リスク・抜取量／時間・充填計画の算定（燃料抜取）。抜取時間（`estimateDrain`）は固定の抜取ポンプ、無ければローリー（`LorrySetting`）の能力で1か所から抜く前提 |
 | `workTypes.ts` | 作業種別（drain / flush / tankIsolation / fireTest / custom）と当日選択（DayParams）による行生成 |
 | `fireTest.ts` | 消火設備機能試験（発泡装置・隣接タンク冷却散水・消火栓） |
 | `rules.ts` / `ruleBlocks.ts` | 拠点ごとのチェックリスト作成ルールと、ノーコードの追加ルール（もし〜なら工程ごとに開閉） |
 | `checklist.ts` | チェックリストの型（PlanRow / SavedPlan）、Excel 入出力、工程ごとの状態 |
 | `store.ts` | 共有ストアの型・StoreAction・`execPlan()`（当日選択の重ね合わせ） |
-| `execution.ts` / `live.ts` / `flow.ts` | 点検進捗の表示、トップ・制御室の現在状況図、工程ごとの流れの向き |
+| `execution.ts` / `live.ts` / `flow.ts` | 点検進捗の表示、トップ・制御室の現在状況図、工程ごとの流れの向き（`routeFlowGroups`：循環・移送・泡／水系統の経路を流れの種類ごとにまとめ、色と凡例名を付ける） |
 | `operations.ts` / `outages.ts` | 制御室の運用入力（運用ライン）と当日の運用停止範囲（既定の範囲と、拠点ごとに登録した範囲 `OutageSetting`） |
 | `diagramData.ts` / `diagramDb.ts` | Excel ⇔ 系統図データ変換・入力チェック、DB 行 → Facility 変換 |
 | `diagramEdit.ts` | 系統図エディタの編集操作（移動・経由点・配管途中への挿入・枝・置く・配管を引く・削除・属性変更・変更点のまとめ）。`DiagramData` → 新しい `DiagramData` の純粋関数 |

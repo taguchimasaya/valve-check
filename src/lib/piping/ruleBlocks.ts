@@ -1,7 +1,7 @@
 import type { PlanRow, RowRole } from "./checklist";
 import { routeSections, routeSideValves, secondBlock, shortestPath, type Graph, type Route } from "./graph";
 import { branchValves, fireParts, tankOutlets, unionRoute, type FireParts } from "./fireTest";
-import { estimateDrain, formatLiters, formatMinutes, GRAVITY_LPM, planIsolation, type IsolationResult } from "./isolation";
+import { DEFAULT_LORRY, estimateDrain, formatLiters, formatMinutes, planIsolation, type IsolationResult, type LorrySetting } from "./isolation";
 import {
   ALL_PUMPS,
   flushPumps,
@@ -430,7 +430,7 @@ function buildIsolationChecklist(
   target: string,
   base: Record<string, ValveState>,
   calc: typeof DEFAULT_CALC,
-  env: { gravity?: Record<number, number> },
+  env: { lorry?: LorrySetting },
   steps: string[]
 ): CustomResult {
   const empty = { rows: [], stepNotes: {}, stepRoutes: {}, warnings: [], route: null };
@@ -440,7 +440,7 @@ function buildIsolationChecklist(
   const route: Route = { nodeIds: iso.regionNodeIds, pipeIds: iso.regionPipeIds };
   const { rows, warnings } = applyBlocks(g, [], steps, def.blocks, { target, route, base, calc: parts });
   if (!rows.length) return { ...empty, route, warnings, error: "ルールに当てはまる弁・ポンプがありません" };
-  const est = estimateDrain(g, iso.drains, iso.volumeL, calc.portableLpm, env.gravity ?? GRAVITY_LPM);
+  const est = estimateDrain(g, iso.drains, iso.volumeL, env.lorry ?? DEFAULT_LORRY);
   const fillMinutes = calc.fillLpm > 0 ? iso.volumeL / calc.fillLpm : null;
   const drainLabels = iso.drains.map((d) => g.nodeById.get(d)?.label ?? d).join("・") || "なし";
   // 工程の注記の差し込み：{抜取量} {抜取時間} {充填時間} {ドレン口}
@@ -483,8 +483,8 @@ function buildIsolationChecklist(
 // ───────────── 計算の部品「循環経路（燃料末端部作業）」 ─────────────
 
 export type CustomEnv = {
-  /** 自然流下の抜取能力（口径別 L/min。⑤ 燃料抜取の設定） */
-  gravity?: Record<number, number>;
+  /** ローリーでの抜取の設定（⑤ 燃料抜取の設定。① で抜取能力を変えたときはその値） */
+  lorry?: LorrySetting;
   /** 循環経路：末端部として選んだ配管 */
   flushPipes?: string[];
   /** 循環経路：当日のタンク・ポンプ（無ければ、経路が作れる組み合わせを1つ選んで試す） */

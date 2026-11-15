@@ -115,3 +115,71 @@ export function stepFlow(
   }
   return null;
 }
+
+/** 当日の選択などで決まる経路の種類（循環・移送・消火試験・ユーザー定義の作業の経路） */
+export type RouteFlowKind = "flush" | "transfer" | "fire" | "route";
+
+/** 図面・凡例に出す流れ（同じ経路を使う工程はまとめる） */
+export type RouteFlowGroup = {
+  key: string;
+  /** 凡例の名前（使う工程つき） */
+  label: string;
+  color: string;
+  /** この経路を使う工程の番号 */
+  steps: number[];
+  pipeIds: string[];
+  /** 配管ID → 流れの上流側ノードID */
+  directions: Map<string, string>;
+};
+
+/** 経路ごとの流れの色（燃料抜取の抜取：青・充填：緑と同じく、流れの種類ごとに色を分ける） */
+export const ROUTE_FLOW_COLORS = {
+  flush: "#9333ea",
+  issue: "#9333ea",
+  move: "#d97706",
+  water: "#2563eb",
+  foam: "#ea580c",
+  route: "#9333ea",
+} as const;
+
+/**
+ * 工程ごとの経路（stepRoutes）を、流れの種類ごとにまとめて名前と色を付ける。
+ * 燃料抜取の「抜取の流れ（抜取系統）」「充填ライン」と同じく、図面では種類ごとの色と向きで描き、凡例に並べる。
+ */
+export function routeFlowGroups(
+  stepRoutes: Record<number, { nodeIds: string[]; pipeIds: string[] }> | undefined,
+  steps: string[],
+  kind: RouteFlowKind
+): RouteFlowGroup[] {
+  const groups: (RouteFlowGroup & { id: string })[] = [];
+  Object.entries(stepRoutes ?? {})
+    .map(([i, r]) => [Number(i), r] as const)
+    .filter(([, r]) => r.pipeIds.length)
+    .sort(([a], [b]) => a - b)
+    .forEach(([i, r]) => {
+      const id = `${r.nodeIds[0]}|${r.pipeIds.join(",")}`;
+      const same = groups.find((x) => x.id === id);
+      if (same) return void same.steps.push(i);
+      const directions = new Map<string, string>();
+      r.pipeIds.forEach((pid, k) => directions.set(pid, r.nodeIds[k]));
+      groups.push({ id, key: `route-${groups.length}`, label: "", color: "", steps: [i], pipeIds: r.pipeIds, directions });
+    });
+  return groups.map((grp, n) => {
+    const names = grp.steps.map((i) => steps[i] ?? `工程${i}`);
+    const foam = names.some((s) => s.includes("泡"));
+    const [name, color] =
+      kind === "flush"
+        ? ["循環の流れ（循環経路）", ROUTE_FLOW_COLORS.flush]
+        : kind === "transfer"
+          ? n === 0
+            ? ["移送の流れ（払出系統）", ROUTE_FLOW_COLORS.issue]
+            : ["移送の流れ（移送系統）", ROUTE_FLOW_COLORS.move]
+          : kind === "fire"
+            ? foam
+              ? ["泡の流れ（泡系統）", ROUTE_FLOW_COLORS.foam]
+              : ["水の流れ（水系統）", ROUTE_FLOW_COLORS.water]
+            : [groups.length > 1 ? `作業の流れ${n + 1}` : "作業の流れ", ROUTE_FLOW_COLORS.route];
+    const { key, steps: used, pipeIds, directions } = grp;
+    return { key, label: `${name}：${names.join("・")}`, color, steps: used, pipeIds, directions };
+  });
+}

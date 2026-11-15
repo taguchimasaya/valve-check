@@ -69,6 +69,8 @@ export type StoreAction =
   | { action: "deletePlan"; id: string }
   /** チェックリストの確認（承認）。approve=false で取り消し */
   | { action: "approvePlan"; id: string; approve: boolean }
+  /** チェックリストの周期だけを変える（内容は変わらないので承認は外さない） */
+  | { action: "setPlanPeriod"; id: string; period: string | null }
   | { action: "startExecution"; planId: string; id: string }
   | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
   | { action: "clearOutages" }

@@ -475,47 +475,53 @@ export function planIsolation(g: Graph, targets: Target[], opts: IsolationOption
 
 // ───────────── 抜取量・抜取時間の試算 ─────────────
 
-/** 自然流下での概算排出量（L/min）。口径別の目安値。 */
-export const GRAVITY_LPM: Record<number, number> = { 25: 40, 40: 90, 50: 150, 80: 350 };
-
-export type DrainEstimate = {
-  perDrain: { id: string; method: "pump" | "gravity"; rateLpm: number }[];
-  totalLpm: number;
-  minutes: number | null;
-  portableMinutes: number | null;
-  drums: number;
-  lorries: number;
+/** ローリーでの抜取の設定（⑤ 燃料抜取のルール。抜取能力は ① の作成画面でも変えられる） */
+export type LorrySetting = {
+  /** ローリーの抜取能力（L/min） */
+  lpm: number;
+  /** ローリー1台の容量（kL） */
+  capacityKL: number;
+  /** 用意できるローリーの台数 */
+  count: number;
 };
 
-export function estimateDrain(
-  g: Graph,
-  drainIds: string[],
-  volumeL: number,
-  portableLpm: number,
-  /** 自然流下の能力（口径別。省略時は既定値） */
-  gravity: Record<number, number> = GRAVITY_LPM
-): DrainEstimate {
+export const DEFAULT_LORRY: LorrySetting = { lpm: 500, capacityKL: 16, count: 1 };
+
+/**
+ * 抜取時間の試算。抜き取りは1か所で行う前提：
+ * - 範囲内に固定の抜取ポンプがあるドレン口があれば、そのポンプで抜く（時間＝抜取量 ÷ ポンプ能力。複数あれば能力の大きいもの）
+ * - 無ければドレン口からローリーで抜く（時間＝抜取量 ÷ ローリーの抜取能力。容量を超える分は次のローリーで順に抜く）
+ */
+export type DrainEstimate = {
+  method: "pump" | "lorry" | "none";
+  perDrain: { id: string; method: "pump" | "lorry"; rateLpm: number }[];
+  /** 抜き取りに使うドレン口（ポンプのとき） */
+  pumpDrain: string | null;
+  rateLpm: number;
+  minutes: number | null;
+  /** ローリーで抜くときの必要台数（容量から。ポンプのときは 0） */
+  lorriesNeeded: number;
+  lorry: LorrySetting;
+};
+
+export function estimateDrain(g: Graph, drainIds: string[], volumeL: number, lorry: LorrySetting = DEFAULT_LORRY): DrainEstimate {
   const perDrain = drainIds.map((id) => {
     const n = g.nodeById.get(id)!;
-    if (n.drainPumpLpm) return { id, method: "pump" as const, rateLpm: n.drainPumpLpm };
-    return { id, method: "gravity" as const, rateLpm: gravity[n.drainSizeA ?? 50] ?? GRAVITY_LPM[n.drainSizeA ?? 50] ?? 100 };
+    return n.drainPumpLpm
+      ? { id, method: "pump" as const, rateLpm: n.drainPumpLpm }
+      : { id, method: "lorry" as const, rateLpm: lorry.lpm };
   });
-  // 同じ抜取ポンプにつながるドレン口が複数あっても、ポンプの能力は1台分
-  const pumpSystems = new Map<string, number>();
-  let totalLpm = 0;
-  perDrain.forEach((d) => {
-    const sys = g.nodeById.get(d.id)!.drainSystem;
-    if (d.method === "pump" && sys) pumpSystems.set(sys, Math.max(pumpSystems.get(sys) ?? 0, d.rateLpm));
-    else totalLpm += d.rateLpm;
-  });
-  pumpSystems.forEach((lpm) => (totalLpm += lpm));
+  const pumps = perDrain.filter((d) => d.method === "pump").sort((a, b) => b.rateLpm - a.rateLpm);
+  const method = pumps.length ? "pump" : perDrain.length ? "lorry" : "none";
+  const rateLpm = method === "pump" ? pumps[0].rateLpm : method === "lorry" ? lorry.lpm : 0;
   return {
+    method,
     perDrain,
-    totalLpm,
-    minutes: totalLpm > 0 ? volumeL / totalLpm : null,
-    portableMinutes: portableLpm > 0 ? volumeL / portableLpm : null,
-    drums: Math.ceil(volumeL / 200),
-    lorries: Math.ceil(volumeL / 16000),
+    pumpDrain: pumps[0]?.id ?? null,
+    rateLpm,
+    minutes: rateLpm > 0 ? volumeL / rateLpm : null,
+    lorriesNeeded: method === "lorry" && lorry.capacityKL > 0 ? Math.ceil(volumeL / (lorry.capacityKL * 1000)) : 0,
+    lorry,
   };
 }
 

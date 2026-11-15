@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import PlanApproval from "@/components/piping/PlanApproval";
+import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
   type DiagramHandle,
@@ -62,6 +63,9 @@ export default function FieldPage() {
   const [importInfo, setImportInfo] = useState<string[] | null>(null);
   // 一覧画面：検索語、プレビュー表示中のチェックリスト（点検記録つきの場合は execId も）
   const [search, setSearch] = useState("");
+  // 「新しい点検を開始」の絞り込み：機器名×周期（入力付きプルダウン、部分一致）
+  const [equipQuery, setEquipQuery] = useState("");
+  const [periodQuery, setPeriodQuery] = useState("");
   const [preview, setPreview] = useState<{ planId: string; execId?: string } | null>(null);
 
 
@@ -267,7 +271,19 @@ export default function FieldPage() {
     const execHit = (e: Execution) => !q || normalize(e.planName).includes(q) || planHit(planById.get(e.planId));
     const running = executions.filter((e) => e.status === "in_progress" && execHit(e));
     const completed = executions.filter((e) => e.status === "completed" && execHit(e));
-    const shownPlans = plans.filter((p) => !q || planHit(p));
+    // 機器名×周期の絞り込み（何も入れなければ全件）
+    const equipOf = new Map(plans.map((p) => [p.id, planEquipment(p, g)]));
+    const equipOptions = [...new Set(plans.flatMap((p) => equipOf.get(p.id) ?? []))].sort((a, b) => a.localeCompare(b, "ja"));
+    const periodOpts = periodOptions(plans);
+    const eq = normalize(equipQuery.trim());
+    const pq = normalize(periodQuery.trim());
+    const filtered = !!(eq || pq);
+    const shownPlans = plans.filter(
+      (p) =>
+        (!q || planHit(p)) &&
+        (!eq || [p.name, ...(equipOf.get(p.id) ?? [])].some((t) => normalize(t).includes(eq))) &&
+        (!pq || normalize(p.period ?? "").includes(pq))
+    );
 
     async function deletePlan(p: SavedPlan) {
       const n = executions.filter((e) => e.planId === p.id).length;
@@ -374,6 +390,56 @@ export default function FieldPage() {
 
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">新しい点検を開始</p>
+            {plans.length > 0 && (
+              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_12rem_auto] sm:items-end">
+                <label className="text-xs text-zinc-500">
+                  機器名
+                  <input
+                    type="search"
+                    list="field-equip-options"
+                    value={equipQuery}
+                    onChange={(e) => setEquipQuery(e.target.value)}
+                    placeholder="選ぶか入力（例：STR-RA1、T-104）"
+                    className="mt-0.5 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                <label className="text-xs text-zinc-500">
+                  周期
+                  <input
+                    type="search"
+                    list="field-period-options"
+                    value={periodQuery}
+                    onChange={(e) => setPeriodQuery(e.target.value)}
+                    placeholder="選ぶか入力"
+                    className="mt-0.5 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                <span className="pb-2 text-xs whitespace-nowrap text-zinc-500">
+                  {filtered ? `${shownPlans.length} / ${plans.length}件` : `全${plans.length}件`}
+                  {filtered && (
+                    <button
+                      onClick={() => {
+                        setEquipQuery("");
+                        setPeriodQuery("");
+                      }}
+                      className="ml-2 underline"
+                    >
+                      クリア
+                    </button>
+                  )}
+                </span>
+                <datalist id="field-equip-options">
+                  {equipOptions.map((o) => (
+                    <option key={o} value={o} />
+                  ))}
+                </datalist>
+                <datalist id="field-period-options">
+                  {periodOpts.map((o) => (
+                    <option key={o} value={o} />
+                  ))}
+                </datalist>
+              </div>
+            )}
             {plans.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">
                 チェックリストがありません。<Link href="/piping/planner" className="text-emerald-700 underline">①で作成</Link>
@@ -394,6 +460,7 @@ export default function FieldPage() {
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
                         {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}
                       </p>
+                      <PlanPeriodField plan={p} act={act} />
                       {p.diagramVersionId && diagramInfo.versionId && p.diagramVersionId !== diagramInfo.versionId && (
                         <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
                           ⚠ 現在と違う版の系統図で作成されています。① で作り直してください。
@@ -928,4 +995,54 @@ function safeDecode(t: string) {
 // 全角・半角、大文字・小文字の違いを無視して検索する
 function normalize(t: string) {
   return t.normalize("NFKC").toLowerCase();
+}
+
+/** 一覧のチェックリストの周期。入力付きプルダウンで選ぶか入力し、確定（Enter・フォーカスを外す）で保存する */
+function PlanPeriodField({
+  plan,
+  act,
+}: {
+  plan: Pick<SavedPlan, "id" | "period">;
+  act: (a: { action: "setPlanPeriod"; id: string; period: string | null }) => Promise<unknown>;
+}) {
+  const [value, setValue] = useState(plan.period ?? "");
+  const [saving, setSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(plan.period ?? "");
+  // ほかの端末で変わったときは表示を合わせる（入力中でなければ）
+  if ((plan.period ?? "") !== lastSaved && !saving) {
+    setLastSaved(plan.period ?? "");
+    setValue(plan.period ?? "");
+  }
+  const commit = async () => {
+    const v = value.trim();
+    if (v === (plan.period ?? "")) return;
+    setSaving(true);
+    try {
+      await act({ action: "setPlanPeriod", id: plan.id, period: v || null });
+      setLastSaved(v);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+      setValue(plan.period ?? "");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <label className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
+      周期
+      <input
+        list="field-period-options"
+        value={value}
+        maxLength={PERIOD_MAX}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        placeholder="未設定"
+        className={`w-28 rounded border px-1.5 py-0.5 text-xs text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 ${
+          value ? "border-zinc-300 dark:border-zinc-700" : "border-dashed border-zinc-300 dark:border-zinc-700"
+        }`}
+      />
+      {saving && <span>保存中…</span>}
+    </label>
+  );
 }

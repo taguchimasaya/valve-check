@@ -301,23 +301,19 @@ export default function RulesPage() {
               </Field>
             </Group>
             <Group title="時間の試算">
-              <Field label="可搬ポンプ・充填の流量（初期値）">
+              <Field label="ドレン口からローリーで抜き取るとき（抜取ポンプの無いドレン口）">
                 <div className="flex flex-wrap gap-4 text-sm">
-                  <NumberBox label="可搬ポンプ" unit="L/min" value={d.drain.portableLpm} onChange={(v) => update({ drain: { ...d.drain, portableLpm: v } })} />
-                  <NumberBox label="充填" unit="L/min" value={d.drain.fillLpm} onChange={(v) => update({ drain: { ...d.drain, fillLpm: v } })} />
+                  <NumberBox label="抜取能力（① で変更可）" unit="L/min" value={d.drain.lorryLpm} onChange={(v) => update({ drain: { ...d.drain, lorryLpm: v } })} />
+                  <NumberBox label="1台の容量" unit="kL" value={d.drain.lorryCapacityKL} onChange={(v) => update({ drain: { ...d.drain, lorryCapacityKL: v } })} />
+                  <NumberBox label="台数" unit="台" value={d.drain.lorryCount} onChange={(v) => update({ drain: { ...d.drain, lorryCount: v } })} />
                 </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  抜き取りは1か所で行う前提です。範囲に固定の抜取ポンプがあるドレン口があればそのポンプの能力（④ の「抜取ポンプ能力」）で、無ければローリーの抜取能力で時間を計算します。抜取量が1台の容量を超えると、必要な台数を出します（1台ずつ順に抜く時間）。
+                </p>
               </Field>
-              <Field label="自然流下の能力（口径別）">
+              <Field label="充填の流量（初期値）">
                 <div className="flex flex-wrap gap-4 text-sm">
-                  {(["25", "40", "50", "80"] as const).map((k) => (
-                    <NumberBox
-                      key={k}
-                      label={`${k}A`}
-                      unit="L/min"
-                      value={d.drain.gravityLpm[k]}
-                      onChange={(v) => update({ drain: { ...d.drain, gravityLpm: { ...d.drain.gravityLpm, [k]: v } } })}
-                    />
-                  ))}
+                  <NumberBox label="充填" unit="L/min" value={d.drain.fillLpm} onChange={(v) => update({ drain: { ...d.drain, fillLpm: v } })} />
                 </div>
               </Field>
             </Group>
@@ -749,11 +745,6 @@ function CustomEditor({
               onChange={(c) => setCalc({ expandToDrain: c })}
             />
             <div className="flex flex-wrap gap-4">
-              <label className="flex items-center gap-1">
-                可搬ポンプの能力
-                <input type="number" value={calc.portableLpm} onChange={(e) => setCalc({ portableLpm: Number(e.target.value) })} className={`${input} w-24`} />
-                L/min
-              </label>
               <label className="flex items-center gap-1">
                 充填の流量
                 <input type="number" value={calc.fillLpm} onChange={(e) => setCalc({ fillLpm: Number(e.target.value) })} className={`${input} w-24`} />
