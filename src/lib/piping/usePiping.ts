@@ -6,6 +6,7 @@ import { buildGraph, type Graph } from "./graph";
 import type { Facility } from "./types";
 import { dispatch, fetchStore, type PipingStore, type StoreAction } from "./store";
 import type { DiagramPayload, DiagramSource } from "./diagramDb";
+import { authFetch } from "../auth";
 
 // ───── 拠点（施設）の選択：端末ごとに記憶する ─────
 export const DEFAULT_FACILITY = "virtual-airport";
@@ -51,7 +52,7 @@ let facilitiesCache: Promise<FacilityItem[]> | null = null;
 export function useFacilities(): FacilityItem[] | null {
   const [list, setList] = useState<FacilityItem[] | null>(null);
   useEffect(() => {
-    facilitiesCache ??= fetch("/api/piping/facilities", { cache: "no-store" })
+    facilitiesCache ??= authFetch("/api/piping/facilities", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { facilities: [] }))
       .then((j: { facilities: FacilityItem[] }) => j.facilities)
       .catch(() => []);
@@ -99,7 +100,7 @@ function loadDiagram() {
   if (diagramRequested || typeof window === "undefined") return;
   diagramRequested = true;
   const id = currentFacilityId();
-  fetch(`/api/piping/diagram?facility=${encodeURIComponent(id)}`, { cache: "no-store" })
+  authFetch(`/api/piping/diagram?facility=${encodeURIComponent(id)}`, { cache: "no-store" })
     .then(async (res) => {
       if (!res.ok) throw new Error((await res.text()) || "系統図を読み込めませんでした");
       return (await res.json()) as DiagramPayload;

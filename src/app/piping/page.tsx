@@ -8,6 +8,7 @@ import { liveDiagram, OUTAGE_COLOR } from "@/lib/piping/live";
 import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/piping/operations";
 import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
+import UserBadge from "@/components/UserBadge";
 
 const menus = [
   {
@@ -68,6 +69,7 @@ export default function PipingHome() {
         <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（試作）</h1>
           <FacilitySwitcher />
+          <UserBadge />
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
             既存の機器マスター・チェックリストとは別に保存します
           </span>

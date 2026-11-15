@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { requireAuth } from "@/lib/serverAuth";
 import { getFacility } from "@/lib/piping/facility";
 import {
   rowsToFacility,
@@ -30,16 +30,16 @@ function builtin(notice: string): DiagramPayload {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
   const params = new URL(request.url).searchParams;
   const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
   // version を指定すると、その版（下書き・保管を含む）を返す（④ 系統図データ管理のプレビュー用）
   const versionParam = params.get("version");
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (process.env.PIPING_DIAGRAM === "builtin" || !url || !key) {
+  if (process.env.PIPING_DIAGRAM === "builtin") {
     return Response.json(builtin("プログラム内の仮想施設を表示しています（DBを読まない設定）"));
   }
-  const db = createClient(url, key, { auth: { persistSession: false } });
+  const db = auth.client;
   try {
     const base = db.from("piping_diagram_versions").select("id, version_no");
     const { data: version, error: vErr } = await (versionParam

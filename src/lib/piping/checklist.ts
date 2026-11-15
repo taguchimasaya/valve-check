@@ -67,6 +67,8 @@ export type SavedPlan = {
   dayDefaults?: DayParams;
   purpose: string;
   createdAt: string;
+  /** 最後に保存した人 */
+  updatedBy?: string;
   source: "planner" | "excel";
   targets: Target[];
   regionPipeIds: string[];

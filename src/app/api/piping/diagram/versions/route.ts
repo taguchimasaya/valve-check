@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireAuth } from "@/lib/serverAuth";
 import { validateDiagram, type DiagramData, type Issue } from "@/lib/piping/diagramData";
 
 // 系統図データの版の管理API（④ 系統図データ管理）。
@@ -10,12 +11,6 @@ import { validateDiagram, type DiagramData, type Issue } from "@/lib/piping/diag
 
 const DEFAULT_FACILITY = "virtual-airport";
 
-function db() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error("Supabaseの接続情報が設定されていません");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 const fail = (message: string, status = 400, extra: object = {}) => Response.json({ error: message, ...extra }, { status });
 
@@ -37,11 +32,13 @@ async function count(c: SupabaseClient, table: string, versionId: string, extra?
 }
 
 export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
   const params = new URL(request.url).searchParams;
   const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
   const versionId = params.get("version");
   try {
-    const c = db();
+    const c = auth.client;
     if (!versionId) {
       const { data, error } = await c
         .from("piping_diagram_versions")
@@ -116,8 +113,12 @@ async function insertChunks(c: SupabaseClient, table: string, rows: object[]) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
   const a = (await request.json()) as Action;
-  const c = db();
+  const c = auth.client;
+  // 取り込んだ人はログイン中の利用者（画面から送られた名前は使わない）
+  if (a.action === "import") a.createdBy = auth.name;
   try {
     if (a.action === "import") {
       const d = a.data;

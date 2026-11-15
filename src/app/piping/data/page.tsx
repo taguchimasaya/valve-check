@@ -15,6 +15,7 @@ import {
 } from "@/lib/piping/diagramData";
 import { selectFacility, useDiagramInfo } from "@/lib/piping/usePiping";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
+import { authFetch } from "@/lib/auth";
 
 // ④ 系統図データ管理：系統図の版の一覧、Excel での書き出し・取り込み（下書きの版として登録）、使用中への切り替え。
 
@@ -38,7 +39,7 @@ const STATUS: Record<Version["status"], { label: string; cls: string }> = {
 };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: "no-store", ...init });
+  const res = await authFetch(url, { cache: "no-store", ...init });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body.error || res.statusText), { issues: body.issues as Issue[] | undefined });
   return body as T;

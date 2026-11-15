@@ -505,6 +505,7 @@ export default function ControlPage() {
                       className={`rounded px-2 py-1 ${ev.type === "step" ? "bg-emerald-100 font-semibold text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200" : "bg-zinc-50 dark:bg-zinc-900"}`}
                     >
                       <span className="text-zinc-400">{new Date(ev.at).toLocaleTimeString("ja-JP")}</span> {name}：{ev.text}
+                      {ev.by && <span className="ml-1 text-zinc-400">（{ev.by}）</span>}
                     </li>
                   ))}
               </ul>

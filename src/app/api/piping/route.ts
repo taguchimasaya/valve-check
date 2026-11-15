@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireAuth } from "@/lib/serverAuth";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
 import { outageDefOf } from "@/lib/piping/outages";
@@ -71,12 +72,6 @@ async function saveFile(facility: string, store: PipingStore) {
 // ───── 本番（Supabase）保存 ─────
 const rowId = (facility: string) => (facility === DEFAULT_FACILITY ? "main" : facility);
 
-function db() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error("Supabaseの接続情報が設定されていません");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 // テーブル未作成のエラー（PostgreSQL: 42P01、PostgREST: PGRST205）
 const isMissingTable = (code?: string) => code === "42P01" || code === "PGRST205";
@@ -84,8 +79,8 @@ const isMissingTable = (code?: string) => code === "42P01" || code === "PGRST205
 const TABLE_MISSING =
   "配管系統図の保存テーブル（piping_store）がありません。supabase/piping_store.sql を Supabase の SQL Editor で実行してください。";
 
-async function loadDb(facility: string): Promise<PipingStore> {
-  const { data, error } = await db().from("piping_store").select("data, version").eq("id", rowId(facility)).maybeSingle();
+async function loadDb(client: SupabaseClient, facility: string): Promise<PipingStore> {
+  const { data, error } = await client.from("piping_store").select("data, version").eq("id", rowId(facility)).maybeSingle();
   if (error) throw new Error(isMissingTable(error.code) ? TABLE_MISSING : error.message);
   const store = normalize(data?.data as Partial<PipingStore> | undefined);
   store.version = data?.version ?? 0;
@@ -96,12 +91,11 @@ async function loadDb(facility: string): Promise<PipingStore> {
  * 読み込み → 更新 → 書き込み。サーバーが複数台で同時に動いても上書きし合わないよう、
  * version が読み込み時と同じときだけ書き込み、違えば読み直してやり直す（楽観的排他）。
  */
-async function updateDb(facility: string, action: StoreAction): Promise<Response> {
-  const client = db();
+async function updateDb(client: SupabaseClient, facility: string, action: StoreAction, actor: string): Promise<Response> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const store = await loadDb(facility);
+    const store = await loadDb(client, facility);
     const before = store.version;
-    const err = apply(store, action);
+    const err = applyAs(store, action, actor);
     if (err) return new Response(err, { status: 400 });
     store.version = before + 1;
     const payload = { data: store, version: store.version, updated_at: new Date().toISOString() };
@@ -127,6 +121,29 @@ function stepTargets(store: PipingStore, execId: string, step: number) {
     // 循環・移送の工程は「完了」ボタンを押すまで完了にしない
     (manualStepsOf(plan).includes(step) && !exec.manualDone?.[step]);
   return { exec, plan, waitingSupply, codes: plan.rows.filter((r) => r.states[step]).map((r) => r.code) };
+}
+
+/**
+ * 操作を当てはめ、この操作で増えた記録・経過・操作記録に「誰が」を付ける（ログイン中の利用者名）。
+ */
+function applyAs(store: PipingStore, a: StoreAction, actor: string): string | null {
+  const start = Date.now() - 1;
+  const err = apply(store, a);
+  if (err) return err;
+  const isNew = (at?: string) => !!at && Date.parse(at) >= start;
+  store.log.forEach((e) => isNew(e.at) && !e.by && (e.by = actor));
+  store.executions.forEach((x) => {
+    x.events.forEach((e) => isNew(e.at) && !e.by && (e.by = actor));
+    Object.values(x.records).forEach((r) => {
+      if (isNew(r.checkedAt) && !r.by) r.by = actor;
+      if (isNew(r.confirmedAt) && !r.confirmedBy) r.confirmedBy = actor;
+    });
+  });
+  if (a.action === "savePlan") {
+    const plan = store.plans.find((p) => p.id === a.plan.id);
+    if (plan) plan.updatedBy = actor;
+  }
+  return null;
 }
 
 function apply(store: PipingStore, a: StoreAction): string | null {
@@ -316,15 +333,19 @@ function isOperate(states: (string | null)[], step: number) {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
   try {
     const facility = facilityOf(request);
-    return Response.json(BACKEND === "supabase" ? await loadDb(facility) : await loadFile(facility));
+    return Response.json(BACKEND === "supabase" ? await loadDb(auth.client, facility) : await loadFile(facility));
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
   const action = (await request.json()) as StoreAction;
   let facility: string;
   try {
@@ -334,14 +355,14 @@ export async function POST(request: Request) {
   }
   if (BACKEND === "supabase") {
     try {
-      return await updateDb(facility, action);
+      return await updateDb(auth.client, facility, action, auth.name);
     } catch (e) {
       return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   }
   const run = queue.then(async () => {
     const store = await loadFile(facility);
-    const err = apply(store, action);
+    const err = applyAs(store, action, auth.name);
     if (err) return new Response(err, { status: 400 });
     store.version += 1;
     await saveFile(facility, store);

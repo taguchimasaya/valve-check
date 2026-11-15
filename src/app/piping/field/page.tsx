@@ -744,7 +744,7 @@ export default function FieldPage() {
                     </span>
                     <span className="block truncate text-xs text-zinc-500">{r.name}</span>
                     {r.note && r.states[step] === "open" && <span className="block text-xs font-medium text-amber-700">※{r.note}</span>}
-                    {rec?.confirmedAt && <span className="text-[11px] text-green-700">制御室確認済み</span>}
+                    {rec?.confirmedAt && <span className="text-[11px] text-green-700">制御室確認済み{rec.confirmedBy ? `（${rec.confirmedBy}）` : ""}</span>}
                     {r.nodeId && <span className="block text-[11px] text-sky-600">📍 タップで図面上の位置を表示</span>}
                   </div>
                   <button

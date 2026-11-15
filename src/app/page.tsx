@@ -1,4 +1,5 @@
 import Link from "next/link";
+import UserBadge from "@/components/UserBadge";
 
 const features = [
   {
@@ -46,9 +47,12 @@ export default function Home() {
               バルブ点検アプリ
             </h1>
           </div>
-          <Link href="/settings" className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300">
-            <span className="text-2xl">⚙️</span>
-          </Link>
+          <div className="flex items-center gap-4">
+            <UserBadge />
+            <Link href="/settings" className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300">
+              <span className="text-2xl">⚙️</span>
+            </Link>
+          </div>
         </div>
         <p className="mt-2 text-zinc-600 dark:text-zinc-400">
           QRコードでバルブ点検を担保する現場点検システムです。開発中のため、下記機能は順次追加されます。

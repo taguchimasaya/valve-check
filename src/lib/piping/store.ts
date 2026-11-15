@@ -4,6 +4,7 @@ import type { OutageKey } from "./outages";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { ChecklistRules } from "./rules";
+import { authFetch } from "../auth";
 
 // 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
 // 保存先は API（/api/piping）側で切り替わる：本番は Supabase の piping_store テーブル、
@@ -12,10 +13,14 @@ import type { ChecklistRules } from "./rules";
 export type ValveRecord = {
   result: "OK" | "NG";
   checkedAt: string;
+  /** 記録した人（ログイン中の利用者） */
+  by?: string;
   confirmedAt?: string;
+  /** 制御室で確認した人 */
+  confirmedBy?: string;
 };
 
-export type ExecEvent = { at: string; type: "valve" | "step" | "info"; text: string };
+export type ExecEvent = { at: string; type: "valve" | "step" | "info"; text: string; /** 操作した人 */ by?: string };
 
 export type Execution = {
   id: string;
@@ -118,13 +123,13 @@ export function execPlan(plan: SavedPlan, exec: Execution): SavedPlan {
 const storeUrl = (facility: string) => `/api/piping?facility=${encodeURIComponent(facility)}`;
 
 export async function fetchStore(facility: string): Promise<PipingStore> {
-  const res = await fetch(storeUrl(facility), { cache: "no-store" });
+  const res = await authFetch(storeUrl(facility), { cache: "no-store" });
   if (!res.ok) throw new Error((await res.text()) || "配管系統図のデータを読み込めませんでした");
   return res.json();
 }
 
 export async function dispatch(facility: string, action: StoreAction): Promise<PipingStore> {
-  const res = await fetch(storeUrl(facility), {
+  const res = await authFetch(storeUrl(facility), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(action),

@@ -1,15 +1,14 @@
-import { createClient } from "@supabase/supabase-js";
+import { requireAuth } from "@/lib/serverAuth";
 
 // 拠点（施設）の一覧。DBの piping_facilities と、それぞれの使用中の版。
 // DBを読めないときは、プログラム内の仮想施設だけを返す。
 
 const DEFAULT = { id: "virtual-airport", name: "仮想空港 給油施設（試作）", activeVersionNo: null };
 
-export async function GET() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return Response.json({ facilities: [DEFAULT] });
-  const db = createClient(url, key, { auth: { persistSession: false } });
+export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof Response) return auth;
+  const db = auth.client;
   const { data: facilities, error } = await db.from("piping_facilities").select("*").order("id");
   if (error || !facilities?.length) return Response.json({ facilities: [DEFAULT] });
   const { data: active } = await db.from("piping_diagram_versions").select("facility_id, version_no").eq("status", "active");
