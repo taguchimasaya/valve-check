@@ -3,6 +3,8 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import PlanApproval from "@/components/piping/PlanApproval";
+import ApprovalBoard from "@/components/piping/ApprovalBoard";
+import { approvalStages, isApprover } from "@/lib/piping/approval";
 import { PERIOD_MAX, periodOptions } from "@/lib/piping/period";
 import { useMe } from "@/lib/auth";
 import { can } from "@/lib/roles";
@@ -83,7 +85,10 @@ const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function PlannerPage() {
   // ⑤ ルールへのリンクは管理者だけに出す
-  const isAdmin = can(useMe()?.roles, "admin");
+  const me = useMe();
+  const isAdmin = can(me?.roles, "admin");
+  // ① の作成は作業者（現場担当者）だけ。チームリーダー・G長・制御室は承認の画面になる
+  const canCreate = can(me?.roles, "create");
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act } = usePipingStore(0);
@@ -695,7 +700,7 @@ export default function PlannerPage() {
       await act({ action: "savePlan", plan });
       setEditingId(plan.id);
       setName(plan.name);
-      setMessage({ type: "ok", text: `「${plan.name}」を保存しました。現場点検画面から実施できます。` });
+      setMessage({ type: "ok", text: `「${plan.name}」を承認依頼しました（${approvalStages(store?.rules).length ? "チームリーダーの承認待ち" : ""}）。差し戻されたときは、この画面に表示されます。` });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof Error ? e.message : String(e) });
     }
@@ -751,7 +756,26 @@ export default function PlannerPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const plannerPlans = (store?.plans ?? []).filter((p) => p.source === "planner");
+
+  // 作成しない人（チームリーダー・G長・制御室）：承認の画面だけ
+  if (me && !canCreate) {
+    return (
+      <main className="min-h-screen bg-zinc-50 px-4 py-6 dark:bg-black">
+        <div className="mx-auto max-w-4xl">
+          <Link href="/piping" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+            ← 配管系統図メニュー
+          </Link>
+          <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">① チェックリストの承認</h1>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">現場担当者が作成したチェックリストを確認して、承認または差し戻しします。</p>
+          <div className="mt-4">
+            <ApprovalBoard graph={g} store={store} base={baseline} act={act} />
+          </div>
+        </div>
+      </main>
+    );
+  }
+  // 差し戻されたチェックリスト（作成者が直して承認依頼し直す）
+  const rejectedPlans = (store?.plans ?? []).filter((p) => p.rejection);
 
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-6 dark:bg-black">
@@ -1486,7 +1510,7 @@ export default function PlannerPage() {
                     disabled={!rows.length}
                     className="col-span-2 rounded-lg bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
                   >
-                    {editingId ? "チェックリストを上書き保存" : "チェックリストとして保存"}
+                    {editingId ? "直して承認依頼する" : "承認依頼する"}
                   </button>
                   <button
                     onClick={exportExcel}
@@ -1506,50 +1530,61 @@ export default function PlannerPage() {
               </>
             )}
 
-            <Panel title={`保存済みチェックリスト（${plannerPlans.length}）`}>
-              {plannerPlans.length === 0 ? (
-                <p className="text-sm text-zinc-400">まだありません。</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {plannerPlans.map((p) => (
-                    <li key={p.id} className="flex items-center gap-2 text-sm">
-                      <span className="shrink-0 rounded bg-zinc-100 px-1.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                        {TYPE_TAG[workTypeOf(p)]}
-                      </span>
-                      <button onClick={() => loadPlan(p)} className="flex-1 truncate text-left hover:underline" title={p.name}>
-                        {p.name}
-                      </button>
-                      <span className="text-xs text-zinc-500">{p.summary.volumeL ? formatLiters(p.summary.volumeL) : ""}</span>
-                      <PlanApproval plan={p} act={act} compact />
-                      <a href={`/piping/print?plan=${p.id}`} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">
-                        PDF
-                      </a>
-                      <button
-                        onClick={() => {
-                          if (confirm(`「${p.name}」を削除しますか？（元に戻せません）`)) act({ action: "deletePlan", id: p.id });
-                        }}
-                        className="text-xs text-red-600"
-                      >
-                        削除
-                      </button>
+            {rejectedPlans.length > 0 && (
+              <Panel title={`差し戻されたチェックリスト（${rejectedPlans.length}）`}>
+                <ul className="space-y-2">
+                  {rejectedPlans.map((p) => (
+                    <li key={p.id} className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="shrink-0 rounded bg-zinc-100 px-1.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                          {p.source === "excel" ? "Excel" : TYPE_TAG[workTypeOf(p)]}
+                        </span>
+                        <span className="flex-1 truncate" title={p.name}>
+                          {p.name}
+                        </span>
+                        {p.source === "planner" ? (
+                          <button onClick={() => loadPlan(p)} className="rounded border border-emerald-600 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            直す
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-500">② で取り込み直す</span>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (confirm(`「${p.name}」を削除しますか？（元に戻せません）`)) act({ action: "deletePlan", id: p.id });
+                          }}
+                          className="text-xs text-red-600"
+                        >
+                          削除
+                        </button>
+                      </div>
+                      <div className="mt-0.5">
+                        <PlanApproval plan={p} stages={approvalStages(store?.rules)} />
+                      </div>
                     </li>
                   ))}
                 </ul>
-              )}
-              <Link href="/piping/field" className="mt-3 block text-center text-sm text-emerald-700 hover:underline dark:text-emerald-400">
-                → 現場点検（図面ビュー）へ
-              </Link>
-            </Panel>
+              </Panel>
+            )}
           </aside>
         </div>
       </div>
+      {isApprover(me?.roles) && (
+        <div className="mx-auto mt-6 max-w-[1800px]">
+          <ApprovalBoard graph={g} store={store} base={baseline} act={act} />
+        </div>
+      )}
       {previewPlan && (
         <PlanPreview
           graph={g}
           plan={previewPlan}
           base={baseline}
           onClose={() => setPreviewPlan(null)}
-          startLabel=""
+          startLabel={editingId ? "直して承認依頼する" : "承認依頼する"}
+          onStart={() => {
+            setPreviewPlan(null);
+            save();
+          }}
           pdfHref={null}
         />
       )}

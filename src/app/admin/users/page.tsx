@@ -58,13 +58,14 @@ export default function UsersPage() {
   const [busy, setBusy] = useState(false);
   const [showDisabled, setShowDisabled] = useState(true);
   // 権限・名前の編集中の値（利用者ID → 値）
-  const [edits, setEdits] = useState<Record<string, { roles: Role[]; name: string }>>({});
+  const [edits, setEdits] = useState<Record<string, { roles: Role[]; name: string; notifyEmail: string }>>({});
   // 新しい利用者
-  const [form, setForm] = useState<{ loginId: string; name: string; password: string; roles: Role[] }>({
+  const [form, setForm] = useState<{ loginId: string; name: string; password: string; roles: Role[]; notifyEmail: string }>({
     loginId: "",
     name: "",
     password: "",
     roles: ["worker"],
+    notifyEmail: "",
   });
 
   const load = useCallback(async () => {
@@ -106,7 +107,7 @@ export default function UsersPage() {
   const create = () =>
     run(async () => {
       await post({ action: "create", ...form });
-      setForm({ loginId: "", name: "", password: "", roles: ["worker"] });
+      setForm({ loginId: "", name: "", password: "", roles: ["worker"], notifyEmail: "" });
     }, `利用者「${form.loginId}」を作成しました。ログインIDとパスワードを本人に伝えてください。`);
 
   return (
@@ -187,9 +188,20 @@ export default function UsersPage() {
               作成する
             </button>
           </div>
-          <div className="mt-2">
-            <span className="text-xs text-zinc-500">権限</span>
-            <RoleChecks value={form.roles} onChange={(roles) => setForm({ ...form, roles })} />
+          <div className="mt-2 grid gap-3 md:grid-cols-[1fr_1fr] md:items-end">
+            <div>
+              <span className="text-xs text-zinc-500">権限</span>
+              <RoleChecks value={form.roles} onChange={(roles) => setForm({ ...form, roles })} />
+            </div>
+            <label className="text-sm">
+              <span className="text-xs text-zinc-500">通知先メール（承認依頼などのメールの宛先。空欄なら送らない）</span>
+              <input
+                type="email"
+                value={form.notifyEmail}
+                onChange={(e) => setForm({ ...form, notifyEmail: e.target.value })}
+                className="mt-0.5 block w-full rounded-lg border border-zinc-300 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
+              />
+            </label>
           </div>
         </section>
 
@@ -210,7 +222,7 @@ export default function UsersPage() {
                 <thead>
                   <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
                     <th className="py-1.5 pr-2">ログインID</th>
-                    <th className="pr-2">表示名</th>
+                    <th className="pr-2">表示名・通知先メール</th>
                     <th className="pr-2">権限</th>
                     <th className="pr-2">最終ログイン</th>
                     <th className="pr-2">状態</th>
@@ -222,10 +234,12 @@ export default function UsersPage() {
                     const edit = edits[u.id];
                     const roles = edit?.roles ?? u.roles;
                     const name = edit?.name ?? u.name;
-                    const dirty = u.rolesUnset || (!!edit && (edit.name !== u.name || edit.roles.join() !== u.roles.join()));
+                    const notifyEmail = edit?.notifyEmail ?? u.notifyEmail;
+                    const dirty =
+                      u.rolesUnset || (!!edit && (edit.name !== u.name || edit.roles.join() !== u.roles.join() || edit.notifyEmail !== u.notifyEmail));
                     const isMe = u.id === meId;
-                    const setEdit = (patch: Partial<{ roles: Role[]; name: string }>) =>
-                      setEdits((m) => ({ ...m, [u.id]: { roles, name, ...patch } }));
+                    const setEdit = (patch: Partial<{ roles: Role[]; name: string; notifyEmail: string }>) =>
+                      setEdits((m) => ({ ...m, [u.id]: { roles, name, notifyEmail, ...patch } }));
                     return (
                       <tr key={u.id} className={`border-b border-zinc-100 align-top dark:border-zinc-900 ${u.disabled ? "opacity-50" : ""}`}>
                         <td className="py-2 pr-2">
@@ -239,6 +253,15 @@ export default function UsersPage() {
                             onChange={(e) => setEdit({ name: e.target.value })}
                             disabled={u.disabled}
                             className="w-36 rounded border border-zinc-200 px-1.5 py-1 dark:border-zinc-800 dark:bg-zinc-900"
+                          />
+                          <input
+                            type="email"
+                            value={notifyEmail}
+                            onChange={(e) => setEdit({ notifyEmail: e.target.value })}
+                            disabled={u.disabled}
+                            placeholder="通知先メール"
+                            title="承認依頼などのメールの宛先（空欄なら送らない）"
+                            className="mt-1 block w-36 rounded border border-zinc-200 px-1.5 py-1 text-xs dark:border-zinc-800 dark:bg-zinc-900"
                           />
                         </td>
                         <td className="py-2 pr-2">
@@ -260,7 +283,7 @@ export default function UsersPage() {
                               disabled={busy || !dirty || roles.length === 0}
                               onClick={() =>
                                 run(async () => {
-                                  await post({ action: "update", id: u.id, name, roles });
+                                  await post({ action: "update", id: u.id, name, roles, notifyEmail });
                                   if (isMe) refreshMe();
                                 }, `「${u.loginId}」を保存しました`)
                               }

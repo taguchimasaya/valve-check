@@ -1,62 +1,69 @@
 "use client";
 
-import { useMe } from "@/lib/auth";
-import { can } from "@/lib/roles";
 import type { SavedPlan } from "@/lib/piping/checklist";
-import type { StoreAction } from "@/lib/piping/store";
+import { approvalState, STAGE_LABEL, type ApprovalStage } from "@/lib/piping/approval";
 
 const fmt = (at: string) =>
   new Date(at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /**
- * チェックリストの確認（承認）の状態と、承認者向けの「承認する／取り消す」。
- * 承認はサーバー側（/api/piping の approvePlan）で承認者権限を確かめて付ける。保存し直すと外れる。
+ * チェックリストの承認状況：作成 → チームリーダー → G長 → 制御室（設定による）の各段と、差し戻しの理由。
+ * 承認・差し戻しの操作は ① の承認画面（ApprovalBoard）で行う。
  */
 export default function PlanApproval({
   plan,
-  act,
+  stages,
   compact = false,
 }: {
-  plan: Pick<SavedPlan, "id" | "name" | "approvedAt" | "approvedBy">;
-  act: (a: StoreAction) => Promise<unknown>;
+  plan: Pick<SavedPlan, "approvals" | "rejection" | "updatedBy">;
+  stages: ApprovalStage[];
   compact?: boolean;
 }) {
-  const canApprove = can(useMe()?.roles, "approve");
-  const run = async (approve: boolean) => {
-    if (!approve && !confirm(`「${plan.name}」の承認を取り消しますか？`)) return;
-    try {
-      await act({ action: "approvePlan", id: plan.id, approve });
-    } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
-    }
-  };
+  const { next, complete } = approvalState(plan, stages);
+  if (plan.rejection) {
+    return (
+      <span
+        className="inline-flex shrink-0 flex-wrap items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-800 dark:bg-red-950 dark:text-red-300"
+        title={`${plan.rejection.by}（${STAGE_LABEL[plan.rejection.stage]}）${fmt(plan.rejection.at)}`}
+      >
+        ↩ 差し戻し（{STAGE_LABEL[plan.rejection.stage]}・{plan.rejection.by}）：{plan.rejection.reason}
+      </span>
+    );
+  }
+  if (compact) {
+    return complete ? (
+      <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+        ✔ 承認済み
+      </span>
+    ) : (
+      <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+        {STAGE_LABEL[next!]}の承認待ち
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1">
-      {plan.approvedAt ? (
-        <span
-          className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-          title={`${plan.approvedBy ?? ""} ${fmt(plan.approvedAt)}`}
-        >
-          ✔ 承認済み{compact ? "" : `（${plan.approvedBy ?? "?"}・${fmt(plan.approvedAt)}）`}
-        </span>
-      ) : (
-        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-          未承認
-        </span>
-      )}
-      {canApprove &&
-        (plan.approvedAt ? (
-          <button onClick={() => run(false)} className="text-[11px] text-zinc-500 underline">
-            取消
-          </button>
-        ) : (
-          <button
-            onClick={() => run(true)}
-            className="rounded border border-emerald-600 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400"
-          >
-            承認する
-          </button>
-        ))}
+    <span className="inline-flex shrink-0 flex-wrap items-center gap-0.5 text-[10px]">
+      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">作成 {plan.updatedBy ?? "?"}</span>
+      {stages.map((s) => {
+        const sign = plan.approvals?.[s];
+        return (
+          <span key={s} className="inline-flex items-center gap-0.5">
+            <span className="text-zinc-400">→</span>
+            <span
+              title={sign ? `${sign.by} ${fmt(sign.at)}` : undefined}
+              className={`rounded px-1.5 py-0.5 font-semibold ${
+                sign
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                  : s === next
+                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                    : "bg-zinc-50 text-zinc-400 dark:bg-zinc-900"
+              }`}
+            >
+              {STAGE_LABEL[s]} {sign ? `✔ ${sign.by}` : s === next ? "待ち" : ""}
+            </span>
+          </span>
+        );
+      })}
     </span>
   );
 }

@@ -4,6 +4,7 @@ import type { OutageKey, OutageSetting } from "./outages";
 import type { Operation } from "./operations";
 import type { ValveState } from "./types";
 import type { ChecklistRules } from "./rules";
+import type { ApprovalStage } from "./approval";
 import { authFetch } from "../auth";
 
 // 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
@@ -67,8 +68,10 @@ export type Outage = { key: OutageKey; at: string; note?: string };
 export type StoreAction =
   | { action: "savePlan"; plan: SavedPlan }
   | { action: "deletePlan"; id: string }
-  /** チェックリストの確認（承認）。approve=false で取り消し */
-  | { action: "approvePlan"; id: string; approve: boolean }
+  /** チェックリストの承認（承認フローの次の段）。stage は画面で押した段（ずれていれば受け付けない） */
+  | { action: "approvePlan"; id: string; stage: ApprovalStage }
+  /** 差し戻し：承認をすべて外し、理由を残す */
+  | { action: "rejectPlan"; id: string; reason: string }
   /** チェックリストの周期だけを変える（内容は変わらないので承認は外さない） */
   | { action: "setPlanPeriod"; id: string; period: string | null }
   | { action: "startExecution"; planId: string; id: string }

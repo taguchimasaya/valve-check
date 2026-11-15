@@ -1,5 +1,6 @@
 // チェックリスト作成のルール（拠点ごとにユーザーが編集・登録する）。
 // 保存先は拠点ごとの共有ストア（piping_store の rules）。未登録の項目は既定値を使う。
+import type { ApprovalRules } from "./approval";
 
 /** 消火設備機能試験のルール */
 export type FireTestRules = {
@@ -92,6 +93,8 @@ export type ChecklistRules = {
   blocks?: Partial<Record<BuiltinWorkType, RuleBlock[]>>;
   /** ユーザーが作った作業種別 */
   customTypes?: CustomWorkType[];
+  /** チェックリストの承認フロー（制御室の段の有無） */
+  approval?: Partial<ApprovalRules>;
   updatedAt?: string;
 };
 

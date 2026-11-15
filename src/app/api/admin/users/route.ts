@@ -1,11 +1,12 @@
 import type { User } from "@supabase/supabase-js";
 import { adminClient, displayNameOf, envAdminIds, isDisabled, loginIdOf, requirePerm, rolesOf } from "@/lib/serverAuth";
 import { parseRoles, type Role } from "@/lib/roles";
+import { notifyEmailOf } from "@/lib/approvalMail";
 
 // ユーザー管理 API（管理者のみ）。利用者の作成・権限変更・無効化は service role キーで Supabase Auth を操作する。
 // GET                                        … 利用者の一覧
 // POST {action:"create", loginId, name, password, roles} … 利用者を作成（メールの確認なしですぐ使える）
-// POST {action:"update", id, name?, roles?}  … 名前・権限の変更
+// POST {action:"update", id, name?, roles?, notifyEmail?} … 名前・権限・通知先メール（承認フローのメールの宛先）の変更
 // POST {action:"password", id, password}     … パスワードの再設定
 // POST {action:"disable" | "enable", id}     … 無効化（ログインできなくする）・有効に戻す
 
@@ -18,6 +19,8 @@ export type AdminUser = {
   loginId: string;
   email: string;
   name: string;
+  /** 承認フローのメールの宛先（ログイン用のアドレスとは別。空なら送らない） */
+  notifyEmail: string;
   roles: Role[];
   /** 権限が未設定（作業者として扱っている） */
   rolesUnset: boolean;
@@ -36,6 +39,7 @@ function toAdminUser(u: User): AdminUser {
     loginId: loginIdOf(u.email),
     email: u.email ?? "",
     name: displayNameOf(u),
+    notifyEmail: notifyEmailOf(u) ?? "",
     roles,
     rolesUnset: stored === null,
     envAdmin,
@@ -76,8 +80,8 @@ export async function GET(request: Request) {
 }
 
 type Action =
-  | { action: "create"; loginId: string; name?: string; password: string; roles: Role[] }
-  | { action: "update"; id: string; name?: string; roles?: Role[] }
+  | { action: "create"; loginId: string; name?: string; password: string; roles: Role[]; notifyEmail?: string }
+  | { action: "update"; id: string; name?: string; roles?: Role[]; notifyEmail?: string }
   | { action: "password"; id: string; password: string }
   | { action: "disable" | "enable"; id: string };
 
@@ -105,12 +109,14 @@ export async function POST(request: Request) {
         const users = await listAll(admin);
         if (users.some((u) => loginIdOf(u.email) === loginId)) return fail(`ログインID「${loginId}」はすでに使われています`);
         const name = String(a.name ?? "").trim();
+        const notify = String(a.notifyEmail ?? "").trim();
+        if (notify && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(notify)) return fail("通知先メールの形式が正しくありません");
         const { data, error } = await admin.auth.admin.createUser({
           email,
           password: a.password,
           email_confirm: true,
           app_metadata: { roles },
-          user_metadata: name ? { name } : {},
+          user_metadata: { ...(name ? { name } : {}), ...(notify ? { notify_email: notify } : {}) },
         });
         if (error) return fail(error.message);
         return Response.json({ user: toAdminUser(data.user) });
@@ -130,7 +136,15 @@ export async function POST(request: Request) {
           }
           patch.app_metadata = { roles };
         }
-        if (a.name !== undefined) patch.user_metadata = { ...(cur.user.user_metadata ?? {}), name: String(a.name).trim() };
+        if (a.name !== undefined || a.notifyEmail !== undefined) {
+          const notify = a.notifyEmail === undefined ? notifyEmailOf(cur.user) ?? "" : String(a.notifyEmail).trim();
+          if (notify && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(notify)) return fail("通知先メールの形式が正しくありません");
+          patch.user_metadata = {
+            ...(cur.user.user_metadata ?? {}),
+            ...(a.name !== undefined ? { name: String(a.name).trim() } : {}),
+            notify_email: notify || null,
+          };
+        }
         const { data, error } = await admin.auth.admin.updateUserById(a.id, patch);
         if (error) return fail(error.message);
         return Response.json({ user: toAdminUser(data.user) });

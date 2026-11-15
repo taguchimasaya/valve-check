@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import PlanApproval from "@/components/piping/PlanApproval";
+import { approvalStages, approvalState } from "@/lib/piping/approval";
+import { useMe } from "@/lib/auth";
+import { can } from "@/lib/roles";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
@@ -42,6 +45,9 @@ export default function FieldPage() {
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1500);
+  // 取込・削除・周期の変更は作成する人（作業者）だけ。開始は最後まで承認されたチェックリストだけ
+  const canCreate = can(useMe()?.roles, "create");
+  const stages = useMemo(() => approvalStages(store?.rules), [store?.rules]);
   const [execId, selectExec] = useLocalValue(EXEC_KEY);
   const [view, setView] = useState<"diagram" | "table">("diagram");
   const [flash, setFlash] = useState<Flash | null>(null);
@@ -454,13 +460,13 @@ export default function FieldPage() {
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                         <span className="truncate">{p.name}</span>
-                        <PlanApproval plan={p} act={act} />
+                        <PlanApproval plan={p} stages={stages} compact />
                       </p>
                       <p className="text-xs text-zinc-500">
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
                         {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}
                       </p>
-                      <PlanPeriodField plan={p} act={act} />
+                      {canCreate ? <PlanPeriodField plan={p} act={act} /> : p.period && <p className="text-xs text-zinc-500">周期：{p.period}</p>}
                       {p.diagramVersionId && diagramInfo.versionId && p.diagramVersionId !== diagramInfo.versionId && (
                         <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
                           ⚠ 現在と違う版の系統図で作成されています。① で作り直してください。
@@ -483,22 +489,27 @@ export default function FieldPage() {
                     </a>
                     <button
                       onClick={() => startPlan(p.id)}
-                      className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600"
+                      disabled={!approvalState(p, stages).complete}
+                      title={approvalState(p, stages).complete ? undefined : "最後まで承認されると開始できます（承認は ① で行います）"}
+                      className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       開始
                     </button>
-                    <button
-                      onClick={() => deletePlan(p)}
-                      className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
-                    >
-                      削除
-                    </button>
+                    {canCreate && (
+                      <button
+                        onClick={() => deletePlan(p)}
+                        className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
+                      >
+                        削除
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
+            {canCreate && (
             <label className="mt-4 block rounded-lg border border-dashed border-zinc-300 p-3 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-              既存形式（バルブ×工程表）のExcelチェックリストを取り込む
+              既存形式（バルブ×工程表）のExcelチェックリストを取り込む（取り込むと ① の承認待ちになります）
               <input
                 type="file"
                 accept=".xlsx,.xls"
@@ -510,6 +521,7 @@ export default function FieldPage() {
                 }}
               />
             </label>
+            )}
             {importInfo && (
               <ul className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                 {importInfo.map((t) => (
@@ -544,13 +556,15 @@ export default function FieldPage() {
                       selectExec(previewExec.id);
                     }
                   : undefined
-                : () => {
-                    setPreview(null);
-                    startPlan(previewPlan.id);
-                  }
+                : approvalState(previewPlan, stages).complete
+                  ? () => {
+                      setPreview(null);
+                      startPlan(previewPlan.id);
+                    }
+                  : undefined
             }
             startLabel={previewExec ? "この点検を再開" : "この内容で点検を開始"}
-            onDelete={() => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan))}
+            onDelete={previewExec || canCreate ? () => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan)) : undefined}
             deleteLabel={previewExec ? "この点検記録を削除" : "チェックリストを削除"}
           />
         )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { approvalRulesOf, STAGE_LABEL, type ApprovalRules } from "@/lib/piping/approval";
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
@@ -59,6 +60,7 @@ import {
 
 type Draft = {
   blockMethod: BlockMethod;
+  approval: ApprovalRules;
   fireTest: FireTestRules;
   drain: DrainRules;
   flush: FlushRules;
@@ -70,6 +72,7 @@ type Draft = {
 function draftOf(r: ChecklistRules | undefined): Draft {
   return {
     blockMethod: blockMethodOf(r),
+    approval: approvalRulesOf(r),
     fireTest: fireTestRulesOf(r),
     drain: drainRulesOf(r),
     flush: flushRulesOf(r),
@@ -143,6 +146,7 @@ export default function RulesPage() {
         action: "setRules",
         rules: {
           blockMethod: d.blockMethod,
+          approval: d.approval,
           fireTest: d.fireTest,
           drain: d.drain,
           flush: d.flush,
@@ -269,6 +273,32 @@ export default function RulesPage() {
             <p className="mt-3 text-xs text-zinc-500">
               追加ルール・ユーザー定義の作業では、条件「対象につながる最初の弁」「経路から分岐する先の最初の弁」ごとに 1ブロック／2ブロック を選べます。
             </p>
+            <Group title="チェックリストの承認フロー（拠点共通）">
+              <Field
+                label="承認の順番"
+                help="現場担当者が ① で作成して承認依頼したチェックリストを、この順番で承認します。最後の段まで承認されると ② 現場点検で開始できます。設定を変えると、承認途中のチェックリストにもすぐ反映されます。"
+              >
+                <p className="text-sm">
+                  作成者 → {STAGE_LABEL.leader} → {STAGE_LABEL.manager}
+                  {d.approval.requireControl ? ` → ${STAGE_LABEL.control}` : ""}
+                </p>
+                <Check
+                  label="制御室の承認を入れる（G長の次に、制御室が承認する）"
+                  checked={d.approval.requireControl}
+                  onChange={(c) => update({ approval: { ...d.approval, requireControl: c } })}
+                />
+              </Field>
+              <Field
+                label="メールでの知らせ"
+                help="オンにすると、承認依頼・承認のたびに次の段の人へ、差し戻しと最後の承認は作成者へメールを送ります。宛先はユーザー管理の「通知先メール」です（空欄の人には送りません）。運用を始めたばかりで件数が多いときはオフにしてください。"
+              >
+                <Check
+                  label="承認フローのメールを送る"
+                  checked={d.approval.notifyEmail}
+                  onChange={(c) => update({ approval: { ...d.approval, notifyEmail: c } })}
+                />
+              </Field>
+            </Group>
           </>
         )}
 

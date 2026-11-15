@@ -1,42 +1,50 @@
 // 権限（ロール）の定義。画面（メニューの表示・ページの入口）と API の両方でこの定義を使う。
 //
-// 権限は1人に複数付けられる（例：承認者＋制御室）。保存先は Supabase Auth の app_metadata.roles
+// 権限は1人に複数付けられる（例：チームリーダー＋制御室）。保存先は Supabase Auth の app_metadata.roles
 // （service role キーでしか書き換えられず、ログインのトークンにも入るので利用者が改ざんできない）。
-// - 作業者 worker   ：チェックリストの作成・実施、QR コード印刷
-// - 承認者 approver ：作業者の内容＋チェックリストの確認（承認）
-// - 制御室 control  ：③ 制御室・既存系の制御室ダッシュボード（運用入力・弁の手動変更・停止範囲・現場記録の確認）
+// - 作業者 worker   ：チェックリストの作成（承認依頼）・実施、QR コード印刷
+// - チームリーダー approver：チェックリストの承認（1段目）、② の実施・QR 印刷（作成はしない）
+// - G長 manager     ：チェックリストの承認（2段目）、② の実施・QR 印刷（作成はしない）
+// - 制御室 control  ：③ 制御室・既存系の制御室ダッシュボード（運用入力・弁の手動変更・停止範囲・現場記録の確認）、
+//                     チェックリストの承認（3段目。⑤ の設定で有無を決める）
+// 承認フローの決まりは src/lib/piping/approval.ts。
 // - 管理者 admin    ：すべて（ユーザー管理、④ 系統図データ管理、⑤ チェックリスト作成のルール、機器マスター）
 
-export const ROLES = ["worker", "approver", "control", "admin"] as const;
+export const ROLES = ["worker", "approver", "manager", "control", "admin"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABEL: Record<Role, string> = {
   worker: "作業者",
-  approver: "承認者",
+  approver: "チームリーダー",
+  manager: "G長",
   control: "制御室",
   admin: "管理者",
 };
 
 export const ROLE_DESC: Record<Role, string> = {
-  worker: "チェックリストの作成・実施、QRコード印刷",
-  approver: "作業者の内容に加えて、チェックリストの確認（承認）",
-  control: "③ 制御室（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）",
+  worker: "チェックリストの作成（承認依頼）・実施、QRコード印刷",
+  approver: "チェックリストの承認（1段目）、② 現場点検・QRコード印刷（作成はしない）",
+  manager: "チェックリストの承認（2段目）、② 現場点検・QRコード印刷（作成はしない）",
+  control: "③ 制御室（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、チェックリストの承認（3段目）",
   admin: "すべて（ユーザー管理、④ 系統図データ管理、⑤ ルール、機器マスター）",
 };
 
 /** 権限で許される操作の単位 */
 export type Permission =
-  | "checklist" // チェックリストの作成・実施（作業者）
+  | "create" // チェックリストの作成・承認依頼（作業者＝現場担当者）
+  | "checklist" // チェックリストの実施（② 現場点検など）
   | "qr" // QR コード印刷（作業者）
-  | "approve" // チェックリストの確認（承認）
+  | "approveLeader" // チェックリストの承認（チームリーダーの段）
+  | "approveManager" // チェックリストの承認（G長の段）
   | "control" // 制御室
   | "admin"; // 管理（ユーザー・系統図データ・ルール・機器マスター）
 
 const GRANTS: Record<Role, Permission[]> = {
-  worker: ["checklist", "qr"],
-  approver: ["checklist", "qr", "approve"],
+  worker: ["create", "checklist", "qr"],
+  approver: ["checklist", "qr", "approveLeader"],
+  manager: ["checklist", "qr", "approveManager"],
   control: ["control"],
-  admin: ["checklist", "qr", "approve", "control", "admin"],
+  admin: ["create", "checklist", "qr", "approveLeader", "approveManager", "control", "admin"],
 };
 
 /** 保存値を権限の一覧にそろえる（知らない値は捨てる）。未設定なら null */
@@ -69,7 +77,8 @@ export const PAGE_PERMS: { prefix: string; perms: Permission[] }[] = [
   { prefix: "/inspect", perms: ["checklist"] },
   { prefix: "/control-room", perms: ["control"] },
   // 配管系統図系
-  { prefix: "/piping/planner", perms: ["checklist", "approve"] },
+  // ① は作成（作業者）と承認（チームリーダー・G長・制御室）の両方で開く
+  { prefix: "/piping/planner", perms: ["create", "approveLeader", "approveManager", "control"] },
   { prefix: "/piping/field", perms: ["checklist"] },
   { prefix: "/piping/control", perms: ["control"] },
   { prefix: "/piping/qr", perms: ["qr"] },
@@ -90,10 +99,11 @@ export function canOpen(roles: readonly Role[] | null | undefined, pathname: str
 
 /** 配管系統図の共有ストア（/api/piping の POST）の操作ごとに必要な権限 */
 export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
-  // チェックリストの作成・実施（作業者）
-  savePlan: ["checklist"],
-  deletePlan: ["checklist"],
-  setPlanPeriod: ["checklist"],
+  // チェックリストの作成・承認依頼（作業者）
+  savePlan: ["create"],
+  deletePlan: ["create"],
+  setPlanPeriod: ["create"],
+  // 実施
   startExecution: ["checklist"],
   record: ["checklist"],
   undoRecord: ["checklist"],
@@ -104,8 +114,9 @@ export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
   setDayParams: ["checklist", "control"],
   setFillSupply: ["checklist", "control"],
   markStepDone: ["checklist", "control"],
-  // 承認
-  approvePlan: ["approve"],
+  // 承認・差し戻し（どの段を承認できるかは /api/piping の中で確かめる。制御室の段は ③ で行う）
+  approvePlan: ["approveLeader", "approveManager", "control"],
+  rejectPlan: ["approveLeader", "approveManager", "control"],
   // 制御室
   confirm: ["control"],
   setOutage: ["control"],

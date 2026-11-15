@@ -1,0 +1,103 @@
+import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { adminClient, isDisabled, rolesOf } from "./serverAuth";
+import { approvalRulesOf, approvalStages, approvalState, STAGE_LABEL, STAGE_ROLE, type ApprovalStage } from "./piping/approval";
+import type { SavedPlan } from "./piping/checklist";
+import type { PipingStore, StoreAction } from "./piping/store";
+
+// 承認フローのメール通知（サーバー側だけで使う）。送信は Resend の API（環境変数 RESEND_API_KEY、送信元 MAIL_FROM）。
+// ⑤ 共通の「承認のメールを送る」がオンの拠点だけ送る。宛先は利用者ごとの通知先メール（user_metadata.notify_email）。
+// - 承認依頼・各段の承認：次の段の権限を持つ全員（管理者だけの人には送らない）
+// - 差し戻し・最後の段の承認：作成者
+// 送れなくても操作は成功のまま（ログに残すだけ）。
+
+const RESEND_URL = "https://api.resend.com/emails/batch";
+const DEFAULT_FROM = "バルブ点検アプリ <onboarding@resend.dev>";
+
+export const notifyEmailOf = (u: Pick<User, "user_metadata">) => {
+  const v = (u.user_metadata as { notify_email?: unknown } | undefined)?.notify_email;
+  return typeof v === "string" && v.includes("@") ? v : null;
+};
+
+type Mail = { to: string; subject: string; text: string };
+
+async function sendMails(mails: Mail[]) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key || !mails.length) return;
+  const from = process.env.MAIL_FROM || DEFAULT_FROM;
+  // 1回で最大100通
+  for (let i = 0; i < mails.length; i += 100) {
+    const res = await fetch(RESEND_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(mails.slice(i, i + 100).map((m) => ({ from, to: [m.to], subject: m.subject, text: m.text }))),
+    });
+    if (!res.ok) console.error("[approval mail] 送信に失敗しました", res.status, await res.text());
+  }
+}
+
+function statusLine(plan: SavedPlan, stages: ApprovalStage[]) {
+  return [`作成 ${plan.updatedBy ?? "?"}`, ...stages.map((s) => `${STAGE_LABEL[s]} ${plan.approvals?.[s] ? `✔ ${plan.approvals[s]!.by}` : "未"}`)].join(" → ");
+}
+
+/** 承認フローの操作（承認依頼・承認・差し戻し）のあとに、次に動く人へメールを送る */
+export async function notifyApproval(opts: {
+  action: StoreAction;
+  store: PipingStore;
+  facility: string;
+  origin: string;
+  /** 拠点名を読むための、操作した利用者の接続（service role には拠点テーブルの読み取り権限が無い） */
+  client?: SupabaseClient;
+}) {
+  const { action, store, facility, origin, client } = opts;
+  if (!process.env.RESEND_API_KEY) return;
+  if (!approvalRulesOf(store.rules).notifyEmail) return;
+  const id = action.action === "savePlan" ? action.plan.id : action.action === "approvePlan" || action.action === "rejectPlan" ? action.id : null;
+  const plan = id ? store.plans.find((p) => p.id === id) : undefined;
+  if (!plan) return;
+  const admin = adminClient();
+  if (admin instanceof Response) return;
+
+  const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  if (error) return console.error("[approval mail] 利用者を読めませんでした", error.message);
+  const users = data.users.filter((u) => !isDisabled(u) && notifyEmailOf(u));
+  const fac = client ? (await client.from("piping_facilities").select("name").eq("id", facility).maybeSingle()).data : null;
+  const facilityName = (fac?.name as string | undefined) ?? facility;
+
+  const stages = approvalStages(store.rules);
+  const { next, complete } = approvalState(plan, stages);
+  const head = `拠点：${facilityName}\nチェックリスト：${plan.name}\n作業：${plan.purpose}${plan.period ? `（周期 ${plan.period}）` : ""}\n承認の状況：${statusLine(plan, stages)}\n`;
+  const foot = "\n※このメールは送信専用です。拠点はアプリの画面で切り替えてください。\n";
+  const creator = plan.updatedById ? data.users.find((u) => u.id === plan.updatedById) : undefined;
+  const creatorMail = creator && !isDisabled(creator) ? notifyEmailOf(creator) : null;
+  const mails: Mail[] = [];
+
+  if (action.action === "rejectPlan" && plan.rejection) {
+    if (creatorMail) {
+      mails.push({
+        to: creatorMail,
+        subject: `【バルブ点検】差し戻し：${plan.name}`,
+        text: `チェックリスト「${plan.name}」が差し戻されました（${STAGE_LABEL[plan.rejection.stage]}：${plan.rejection.by}）。\n理由：${plan.rejection.reason}\n\n${head}\n① チェックリスト作成で直して、承認依頼し直してください。\n${origin}/piping/planner\n${foot}`,
+      });
+    }
+  } else if (complete) {
+    if (action.action === "approvePlan" && creatorMail) {
+      mails.push({
+        to: creatorMail,
+        subject: `【バルブ点検】承認完了：${plan.name}`,
+        text: `チェックリスト「${plan.name}」の承認がすべて終わりました。② 現場点検で開始できます。\n\n${head}\n${origin}/piping/field\n${foot}`,
+      });
+    }
+  } else if (next) {
+    // 次の段の権限を持つ人（作成者本人は承認できないので除く）
+    const role = STAGE_ROLE[next];
+    for (const u of users) {
+      if (!rolesOf(u).roles.includes(role) || u.id === plan.updatedById) continue;
+      mails.push({
+        to: notifyEmailOf(u)!,
+        subject: `【バルブ点検】承認のお願い（${STAGE_LABEL[next]}）：${plan.name}`,
+        text: `チェックリスト「${plan.name}」の承認をお願いします（${STAGE_LABEL[next]}の段）。\n\n${head}\n① チェックリスト作成の「チェックリストの承認」で、プレビューを確かめて承認または差し戻ししてください。\n${origin}/piping/planner\n${foot}`,
+      });
+    }
+  }
+  await sendMails(mails);
+}

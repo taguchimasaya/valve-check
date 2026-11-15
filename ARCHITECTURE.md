@@ -108,16 +108,25 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 - `auth_rls.sql`：`demo: allow all` ポリシーを `logged in: all`（authenticated のみ）に置き換える。**2026-11-15 本番実行済み**（ユーザー作業）。匿名キー（anon key）では読み取り 0 件・書き込み拒否になる。
 - `auth_roles_rls.sql`：権限による書き込みの制限（読み取りはログイン利用者全員、書き込みはテーブルごとの権限。トークンの `app_metadata.roles` を見る）。**2026-11-15 本番実行済み**（`auth_rls.sql` の後にユーザーが実行）。テスト利用者4人で、権限ごとの書き込みの可否が下表どおりであることを確認済み。元に戻すときは `auth_rls.sql` を実行する。
 
+#### チェックリストの承認フロー（`src/lib/piping/approval.ts`）
+
+- 作成者（作業者）→ チームリーダー → G長 → 制御室。制御室の段は ⑤ 共通の設定（`rules.approval.requireControl`、拠点ごと、既定はあり）。
+- ① の作成画面は「プレビュー → 承認依頼する」（`savePlan`。保存すると承認・差し戻しは外れて最初から）。作成しない人（チームリーダー・G長・制御室）が ① を開くと承認の画面（`ApprovalBoard`）だけになる。管理者は両方。
+- 承認（`approvePlan`）は順番どおりの次の段だけ、その段の権限（管理者はどの段も）で、作成者本人は不可。差し戻し（`rejectPlan`）は承認フローのどれかの段の人が理由つきで行い、承認をすべて外す。差し戻し中は作成者が直して承認依頼し直すまで承認・差し戻しできない。点検の開始（`startExecution`）は最後の段まで承認されたものだけ。いずれも `/api/piping` で確かめる。
+- 保存先は `piping_store` の `SavedPlan.approvals`（段ごとの `{by, byId, at}`）・`rejection`・`updatedById`（作成者の利用者 ID）。印刷の「作成・確認・承認・制御室」欄に名前が入る。
+- メール通知（`src/lib/approvalMail.ts`）：⑤ 共通の「承認フローのメールを送る」（`rules.approval.notifyEmail`、既定はオフ）がオンの拠点で、承認依頼・各段の承認は次の段の権限を持つ人へ、差し戻しと最後の承認は作成者へ。宛先はユーザー管理の「通知先メール」（`user_metadata.notify_email`）。送信は Resend の API（`RESEND_API_KEY`・`MAIL_FROM`）で、`/api/piping` の応答のあとに `after()` で送る（失敗しても操作は成功のまま）。
+
 #### 権限（ロール）の設計
 
 | 権限 | できること |
 |---|---|
-| 作業者 `worker` | チェックリストの作成・実施（① ② `/checklists` `/inspect`）、QR コード印刷（`/equipment/print` `/piping/qr`） |
-| 承認者 `approver` | 作業者の内容＋チェックリストの確認（承認）。承認は配管系統図のチェックリスト（`SavedPlan.approvedAt/approvedBy`） |
-| 制御室 `control` | ③ `/piping/control`（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、`/control-room` |
+| 作業者 `worker` | チェックリストの作成と承認依頼（①、権限 `create`）・実施（② `/checklists` `/inspect`）、QR コード印刷（`/equipment/print` `/piping/qr`） |
+| チームリーダー `approver` | 承認フローの1段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
+| G長 `manager` | 承認フローの2段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
+| 制御室 `control` | 承認フローの3段目（⑤ の設定で有無）、③ `/piping/control`（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、`/control-room` |
 | 管理者 `admin` | すべて（`/admin/users`、④ `/piping/data` `/piping/editor`、⑤ `/piping/rules`、機器マスター `/equipment`） |
 
-- **保存先**：Supabase Auth の `app_metadata.roles`（配列）。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：承認者＋制御室）。
+- **保存先**：Supabase Auth の `app_metadata.roles`（配列）。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：チームリーダー＋制御室）。
 - **未設定の利用者**は作業者として扱う。環境変数 `ADMIN_LOGIN_IDS`（ログイン ID のカンマ区切り）の利用者は常に管理者（`/api/me` を開いたときに `app_metadata` にも管理者を書き込む）。この利用者の管理者権限の削除・無効化、自分自身の無効化、最後の管理者の管理者権限の削除はできない。
 - **無効化**：Supabase Auth の利用停止（`ban_duration`）。ログイン・トークン更新ができなくなり、API（`requireAuth`）は `banned_until` を見て 401 を返す。利用者の削除はしない（記録に名前が残るため）。
 - **判定の場所**：定義は `src/lib/roles.ts` に集約。画面は `AuthGate` がページごとの権限（`PAGE_PERMS`）を見て中身を出さず、メニュー（ホーム・配管系統図トップ・⚙ 管理設定）も開けないものは出さない。API は `requirePerm()`（ユーザー管理・系統図の版）と、`/api/piping` の操作ごとの権限（`STORE_ACTION_PERMS`）で 403 を返す。既存系はブラウザから DB へ直接書くため、サーバー側の制限は `auth_roles_rls.sql`（RLS）で行う。RLS はトークンの `app_metadata` を見るため、権限の変更が DB 側に効くのはトークンの更新後（最長1時間）。列ごとの制限は無い（作業者は QR 発行済みの記録のため `equipment` を更新できるが、ほかの列も書き換えられる）。
@@ -185,5 +194,5 @@ DB（版：論理データ＋図面データ）
 - ブランチ運用：`local/<機能名>` ブランチで作業 → main へ fast-forward → push（Vercel 自動デプロイ）。push はユーザーの承認後に行う。
 - SQL の変更：`supabase/` に新しいファイルを追加し、ユーザーに SQL Editor での実行を依頼する。
 - 利用者の追加：管理者がユーザー管理（`/admin/users`）で作成し、権限を付ける。ログイン ID はメールの @ より前（ID だけを入れると `ID@valve-check.local`）。
-- 環境変数：`SUPABASE_SERVICE_ROLE_KEY`（ユーザー管理に必須。サーバー側だけで使う）、`ADMIN_LOGIN_IDS`（最初の管理者）。ローカルは `.env.local`、本番は Vercel の環境変数に設定する（`.env.local.example` 参照）。
+- 環境変数：`SUPABASE_SERVICE_ROLE_KEY`（ユーザー管理に必須。サーバー側だけで使う）、`ADMIN_LOGIN_IDS`（最初の管理者）、`RESEND_API_KEY`・`MAIL_FROM`（承認フローのメール。無ければ送らない）。ローカルは `.env.local`、本番は Vercel の環境変数に設定する（`.env.local.example` 参照）。
 - 同じフォルダーで `next dev` は1つしか動かせない（Next.js 16 のロック）。別のチャットが動かしているときは、その 3000 番のサーバーを使う。

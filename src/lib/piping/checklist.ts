@@ -1,3 +1,4 @@
+import type { ApprovalSign, ApprovalStage, Rejection } from "./approval";
 import * as XLSX from "xlsx";
 import type { DayParams } from "./workTypes";
 import {
@@ -71,9 +72,12 @@ export type SavedPlan = {
   updatedBy?: string;
   /** 点検の周期（月次・年次など。任意の文字）。② で「機器名×周期」で探すのに使う */
   period?: string;
-  /** 確認（承認）した日時と人。保存し直すと外れる（サーバー側で付け外しする） */
-  approvedAt?: string;
-  approvedBy?: string;
+  /** 最後に保存した人の利用者 ID（作成者本人は承認できない） */
+  updatedById?: string;
+  /** 承認フローの各段の承認（チームリーダー・G長・制御室）。保存し直すと外れる（サーバー側で付け外しする） */
+  approvals?: Partial<Record<ApprovalStage, ApprovalSign>>;
+  /** 差し戻し（理由つき）。保存し直すと消える */
+  rejection?: Rejection;
   source: "planner" | "excel";
   targets: Target[];
   regionPipeIds: string[];

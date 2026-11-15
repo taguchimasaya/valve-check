@@ -7,6 +7,13 @@ import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } 
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
 import { outageDefOf } from "@/lib/piping/outages";
 import { PERIOD_MAX } from "@/lib/piping/period";
+import { approvalStages, approvalState, canApproveStage, isApprover, isCreator, STAGE_LABEL } from "@/lib/piping/approval";
+import type { Role } from "@/lib/roles";
+import { after } from "next/server";
+import { notifyApproval } from "@/lib/approvalMail";
+
+/** 操作した人（ログイン中の利用者） */
+type Actor = { name: string; userId: string; roles: Role[] };
 
 // 配管系統図機能の保存API。保存先は2種類：
 // - 本番（Vercel）：Supabase の piping_store テーブル（1行のJSON。既存システムのテーブルとは別）
@@ -93,7 +100,7 @@ async function loadDb(client: SupabaseClient, facility: string): Promise<PipingS
  * 読み込み → 更新 → 書き込み。サーバーが複数台で同時に動いても上書きし合わないよう、
  * version が読み込み時と同じときだけ書き込み、違えば読み直してやり直す（楽観的排他）。
  */
-async function updateDb(client: SupabaseClient, facility: string, action: StoreAction, actor: string): Promise<Response> {
+async function updateDb(client: SupabaseClient, facility: string, action: StoreAction, actor: Actor): Promise<Response> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const store = await loadDb(client, facility);
     const before = store.version;
@@ -128,10 +135,11 @@ function stepTargets(store: PipingStore, execId: string, step: number) {
 /**
  * 操作を当てはめ、この操作で増えた記録・経過・操作記録に「誰が」を付ける（ログイン中の利用者名）。
  */
-function applyAs(store: PipingStore, a: StoreAction, actor: string): string | null {
+function applyAs(store: PipingStore, a: StoreAction, who: Actor): string | null {
   const start = Date.now() - 1;
-  const err = apply(store, a);
+  const err = approvalCheck(store, a, who) ?? apply(store, a);
   if (err) return err;
+  const actor = who.name;
   const isNew = (at?: string) => !!at && Date.parse(at) >= start;
   store.log.forEach((e) => isNew(e.at) && !e.by && (e.by = actor));
   store.executions.forEach((x) => {
@@ -143,11 +151,47 @@ function applyAs(store: PipingStore, a: StoreAction, actor: string): string | nu
   });
   if (a.action === "savePlan") {
     const plan = store.plans.find((p) => p.id === a.plan.id);
-    if (plan) plan.updatedBy = actor;
+    if (plan) {
+      plan.updatedBy = actor;
+      plan.updatedById = who.userId;
+    }
   }
-  if (a.action === "approvePlan" && a.approve) {
+  if (a.action === "approvePlan") {
+    const sign = store.plans.find((p) => p.id === a.id)?.approvals?.[a.stage];
+    if (sign) Object.assign(sign, { by: actor, byId: who.userId });
+  }
+  if (a.action === "rejectPlan") {
+    const rej = store.plans.find((p) => p.id === a.id)?.rejection;
+    if (rej) rej.by = actor;
+  }
+  return null;
+}
+
+/**
+ * 承認フローの確認（利用者が要るもの）：順番どおりの段か、その段の権限があるか、作成者本人でないか。
+ * 点検の開始は、最後の段まで承認されたチェックリストだけ。
+ */
+function approvalCheck(store: PipingStore, a: StoreAction, who: Actor): string | null {
+  const stages = approvalStages(store.rules);
+  if (a.action === "approvePlan" || a.action === "rejectPlan") {
     const plan = store.plans.find((p) => p.id === a.id);
-    if (plan) plan.approvedBy = actor;
+    if (!plan) return "チェックリストが見つかりません";
+    if (isCreator(plan, who.userId, who.name)) return "作成者本人は承認・差し戻しできません";
+    if (plan.rejection) return "差し戻し中です（作成者が直して承認依頼し直すまで、承認・差し戻しはできません）";
+    if (a.action === "rejectPlan") {
+      if (!isApprover(who.roles)) return "差し戻す権限がありません";
+      if (!String(a.reason ?? "").trim()) return "差し戻しの理由を入力してください";
+      return null;
+    }
+    const { next } = approvalState(plan, stages);
+    if (!next) return "すでに最後まで承認されています";
+    if (a.stage !== next) return `今は「${STAGE_LABEL[next]}」の承認の順番です（画面を読み込み直してください）`;
+    if (!canApproveStage(who.roles, next)) return `「${STAGE_LABEL[next]}」の承認には、その権限が必要です`;
+    return null;
+  }
+  if (a.action === "startExecution") {
+    const plan = store.plans.find((p) => p.id === a.planId);
+    if (plan && !approvalState(plan, stages).complete) return "承認が済んでいないチェックリストは開始できません（① で承認を受けてください）";
   }
   return null;
 }
@@ -156,23 +200,30 @@ function apply(store: PipingStore, a: StoreAction): string | null {
   const now = new Date().toISOString();
   switch (a.action) {
     case "savePlan": {
-      // 承認は承認の操作でだけ付ける。保存し直したチェックリストは内容が変わりうるため、承認を外す
-      delete a.plan.approvedAt;
-      delete a.plan.approvedBy;
+      // 保存（承認依頼）し直したチェックリストは内容が変わりうるため、承認・差し戻しを外して最初からやり直す
+      delete a.plan.approvals;
+      delete a.plan.rejection;
       const i = store.plans.findIndex((p) => p.id === a.plan.id);
       if (i >= 0) store.plans[i] = a.plan;
       else store.plans.unshift(a.plan);
       return null;
     }
     case "approvePlan": {
+      // 順番・権限の確認は approvalCheck で済んでいる
       const plan = store.plans.find((p) => p.id === a.id);
       if (!plan) return "チェックリストが見つかりません";
-      if (a.approve) plan.approvedAt = now;
-      else {
-        delete plan.approvedAt;
-        delete plan.approvedBy;
-      }
-      store.log.unshift({ at: now, type: "info", text: `チェックリスト「${plan.name}」を${a.approve ? "承認" : "承認取り消し"}しました` });
+      plan.approvals = { ...(plan.approvals ?? {}), [a.stage]: { by: "", at: now } };
+      store.log.unshift({ at: now, type: "info", text: `チェックリスト「${plan.name}」を承認しました（${STAGE_LABEL[a.stage]}）` });
+      store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "rejectPlan": {
+      const plan = store.plans.find((p) => p.id === a.id);
+      if (!plan) return "チェックリストが見つかりません";
+      const stage = approvalState(plan, approvalStages(store.rules)).next ?? "control";
+      plan.rejection = { by: "", at: now, reason: String(a.reason).trim().slice(0, 500), stage };
+      delete plan.approvals;
+      store.log.unshift({ at: now, type: "info", text: `チェックリスト「${plan.name}」を差し戻しました：${plan.rejection.reason}` });
       store.log = store.log.slice(0, 100);
       return null;
     }
@@ -405,21 +456,30 @@ export async function POST(request: Request) {
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 400 });
   }
+  let res: Response;
   if (BACKEND === "supabase") {
     try {
-      return await updateDb(auth.client, facility, action, auth.name);
+      res = await updateDb(auth.client, facility, action, { name: auth.name, userId: auth.userId, roles: auth.roles });
     } catch (e) {
       return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
+  } else {
+    const run = queue.then(async () => {
+      const store = await loadFile(facility);
+      const err = applyAs(store, action, { name: auth.name, userId: auth.userId, roles: auth.roles });
+      if (err) return new Response(err, { status: 400 });
+      store.version += 1;
+      await saveFile(facility, store);
+      return Response.json(store);
+    });
+    queue = run.catch(() => {});
+    res = await run;
   }
-  const run = queue.then(async () => {
-    const store = await loadFile(facility);
-    const err = applyAs(store, action, auth.name);
-    if (err) return new Response(err, { status: 400 });
-    store.version += 1;
-    await saveFile(facility, store);
-    return Response.json(store);
-  });
-  queue = run.catch(() => {});
-  return run;
+  // 承認フローの操作（承認依頼・承認・差し戻し）が成功したら、応答を返したあとにメールで知らせる（⑤ の設定がオンの拠点だけ）
+  if (res.ok && (action.action === "savePlan" || action.action === "approvePlan" || action.action === "rejectPlan")) {
+    const store = (await res.clone().json()) as PipingStore;
+    const origin = new URL(request.url).origin;
+    after(() => notifyApproval({ action, store, facility, origin, client: auth.client }).catch((e) => console.error("[approval mail]", e)));
+  }
+  return res;
 }
