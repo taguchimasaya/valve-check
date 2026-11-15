@@ -147,6 +147,7 @@ Git 履歴（119 コミット、2026-09-04 〜 2026-11-15）と、これまで�
 - 既存系はブラウザから DB に直接書くため、DB 側の制限として `supabase/auth_roles_rls.sql` を用意（未実行・未検証。全員の権限を設定してから実行する）。
 - 確認：本番 Auth にテスト利用者4人（test-worker / test-approver / test-control / test-admin、パスワードは git 管理外の `.local-data/test-users.json`）を作り、ローカル dev で各権限のメニュー・ページの入口・承認・ユーザー管理（権限の複数付与・無効化と有効化・自己保護）をブラウザで、ストア操作・版の管理・ユーザー管理の 403 を API で確認。テスト用の承認は取り消し済み。
 - 注意：`.env.local` と本番（Vercel の環境変数）に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` を設定した（ユーザー作業）。
+- 本番反映後、ユーザーが `auth_rls.sql` → `auth_roles_rls.sql` を SQL Editor で実行。テスト利用者4人と匿名キーで、本番 DB の読み取り件数と、必ず失敗する insert（NOT NULL 違反。RLS で拒否なら 42501、通過なら 23502 になり行は増えない）で権限ごとの書き込み可否を確認し、設計どおりだった。管理者の構成はユーザーが変更（`test` を管理者、ADMIN_LOGIN_IDS を変更、旧利用者2人を削除）。
 
 ---
 

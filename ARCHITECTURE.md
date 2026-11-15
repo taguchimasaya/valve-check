@@ -105,8 +105,8 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 ### 4.3 認証・権限
 
 - `auth_login_id.sql`：関数 `login_email(login_id)`（ID＝メールの @ より前 → メールアドレス）。**実行済み**。
-- `auth_rls.sql`：`demo: allow all` ポリシーを `logged in: all`（authenticated のみ）に置き換える。**2026-11-15 時点で本番未実行**（匿名キー（anon key）で全テーブルが読めることを確認済み）。
-- `auth_roles_rls.sql`：権限による書き込みの制限（読み取りはログイン利用者全員、書き込みはテーブルごとの権限。トークンの `app_metadata.roles` を見る）。**未実行・未検証**。`auth_rls.sql` の次の段階として、全員の権限を設定してから実行する。
+- `auth_rls.sql`：`demo: allow all` ポリシーを `logged in: all`（authenticated のみ）に置き換える。**2026-11-15 本番実行済み**（ユーザー作業）。匿名キー（anon key）では読み取り 0 件・書き込み拒否になる。
+- `auth_roles_rls.sql`：権限による書き込みの制限（読み取りはログイン利用者全員、書き込みはテーブルごとの権限。トークンの `app_metadata.roles` を見る）。**2026-11-15 本番実行済み**（`auth_rls.sql` の後にユーザーが実行）。テスト利用者4人で、権限ごとの書き込みの可否が下表どおりであることを確認済み。元に戻すときは `auth_rls.sql` を実行する。
 
 #### 権限（ロール）の設計
 
@@ -120,7 +120,7 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 - **保存先**：Supabase Auth の `app_metadata.roles`（配列）。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：承認者＋制御室）。
 - **未設定の利用者**は作業者として扱う。環境変数 `ADMIN_LOGIN_IDS`（ログイン ID のカンマ区切り）の利用者は常に管理者（`/api/me` を開いたときに `app_metadata` にも管理者を書き込む）。この利用者の管理者権限の削除・無効化、自分自身の無効化、最後の管理者の管理者権限の削除はできない。
 - **無効化**：Supabase Auth の利用停止（`ban_duration`）。ログイン・トークン更新ができなくなり、API（`requireAuth`）は `banned_until` を見て 401 を返す。利用者の削除はしない（記録に名前が残るため）。
-- **判定の場所**：定義は `src/lib/roles.ts` に集約。画面は `AuthGate` がページごとの権限（`PAGE_PERMS`）を見て中身を出さず、メニュー（ホーム・配管系統図トップ・⚙ 管理設定）も開けないものは出さない。API は `requirePerm()`（ユーザー管理・系統図の版）と、`/api/piping` の操作ごとの権限（`STORE_ACTION_PERMS`）で 403 を返す。既存系はブラウザから DB へ直接書くため、サーバー側の制限は `auth_roles_rls.sql` の実行後に効く。
+- **判定の場所**：定義は `src/lib/roles.ts` に集約。画面は `AuthGate` がページごとの権限（`PAGE_PERMS`）を見て中身を出さず、メニュー（ホーム・配管系統図トップ・⚙ 管理設定）も開けないものは出さない。API は `requirePerm()`（ユーザー管理・系統図の版）と、`/api/piping` の操作ごとの権限（`STORE_ACTION_PERMS`）で 403 を返す。既存系はブラウザから DB へ直接書くため、サーバー側の制限は `auth_roles_rls.sql`（RLS）で行う。RLS はトークンの `app_metadata` を見るため、権限の変更が DB 側に効くのはトークンの更新後（最長1時間）。列ごとの制限は無い（作業者は QR 発行済みの記録のため `equipment` を更新できるが、ほかの列も書き換えられる）。
 
 ## 5. 配管系統図系の設計
 
