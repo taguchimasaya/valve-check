@@ -12,9 +12,9 @@
 
 | 項目 | 状態 |
 |---|---|
-| Git | main = origin/main = `ccf5be7`（計算の部品まで反映）。作業ブランチはすべて main にマージ済み。未コミットは `CLAUDE.md` の変更と資料類（pptx・docx・xlsx・`SYSTEM_*.md`・`diagrams/`・`screenshots/`・`scripts/` など） |
+| Git | main = origin/main（ユーザー管理・権限まで反映、機能のコミットは `e126154`）。作業ブランチはすべて main にマージ済み。未コミットは `CLAUDE.md` の変更と資料類（pptx・docx・xlsx・`SYSTEM_*.md`・`diagrams/`・`screenshots/`・`scripts/` など） |
 | 型チェック（type check） | `npx tsc --noEmit` 成功（エラー 0） |
-| 本番デプロイ | Vercel（main 自動デプロイ）。最終反映は `ccf5be7`（2026-11-15、系統図エディタ・運用停止範囲の設定・計算の部品） |
+| 本番デプロイ | Vercel（main 自動デプロイ）。最終反映は 2026-11-15 のユーザー管理・権限（`e126154`）。Vercel に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` を設定済み |
 | 本番 DB の拠点 | `virtual-airport`（仮想空港 給油施設、第1版が使用中）、`virtual-site-2`（臨海石油基地、第6版が使用中、第1〜5版は保管） |
 | 本番 DB の件数 | equipment 184、checklist_templates 3、inspection_sessions 69、inspection_results 449、piping_nodes 2,518、piping_pipes 2,650、piping_sheets 7 |
 | piping_store | `main`（version 223）、`virtual-site-2`（version 3） |
@@ -29,9 +29,9 @@
 | ログアウト（この端末のみ） | ✅ | `signOut({ scope: "local" })`。共有 ID でも他端末はログインしたまま |
 | 利用者名の表示・操作者の記録（配管系統図系） | ✅ | `UserBadge`、記録・確認・保存した人を保存 |
 | DB をログイン利用者に限定（RLS） | ⏳ | `supabase/auth_rls.sql` が**本番未実行**。現状は匿名キーで全テーブル（piping_store の点検記録を含む）が読み書き可能 |
-| 利用者管理画面（`/admin/users`） | ⏳ | 2026-11-15 実装（`local/diagram-editor` の作業ツリー、未コミット・本番未反映）。一覧・作成（ログイン ID＋初期パスワード）・表示名と権限の変更・パスワード再設定・無効化／有効に戻す。管理者のみ。本番反映には Vercel に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` の設定が必要 |
-| 権限（作業者・承認者・制御室・管理者、複数可）による画面・操作の制限 | ⏳ | 同上。`app_metadata.roles` に保存（SQL 不要）。メニューの出し分け・ページの入口（`AuthGate`）・API（`/api/piping` の操作ごと、版の管理、ユーザー管理）で確認。ローカル dev でテスト利用者4人（test-worker / test-approver / test-control / test-admin、本番 Auth に作成済み）を使ってブラウザと API で確認済み |
-| チェックリストの確認（承認） | ⏳ | 同上。配管系統図のチェックリストに「承認する／取消」（承認者）。① ② の一覧に承認済み／未承認を表示し、印刷の「作成」「承認」欄に名前を入れる。保存し直すと承認は外れる。承認していなくても点検は開始できる（承認を開始の条件にするかは未決定）。既存系（`/checklists`）のチェックリストには承認なし |
+| 利用者管理画面（`/admin/users`） | ✅ | 2026-11-15 本番反映（`e126154`）。一覧・作成（ログイン ID＋初期パスワード）・表示名と権限の変更・パスワード再設定・無効化／有効に戻す。管理者のみ。本番での画面確認は利用者が行う |
+| 権限（作業者・承認者・制御室・管理者、複数可）による画面・操作の制限 | ✅ | 同上。`app_metadata.roles` に保存（SQL 不要）。メニューの出し分け・ページの入口（`AuthGate`）・API（`/api/piping` の操作ごと、版の管理、ユーザー管理）で確認。ローカル dev でテスト利用者4人（test-worker / test-approver / test-control / test-admin、本番 Auth に作成済み）を使ってブラウザと API で確認済み |
+| チェックリストの確認（承認） | ✅ | 同上。配管系統図のチェックリストに「承認する／取消」（承認者）。① ② の一覧に承認済み／未承認を表示し、印刷の「作成」「承認」欄に名前を入れる。保存し直すと承認は外れる。承認していなくても点検は開始できる（承認を開始の条件にするかは未決定）。既存系（`/checklists`）のチェックリストには承認なし |
 | 既存系の DB 書き込みの権限制限（RLS） | ❌ | 既存系はブラウザから DB に直接書くため、画面での制限のみ。`supabase/auth_roles_rls.sql`（未実行・未検証）を `auth_rls.sql` の後に実行すると DB 側でも制限される |
 | 自動テスト | ❌ | テストフレームワーク未導入 |
 
@@ -105,7 +105,7 @@
 
 ## 5. 優先度の高い課題（次に着手する候補）
 
-0. **ユーザー管理・権限の本番反映**（ユーザー指示待ち）：Vercel に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` を設定 → main へ反映 → 管理者が全員の権限を設定。確認用のテスト利用者4人は確認後に無効化する。
+0. **全員の権限の設定**（ユーザー作業）：本番反映済み。権限が未設定の利用者は作業者扱いのため、管理者がユーザー管理で制御室・承認者などを付ける。確認用のテスト利用者4人は確認後に無効化する。
 1. **`auth_rls.sql` の本番実行**（ユーザー作業）：匿名キーで点検記録まで読める状態の解消。実行後、GitHub Actions の keep-alive（匿名キーで `equipment` を読む）が 0 件応答でも成功するかの確認が必要です。
 2. **`inspection_start_notifications` テーブルの作成 SQL 追加**：既存系の点検開始通知を機能させる。
 3. **既存系の操作者記録**：ログイン利用者名を `checked_by` / `confirmed_by` / `created_by` に設定する。
