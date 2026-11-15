@@ -1,7 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 import { adminClient, displayNameOf, envAdminIds, isDisabled, loginIdOf, requirePerm, rolesOf } from "@/lib/serverAuth";
 import { parseRoles, type Role } from "@/lib/roles";
-import { notifyEmailOf } from "@/lib/approvalMail";
+import { mailMethod, notifyEmailOf, sendMails } from "@/lib/approvalMail";
 
 // ユーザー管理 API（管理者のみ）。利用者の作成・権限変更・無効化は service role キーで Supabase Auth を操作する。
 // GET                                        … 利用者の一覧
@@ -9,6 +9,7 @@ import { notifyEmailOf } from "@/lib/approvalMail";
 // POST {action:"update", id, name?, roles?, notifyEmail?} … 名前・権限・通知先メール（承認フローのメールの宛先）の変更
 // POST {action:"password", id, password}     … パスワードの再設定
 // POST {action:"disable" | "enable", id}     … 無効化（ログインできなくする）・有効に戻す
+// POST {action:"testMail", id}               … 通知先メールにテストメールを送る（メールの設定の確認用）
 
 const LOGIN_DOMAIN = "valve-check.local";
 /** 無効化の期間（Supabase Auth の ban_duration。実質無期限） */
@@ -83,7 +84,8 @@ type Action =
   | { action: "create"; loginId: string; name?: string; password: string; roles: Role[]; notifyEmail?: string }
   | { action: "update"; id: string; name?: string; roles?: Role[]; notifyEmail?: string }
   | { action: "password"; id: string; password: string }
-  | { action: "disable" | "enable"; id: string };
+  | { action: "disable" | "enable"; id: string }
+  | { action: "testMail"; id: string };
 
 export async function POST(request: Request) {
   const auth = await requirePerm(request, "admin");
@@ -169,6 +171,25 @@ export async function POST(request: Request) {
         });
         if (error) return fail(error.message);
         return Response.json({ user: toAdminUser(data.user) });
+      }
+      case "testMail": {
+        const method = mailMethod();
+        if (!method) return fail("メールの送信方法が設定されていません（SMTP_USER・SMTP_PASS か RESEND_API_KEY を環境変数に設定してください）");
+        const { data: cur } = await admin.auth.admin.getUserById(a.id);
+        const to = cur.user ? notifyEmailOf(cur.user) : null;
+        if (!to) return fail("この利用者には通知先メールが登録されていません");
+        try {
+          await sendMails([
+            {
+              to,
+              subject: "【バルブ点検】テストメール",
+              text: `バルブ点検アプリからのテストメールです（送信方法：${method === "smtp" ? "SMTP" : "Resend"}、送った人：${auth.name}）。\nこのメールが届けば、承認フローのメールを送れます。⑤ チェックリスト作成のルールの「共通」で、拠点ごとに送信をオンにしてください。\n`,
+            },
+          ]);
+        } catch (e) {
+          return fail(`送信できませんでした：${e instanceof Error ? e.message : String(e)}`, 502);
+        }
+        return Response.json({ ok: true, to });
       }
       default:
         return fail("不明な操作です");

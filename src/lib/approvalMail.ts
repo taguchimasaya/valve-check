@@ -4,8 +4,11 @@ import { approvalRulesOf, approvalStages, approvalState, STAGE_LABEL, STAGE_ROLE
 import type { SavedPlan } from "./piping/checklist";
 import type { PipingStore, StoreAction } from "./piping/store";
 
-// 承認フローのメール通知（サーバー側だけで使う）。送信は Resend の API（環境変数 RESEND_API_KEY、送信元 MAIL_FROM）。
-// ⑤ 共通の「承認のメールを送る」がオンの拠点だけ送る。宛先は利用者ごとの通知先メール（user_metadata.notify_email）。
+// 承認フローのメール通知（サーバー側だけで使う）。送信方法は環境変数で決める：
+// - Gmail などの SMTP：SMTP_USER・SMTP_PASS（Gmail はアプリ パスワード）。SMTP_HOST（既定 smtp.gmail.com）・SMTP_PORT（既定 465）
+// - Resend：RESEND_API_KEY（SMTP の設定が無いとき）
+// 送信元は MAIL_FROM（無ければ SMTP_USER）。どちらも無ければ送らない。
+// ⑤ 共通の「承認フローのメールを送る」がオンの拠点だけ送る。宛先は利用者ごとの通知先メール（user_metadata.notify_email）。
 // - 承認依頼・各段の承認：次の段の権限を持つ全員（管理者だけの人には送らない）
 // - 差し戻し・最後の段の承認：作成者
 // 送れなくても操作は成功のまま（ログに残すだけ）。
@@ -20,18 +23,40 @@ export const notifyEmailOf = (u: Pick<User, "user_metadata">) => {
 
 type Mail = { to: string; subject: string; text: string };
 
-async function sendMails(mails: Mail[]) {
-  const key = process.env.RESEND_API_KEY;
-  if (!key || !mails.length) return;
+/** 使う送信方法（設定が無ければ null） */
+export function mailMethod(): "smtp" | "resend" | null {
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) return "smtp";
+  if (process.env.RESEND_API_KEY) return "resend";
+  return null;
+}
+
+/** メールを送る。失敗したら例外（呼ぶ側でログに残す） */
+export async function sendMails(mails: Mail[]) {
+  const method = mailMethod();
+  if (!method || !mails.length) return;
+  if (method === "smtp") {
+    const { createTransport } = await import("nodemailer");
+    const port = Number(process.env.SMTP_PORT || 465);
+    const transport = createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port,
+      secure: port === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+    const from = process.env.MAIL_FROM || `バルブ点検アプリ <${process.env.SMTP_USER}>`;
+    // Gmail の送信数の上限に配慮して1通ずつ順に送る
+    for (const m of mails) await transport.sendMail({ from, to: m.to, subject: m.subject, text: m.text });
+    return;
+  }
   const from = process.env.MAIL_FROM || DEFAULT_FROM;
   // 1回で最大100通
   for (let i = 0; i < mails.length; i += 100) {
     const res = await fetch(RESEND_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(mails.slice(i, i + 100).map((m) => ({ from, to: [m.to], subject: m.subject, text: m.text }))),
     });
-    if (!res.ok) console.error("[approval mail] 送信に失敗しました", res.status, await res.text());
+    if (!res.ok) throw new Error(`Resend への送信に失敗しました（${res.status}）：${await res.text()}`);
   }
 }
 
@@ -49,7 +74,7 @@ export async function notifyApproval(opts: {
   client?: SupabaseClient;
 }) {
   const { action, store, facility, origin, client } = opts;
-  if (!process.env.RESEND_API_KEY) return;
+  if (!mailMethod()) return;
   if (!approvalRulesOf(store.rules).notifyEmail) return;
   const id = action.action === "savePlan" ? action.plan.id : action.action === "approvePlan" || action.action === "rejectPlan" ? action.id : null;
   const plan = id ? store.plans.find((p) => p.id === id) : undefined;

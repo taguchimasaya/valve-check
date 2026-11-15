@@ -292,6 +292,16 @@ export default function UsersPage() {
                               保存
                             </button>
                           )}
+                          {!u.disabled && u.notifyEmail && (
+                            <button
+                              disabled={busy}
+                              title="通知先メールにテストメールを送ります（メールの設定の確認）"
+                              onClick={() => run(() => post({ action: "testMail", id: u.id }), `「${u.notifyEmail}」にテストメールを送りました。届いたか確認してください`)}
+                              className="ml-1 rounded-lg border border-sky-300 px-2.5 py-1 text-xs text-sky-700 dark:border-sky-900 dark:text-sky-400"
+                            >
+                              テストメール
+                            </button>
+                          )}
                           {!u.disabled && (
                             <button
                               disabled={busy}

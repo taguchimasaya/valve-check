@@ -35,6 +35,7 @@
 | BaaS | Supabase（`@supabase/supabase-js` 2.115）：Postgres・Auth・Realtime |
 | QR | `html5-qrcode`（読取）、`qrcode.react`（生成） |
 | Excel | `xlsx` 0.18.5（取込・書出し） |
+| メール | `nodemailer` 10（Gmail などの SMTP で承認フローのメールを送る） |
 | 画面分割 | `react-rnd`（制御室の仮想デスクトップ） |
 | 音声 | Web Audio API（ビープ音）・SpeechSynthesis（読み上げ） |
 | ホスティング（hosting） | Vercel（main への push で自動デプロイ） |
@@ -114,7 +115,7 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 - ① の作成画面は「プレビュー → 承認依頼する」（`savePlan`。保存すると承認・差し戻しは外れて最初から）。作成しない人（チームリーダー・G長・制御室）が ① を開くと承認の画面（`ApprovalBoard`）だけになる。管理者は両方。
 - 承認（`approvePlan`）は順番どおりの次の段だけ、その段の権限（管理者はどの段も）で、作成者本人は不可。差し戻し（`rejectPlan`）は承認フローのどれかの段の人が理由つきで行い、承認をすべて外す。差し戻し中は作成者が直して承認依頼し直すまで承認・差し戻しできない。点検の開始（`startExecution`）は最後の段まで承認されたものだけ。いずれも `/api/piping` で確かめる。
 - 保存先は `piping_store` の `SavedPlan.approvals`（段ごとの `{by, byId, at}`）・`rejection`・`updatedById`（作成者の利用者 ID）。印刷の「作成・確認・承認・制御室」欄に名前が入る。
-- メール通知（`src/lib/approvalMail.ts`）：⑤ 共通の「承認フローのメールを送る」（`rules.approval.notifyEmail`、既定はオフ）がオンの拠点で、承認依頼・各段の承認は次の段の権限を持つ人へ、差し戻しと最後の承認は作成者へ。宛先はユーザー管理の「通知先メール」（`user_metadata.notify_email`）。送信は Resend の API（`RESEND_API_KEY`・`MAIL_FROM`）で、`/api/piping` の応答のあとに `after()` で送る（失敗しても操作は成功のまま）。
+- メール通知（`src/lib/approvalMail.ts`）：⑤ 共通の「承認フローのメールを送る」（`rules.approval.notifyEmail`、既定はオフ）がオンの拠点で、承認依頼・各段の承認は次の段の権限を持つ人へ、差し戻しと最後の承認は作成者へ。宛先はユーザー管理の「通知先メール」（`user_metadata.notify_email`）。送信は Gmail などの SMTP（`SMTP_USER`・`SMTP_PASS`＝Gmail のアプリ パスワード、`SMTP_HOST` 既定 smtp.gmail.com・`SMTP_PORT` 既定 465。`nodemailer`）、無ければ Resend の API（`RESEND_API_KEY`）。送信元は `MAIL_FROM`。ユーザー管理の「テストメール」で設定を確かめられる。`/api/piping` の応答のあとに `after()` で送る（失敗しても操作は成功のまま）。
 
 #### 権限（ロール）の設計
 
@@ -194,5 +195,5 @@ DB（版：論理データ＋図面データ）
 - ブランチ運用：`local/<機能名>` ブランチで作業 → main へ fast-forward → push（Vercel 自動デプロイ）。push はユーザーの承認後に行う。
 - SQL の変更：`supabase/` に新しいファイルを追加し、ユーザーに SQL Editor での実行を依頼する。
 - 利用者の追加：管理者がユーザー管理（`/admin/users`）で作成し、権限を付ける。ログイン ID はメールの @ より前（ID だけを入れると `ID@valve-check.local`）。
-- 環境変数：`SUPABASE_SERVICE_ROLE_KEY`（ユーザー管理に必須。サーバー側だけで使う）、`ADMIN_LOGIN_IDS`（最初の管理者）、`RESEND_API_KEY`・`MAIL_FROM`（承認フローのメール。無ければ送らない）。ローカルは `.env.local`、本番は Vercel の環境変数に設定する（`.env.local.example` 参照）。
+- 環境変数：`SUPABASE_SERVICE_ROLE_KEY`（ユーザー管理に必須。サーバー側だけで使う）、`ADMIN_LOGIN_IDS`（最初の管理者）、`SMTP_USER`・`SMTP_PASS`（Gmail で送るとき）または `RESEND_API_KEY`、`MAIL_FROM`（承認フローのメール。どちらも無ければ送らない）。ローカルは `.env.local`、本番は Vercel の環境変数に設定する（`.env.local.example` 参照）。
 - 同じフォルダーで `next dev` は1つしか動かせない（Next.js 16 のロック）。別のチャットが動かしているときは、その 3000 番のサーバーを使う。
