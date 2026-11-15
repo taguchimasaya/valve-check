@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAuth } from "@/lib/serverAuth";
+import { can, deniedMessage, STORE_ACTION_PERMS } from "@/lib/roles";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
 import { outageDefOf } from "@/lib/piping/outages";
@@ -143,6 +144,10 @@ function applyAs(store: PipingStore, a: StoreAction, actor: string): string | nu
     const plan = store.plans.find((p) => p.id === a.plan.id);
     if (plan) plan.updatedBy = actor;
   }
+  if (a.action === "approvePlan" && a.approve) {
+    const plan = store.plans.find((p) => p.id === a.id);
+    if (plan) plan.approvedBy = actor;
+  }
   return null;
 }
 
@@ -150,9 +155,24 @@ function apply(store: PipingStore, a: StoreAction): string | null {
   const now = new Date().toISOString();
   switch (a.action) {
     case "savePlan": {
+      // 承認は承認の操作でだけ付ける。保存し直したチェックリストは内容が変わりうるため、承認を外す
+      delete a.plan.approvedAt;
+      delete a.plan.approvedBy;
       const i = store.plans.findIndex((p) => p.id === a.plan.id);
       if (i >= 0) store.plans[i] = a.plan;
       else store.plans.unshift(a.plan);
+      return null;
+    }
+    case "approvePlan": {
+      const plan = store.plans.find((p) => p.id === a.id);
+      if (!plan) return "チェックリストが見つかりません";
+      if (a.approve) plan.approvedAt = now;
+      else {
+        delete plan.approvedAt;
+        delete plan.approvedBy;
+      }
+      store.log.unshift({ at: now, type: "info", text: `チェックリスト「${plan.name}」を${a.approve ? "承認" : "承認取り消し"}しました` });
+      store.log = store.log.slice(0, 100);
       return null;
     }
     case "deletePlan":
@@ -365,6 +385,10 @@ export async function POST(request: Request) {
   const auth = await requireAuth(request);
   if (auth instanceof Response) return auth;
   const action = (await request.json()) as StoreAction;
+  // 操作ごとの権限（src/lib/roles.ts の STORE_ACTION_PERMS）。載っていない操作は受け付けない
+  const perms = STORE_ACTION_PERMS[action?.action];
+  if (!perms) return new Response("不明な操作です", { status: 400 });
+  if (!can(auth.roles, ...perms)) return new Response(deniedMessage(perms), { status: 403 });
   let facility: string;
   try {
     facility = facilityOf(request);

@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import type { Role } from "./roles";
 
 // ログイン（Supabase Auth）。利用者は ID とパスワードでログインする。
 // ID はメールアドレスの @ より前（例：test@test.com なら「test」）。
 // DB の関数 login_email（supabase/auth_login_id.sql）で、ID からメールアドレスを探してログインする。
 // 関数が無い・見つからないときは「ID@valve-check.local」として扱う。@ を含む入力はメールアドレスとしてそのまま使う。
-// 利用者は Supabase の管理画面で作成する。
+// 利用者は管理者がアプリのユーザー管理（/admin/users）で作成する。権限は src/lib/roles.ts。
 
 export const LOGIN_DOMAIN = "valve-check.local";
 
@@ -59,4 +60,52 @@ export async function authFetch(input: string, init: RequestInit = {}) {
   // ログインが切れていれば、ログアウトしてログイン画面へ（AuthGate が移動する）
   if (res.status === 401) await supabase.auth.signOut({ scope: "local" });
   return res;
+}
+
+/** ログイン中の利用者の権限（/api/me）。サーバーで Supabase Auth に問い合わせて決める */
+export type Me = { userId: string; name: string; loginId: string; roles: Role[]; envAdmin: boolean };
+
+// 同じ利用者のあいだは1回だけ問い合わせる（画面を移っても使い回す）
+let meCache: { userId: string; promise: Promise<Me | null> } | null = null;
+const meListeners = new Set<() => void>();
+
+function loadMe(userId: string, force = false) {
+  if (!force && meCache?.userId === userId) return meCache.promise;
+  const promise = authFetch("/api/me", { cache: "no-store" })
+    .then(async (res) => (res.ok ? ((await res.json()) as Me) : null))
+    .catch(() => null);
+  meCache = { userId, promise };
+  return promise;
+}
+
+/** 権限を読み直す（自分の権限を変えたときなど） */
+export function refreshMe() {
+  if (meCache) loadMe(meCache.userId, true);
+  meListeners.forEach((f) => f());
+}
+
+/** ログイン中の利用者と権限（読み込み中は undefined、未ログイン・読めないときは null） */
+export function useMe(): Me | null | undefined {
+  const session = useSession();
+  const userId = session?.user.id;
+  const [state, setState] = useState<{ userId?: string; me: Me | null | undefined }>({ me: undefined });
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const f = () => setTick((t) => t + 1);
+    meListeners.add(f);
+    return () => {
+      meListeners.delete(f);
+    };
+  }, []);
+  useEffect(() => {
+    if (!userId) return;
+    let alive = true;
+    loadMe(userId).then((me) => alive && setState({ userId, me }));
+    return () => {
+      alive = false;
+    };
+  }, [userId, tick]);
+  if (session === null) return null;
+  if (!userId || state.userId !== userId) return undefined;
+  return state.me;
 }

@@ -9,6 +9,8 @@ import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/pip
 import { useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
 import UserBadge from "@/components/UserBadge";
+import { useMe } from "@/lib/auth";
+import { canOpen } from "@/lib/roles";
 
 const menus = [
   {
@@ -37,7 +39,7 @@ const menus = [
   },
 ];
 
-/** 管理設定（右上）：系統図データとチェックリスト作成のルール */
+/** 管理設定（右上）：系統図データ・チェックリスト作成のルール・ユーザー管理（管理者だけに出す） */
 const settings = [
   {
     no: "④",
@@ -51,9 +53,19 @@ const settings = [
     desc: "チェックリストを自動で作るときの決まり（仕切り方・各作業の設定・追加ルール・ユーザー定義の作業）",
     href: "/piping/rules",
   },
+  {
+    no: "👥",
+    title: "ユーザー管理",
+    desc: "利用者の一覧・作成・権限の変更・無効化（作業者／承認者／制御室／管理者）",
+    href: "/admin/users",
+  },
 ];
 
 export default function PipingHome() {
+  // 権限で開けないメニュー・管理設定は出さない
+  const me = useMe();
+  const visibleMenus = menus.filter((m) => canOpen(me?.roles, m.href));
+  const visibleSettings = settings.filter((m) => canOpen(me?.roles, m.href));
   const graph = useGraph();
   const diagramInfo = useDiagramInfo();
   // 今の運用・点検状況（数秒ごとに更新）
@@ -72,15 +84,17 @@ export default function PipingHome() {
             ← ホームに戻る
           </Link>
           {/* 管理設定（系統図データ・チェックリスト作成のルール） */}
+          {visibleSettings.length > 0 && (
           <nav className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-800 dark:bg-zinc-950">
             <span className="text-xs font-semibold text-zinc-500">⚙ 管理設定</span>
-            {settings.map((m) => (
+            {visibleSettings.map((m) => (
               <Link key={m.href} href={m.href} title={m.desc} className="rounded-lg px-2 py-1 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900">
                 <span className="mr-1 text-emerald-600">{m.no}</span>
                 {m.title}
               </Link>
             ))}
           </nav>
+          )}
         </div>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">配管系統図（試作）</h1>
@@ -104,7 +118,7 @@ export default function PipingHome() {
         </p>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {menus.map((m) => (
+          {visibleMenus.map((m) => (
             <Link
               key={m.href}
               href={m.href}

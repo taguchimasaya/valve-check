@@ -69,6 +69,9 @@ export type SavedPlan = {
   createdAt: string;
   /** 最後に保存した人 */
   updatedBy?: string;
+  /** 確認（承認）した日時と人。保存し直すと外れる（サーバー側で付け外しする） */
+  approvedAt?: string;
+  approvedBy?: string;
   source: "planner" | "excel";
   targets: Target[];
   regionPipeIds: string[];

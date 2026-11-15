@@ -67,6 +67,8 @@ export type Outage = { key: OutageKey; at: string; note?: string };
 export type StoreAction =
   | { action: "savePlan"; plan: SavedPlan }
   | { action: "deletePlan"; id: string }
+  /** チェックリストの確認（承認）。approve=false で取り消し */
+  | { action: "approvePlan"; id: string; approve: boolean }
   | { action: "startExecution"; planId: string; id: string }
   | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
   | { action: "clearOutages" }

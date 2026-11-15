@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import PlanApproval from "@/components/piping/PlanApproval";
 import PipingDiagram, {
   DiagramLegend,
   type DiagramHandle,
@@ -385,7 +386,10 @@ export default function FieldPage() {
                 {shownPlans.map((p) => (
                   <li key={p.id} className="flex flex-wrap items-center gap-2 py-2">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.name}</p>
+                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        <span className="truncate">{p.name}</span>
+                        <PlanApproval plan={p} act={act} />
+                      </p>
                       <p className="text-xs text-zinc-500">
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
                         {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireAuth } from "@/lib/serverAuth";
+import { requirePerm } from "@/lib/serverAuth";
 import { validateDiagram, type DiagramData, type Issue } from "@/lib/piping/diagramData";
 
 // 系統図データの版の管理API（④ 系統図データ管理）。
@@ -8,6 +8,7 @@ import { validateDiagram, type DiagramData, type Issue } from "@/lib/piping/diag
 // POST {action:"import"}   … 取り込んだデータを新しい版（下書き）として登録
 // POST {action:"activate"} … 下書きの版を「使用中」にする（それまでの使用中は「保管」）
 // POST {action:"delete"}   … 下書きの版を削除
+// いずれも管理者権限が必要（系統図データ管理と系統図エディタだけが使う）
 
 const DEFAULT_FACILITY = "virtual-airport";
 
@@ -32,7 +33,7 @@ async function count(c: SupabaseClient, table: string, versionId: string, extra?
 }
 
 export async function GET(request: Request) {
-  const auth = await requireAuth(request);
+  const auth = await requirePerm(request, "admin");
   if (auth instanceof Response) return auth;
   const params = new URL(request.url).searchParams;
   const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
@@ -113,7 +114,7 @@ async function insertChunks(c: SupabaseClient, table: string, rows: object[]) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAuth(request);
+  const auth = await requirePerm(request, "admin");
   if (auth instanceof Response) return auth;
   const a = (await request.json()) as Action;
   const c = auth.client;

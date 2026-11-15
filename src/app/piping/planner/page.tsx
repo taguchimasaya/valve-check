@@ -2,6 +2,9 @@
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import PlanApproval from "@/components/piping/PlanApproval";
+import { useMe } from "@/lib/auth";
+import { can } from "@/lib/roles";
 import PipingDiagram, { DiagramLegend, type DiagramHandle, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
 import PlanPreview from "@/components/piping/PlanPreview";
 import { normalValveState, otherSide } from "@/lib/piping/graph";
@@ -78,6 +81,8 @@ const TYPE_TAG: Record<WorkType, string> = {
 const yardOf = (tank: string) => tank.slice(2, 3);
 
 export default function PlannerPage() {
+  // ⑤ ルールへのリンクは管理者だけに出す
+  const isAdmin = can(useMe()?.roles, "admin");
   const g = useGraph();
   const diagramInfo = useDiagramInfo();
   const { store, act } = usePipingStore(0);
@@ -875,11 +880,13 @@ export default function PlannerPage() {
                   </button>
                 ))}
               </div>
-              <p className="mb-2 text-right text-[11px]">
-                <Link href="/piping/rules" className="text-sky-700 hover:underline dark:text-sky-400">
-                  ⑤ ルールの変更・作業の追加
-                </Link>
-              </p>
+              {isAdmin && (
+                <p className="mb-2 text-right text-[11px]">
+                  <Link href="/piping/rules" className="text-sky-700 hover:underline dark:text-sky-400">
+                    ⑤ ルールの変更・作業の追加
+                  </Link>
+                </p>
+              )}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -1215,9 +1222,13 @@ export default function PlannerPage() {
                     </ol>
                     <p className="mt-2 text-[11px] text-zinc-500">
                       隣接タンク・消火栓の選び方、試験の順番などは{" "}
-                      <Link href="/piping/rules" className="text-sky-700 underline dark:text-sky-400">
-                        ⑤ チェックリスト作成のルール
-                      </Link>{" "}
+                      {isAdmin ? (
+                        <Link href="/piping/rules" className="text-sky-700 underline dark:text-sky-400">
+                          ⑤ チェックリスト作成のルール
+                        </Link>
+                      ) : (
+                        "⑤ チェックリスト作成のルール（管理者）"
+                      )}{" "}
                       で拠点ごとに変更できます。
                     </p>
                   </>
@@ -1417,6 +1428,7 @@ export default function PlannerPage() {
                         {p.name}
                       </button>
                       <span className="text-xs text-zinc-500">{p.summary.volumeL ? formatLiters(p.summary.volumeL) : ""}</span>
+                      <PlanApproval plan={p} act={act} compact />
                       <a href={`/piping/print?plan=${p.id}`} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">
                         PDF
                       </a>

@@ -25,12 +25,14 @@
 |---|---|---|
 | ID・パスワードログイン（Supabase Auth） | ✅ | `/login`。ID＝メールの @ より前（DB 関数 `login_email`）。見つからなければ `ID@valve-check.local` |
 | 全ページのログイン必須化 | ✅ | `AuthGate`。ログイン後は元の画面（QR で開いた画面を含む）へ戻る |
-| API のトークン検証 | ✅ | `/api/piping/*` は Bearer トークン必須（`requireAuth`） |
+| API のトークン検証 | ✅ | `/api/*` は Bearer トークン必須（`requireAuth`）。無効化された利用者は 401 |
 | ログアウト（この端末のみ） | ✅ | `signOut({ scope: "local" })`。共有 ID でも他端末はログインしたまま |
 | 利用者名の表示・操作者の記録（配管系統図系） | ✅ | `UserBadge`、記録・確認・保存した人を保存 |
 | DB をログイン利用者に限定（RLS） | ⏳ | `supabase/auth_rls.sql` が**本番未実行**。現状は匿名キーで全テーブル（piping_store の点検記録を含む）が読み書き可能 |
-| 利用者管理画面 | ❌ | Supabase 管理画面で作成する運用（Auto Confirm） |
-| 権限（ロール）による画面・操作の制限 | ❌ | ログイン済みなら全機能を使える |
+| 利用者管理画面（`/admin/users`） | ⏳ | 2026-11-15 実装（`local/diagram-editor` の作業ツリー、未コミット・本番未反映）。一覧・作成（ログイン ID＋初期パスワード）・表示名と権限の変更・パスワード再設定・無効化／有効に戻す。管理者のみ。本番反映には Vercel に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` の設定が必要 |
+| 権限（作業者・承認者・制御室・管理者、複数可）による画面・操作の制限 | ⏳ | 同上。`app_metadata.roles` に保存（SQL 不要）。メニューの出し分け・ページの入口（`AuthGate`）・API（`/api/piping` の操作ごと、版の管理、ユーザー管理）で確認。ローカル dev でテスト利用者4人（test-worker / test-approver / test-control / test-admin、本番 Auth に作成済み）を使ってブラウザと API で確認済み |
+| チェックリストの確認（承認） | ⏳ | 同上。配管系統図のチェックリストに「承認する／取消」（承認者）。① ② の一覧に承認済み／未承認を表示し、印刷の「作成」「承認」欄に名前を入れる。保存し直すと承認は外れる。承認していなくても点検は開始できる（承認を開始の条件にするかは未決定）。既存系（`/checklists`）のチェックリストには承認なし |
+| 既存系の DB 書き込みの権限制限（RLS） | ❌ | 既存系はブラウザから DB に直接書くため、画面での制限のみ。`supabase/auth_roles_rls.sql`（未実行・未検証）を `auth_rls.sql` の後に実行すると DB 側でも制限される |
 | 自動テスト | ❌ | テストフレームワーク未導入 |
 
 ## 3. A. 既存系（QR チェックリスト）
@@ -103,6 +105,7 @@
 
 ## 5. 優先度の高い課題（次に着手する候補）
 
+0. **ユーザー管理・権限の本番反映**（ユーザー指示待ち）：Vercel に `SUPABASE_SERVICE_ROLE_KEY`・`ADMIN_LOGIN_IDS` を設定 → main へ反映 → 管理者が全員の権限を設定。確認用のテスト利用者4人は確認後に無効化する。
 1. **`auth_rls.sql` の本番実行**（ユーザー作業）：匿名キーで点検記録まで読める状態の解消。実行後、GitHub Actions の keep-alive（匿名キーで `equipment` を読む）が 0 件応答でも成功するかの確認が必要です。
 2. **`inspection_start_notifications` テーブルの作成 SQL 追加**：既存系の点検開始通知を機能させる。
 3. **既存系の操作者記録**：ログイン利用者名を `checked_by` / `confirmed_by` / `created_by` に設定する。

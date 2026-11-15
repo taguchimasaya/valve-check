@@ -160,8 +160,14 @@ function ChecklistSheet({ graph, plan, exec }: { graph: Graph; plan: SavedPlan; 
               ))}
             </tr>
             <tr>
-              {[0, 1, 2, 3, 4].map((i) => (
-                <td key={i} className="h-10 border border-zinc-700" />
+              {/* 作成（最後に保存した人）・承認（アプリで承認した人）は名前を入れる。ほかは押印欄 */}
+              {[plan.updatedBy, undefined, plan.approvedBy, undefined, undefined].map((who, i) => (
+                <td key={i} className="h-10 border border-zinc-700 align-middle text-[9px] leading-tight">
+                  {who}
+                  {i === 2 && plan.approvedAt && (
+                    <span className="block text-[8px] text-zinc-500">{new Date(plan.approvedAt).toLocaleDateString("ja-JP")}</span>
+                  )}
+                </td>
               ))}
             </tr>
           </tbody>

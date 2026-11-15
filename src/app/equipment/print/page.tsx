@@ -6,6 +6,8 @@ import { QRCodeSVG } from "qrcode.react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useHierarchyFilter } from "@/lib/useHierarchyFilter";
+import { useMe } from "@/lib/auth";
+import { can } from "@/lib/roles";
 
 type EquipmentRecord = {
   id: string;
@@ -37,6 +39,8 @@ function EquipmentPrintContent() {
   const [origin, setOrigin] = useState("");
   const [unissuedOnly, setUnissuedOnly] = useState(true);
   const [marking, setMarking] = useState(false);
+  // 機器マスター管理は管理者だけが開けるため、それ以外はホームへ戻す
+  const isAdmin = can(useMe()?.roles, "admin");
 
   function loadEquipment() {
     supabase
@@ -90,8 +94,8 @@ function EquipmentPrintContent() {
     <div className="min-h-screen bg-white px-6 py-8">
       <div className="mx-auto max-w-4xl print:max-w-none">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
-          <Link href="/equipment" className="text-sm text-zinc-500 hover:text-zinc-700">
-            ← 機器マスター管理に戻る
+          <Link href={isAdmin ? "/equipment" : "/"} className="text-sm text-zinc-500 hover:text-zinc-700">
+            {isAdmin ? "← 機器マスター管理に戻る" : "← ホームに戻る"}
           </Link>
           <button
             onClick={handlePrint}

@@ -14,10 +14,10 @@
 
 | 系統 | 画面 | 概要 |
 |---|---|---|
-| **A. 既存系（QRチェックリスト）** | `/equipment` `/checklists` `/inspect` `/inspect/[code]` `/control-room` `/settings` | 機器マスター（equipment）と Excel 取込のチェックリストを使い、現場 iPad の QR 読取で工程ごとに弁操作を記録し、制御室 PC がリアルタイム（Realtime）で監視する |
+| **A. 既存系（QRチェックリスト）** | `/equipment` `/equipment/print` `/checklists` `/inspect` `/inspect/[code]` `/control-room` `/settings` | 機器マスター（equipment）と Excel 取込のチェックリストを使い、現場 iPad の QR 読取で工程ごとに弁操作を記録し、制御室 PC がリアルタイム（Realtime）で監視する |
 | **B. 配管系統図系（/piping）** | `/piping/planner` `/piping/field` `/piping/control`（運用停止範囲の設定を含む） `/piping/qr` `/piping/print`、管理設定（トップ右上）：`/piping/data`（`/piping/editor` を含む） `/piping/rules` | 配管系統図（グラフ構造）から遮断範囲・操作弁を自動算定してチェックリストを作り、図面上で現場点検・制御室監視を行う |
 
-両系統はホーム画面（`/`）から入り、**ログイン（Supabase Auth）を共通**で使います。データは互いに独立しており、配管系統図系は既存系のテーブルに書き込みません（QR の形式 `/inspect/{code}` のみ共通）。
+両系統はホーム画面（`/`）から入り、**ログイン（Supabase Auth）と権限（作業者・承認者・制御室・管理者）を共通**で使います。利用者は管理者がユーザー管理（`/admin/users`）で作ります。データは互いに独立しており、配管系統図系は既存系のテーブルに書き込みません（QR の形式 `/inspect/{code}` のみ共通）。
 
 ```
 [iPad 現場] ─┐                         ┌─ Supabase Auth（ID・パスワード）
@@ -48,6 +48,7 @@ src/
   app/
     page.tsx, layout.tsx          ホーム・ルートレイアウト（AuthGate で全体を包む）
     login/                        ログイン画面（唯一の公開ページ）
+    admin/users/                  ユーザー管理（管理者のみ。配管系統図トップの「⚙ 管理設定」とホームから開く）
     equipment/, equipment/print/  機器マスター・QR 印刷（既存系）
     checklists/                   チェックリスト取込（既存系）
     inspect/, inspect/[code]/     現場チェック（既存系、QR から直接開く画面を含む）
@@ -55,13 +56,15 @@ src/
     settings/                     音声・表示設定
     piping/                       配管系統図系（planner/field/control/data/rules/qr/print）
     api/piping/                   配管系統図系の API（route.ts、diagram/、diagram/versions/、facilities/）
+    api/me/, api/admin/users/     ログイン中の利用者の権限・ユーザー管理の API
   components/
-    AuthGate.tsx, UserBadge.tsx   ログイン必須化・利用者表示
+    AuthGate.tsx, UserBadge.tsx   ログイン必須化・ページごとの権限チェック・利用者と権限の表示
     piping/                       系統図描画（PipingDiagram）・プレビュー・各種ピッカー・ルール編集
   lib/
     supabase.ts                   ブラウザ用 Supabase クライアント
-    auth.ts                       ログイン・ログアウト・authFetch（Bearer トークン付き fetch）
-    serverAuth.ts                 API 側のトークン検証（requireAuth）
+    auth.ts                       ログイン・ログアウト・authFetch（Bearer トークン付き fetch）・useMe（自分の権限）
+    roles.ts                      権限の定義（ロール→権限、ページごと・ストア操作ごとに必要な権限）
+    serverAuth.ts                 API 側のトークン検証（requireAuth / requirePerm）、service role クライアント
     inspectionSession.ts ほか     既存系のセッション・音声・弁操作判定・Excel 解析
     piping/                       配管系統図系のドメインロジック（下記 5 章）
 supabase/                         SQL（SQL Editor で手動実行する。マイグレーションツールは未使用）
@@ -103,6 +106,21 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 
 - `auth_login_id.sql`：関数 `login_email(login_id)`（ID＝メールの @ より前 → メールアドレス）。**実行済み**。
 - `auth_rls.sql`：`demo: allow all` ポリシーを `logged in: all`（authenticated のみ）に置き換える。**2026-11-15 時点で本番未実行**（匿名キー（anon key）で全テーブルが読めることを確認済み）。
+- `auth_roles_rls.sql`：権限による書き込みの制限（読み取りはログイン利用者全員、書き込みはテーブルごとの権限。トークンの `app_metadata.roles` を見る）。**未実行・未検証**。`auth_rls.sql` の次の段階として、全員の権限を設定してから実行する。
+
+#### 権限（ロール）の設計
+
+| 権限 | できること |
+|---|---|
+| 作業者 `worker` | チェックリストの作成・実施（① ② `/checklists` `/inspect`）、QR コード印刷（`/equipment/print` `/piping/qr`） |
+| 承認者 `approver` | 作業者の内容＋チェックリストの確認（承認）。承認は配管系統図のチェックリスト（`SavedPlan.approvedAt/approvedBy`） |
+| 制御室 `control` | ③ `/piping/control`（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、`/control-room` |
+| 管理者 `admin` | すべて（`/admin/users`、④ `/piping/data` `/piping/editor`、⑤ `/piping/rules`、機器マスター `/equipment`） |
+
+- **保存先**：Supabase Auth の `app_metadata.roles`（配列）。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：承認者＋制御室）。
+- **未設定の利用者**は作業者として扱う。環境変数 `ADMIN_LOGIN_IDS`（ログイン ID のカンマ区切り）の利用者は常に管理者（`/api/me` を開いたときに `app_metadata` にも管理者を書き込む）。この利用者の管理者権限の削除・無効化、自分自身の無効化、最後の管理者の管理者権限の削除はできない。
+- **無効化**：Supabase Auth の利用停止（`ban_duration`）。ログイン・トークン更新ができなくなり、API（`requireAuth`）は `banned_until` を見て 401 を返す。利用者の削除はしない（記録に名前が残るため）。
+- **判定の場所**：定義は `src/lib/roles.ts` に集約。画面は `AuthGate` がページごとの権限（`PAGE_PERMS`）を見て中身を出さず、メニュー（ホーム・配管系統図トップ・⚙ 管理設定）も開けないものは出さない。API は `requirePerm()`（ユーザー管理・系統図の版）と、`/api/piping` の操作ごとの権限（`STORE_ACTION_PERMS`）で 403 を返す。既存系はブラウザから DB へ直接書くため、サーバー側の制限は `auth_roles_rls.sql` の実行後に効く。
 
 ## 5. 配管系統図系の設計
 
@@ -138,14 +156,16 @@ DB（版：論理データ＋図面データ）
 
 ### 5.3 API（`src/app/api/piping/`）
 
-すべて `requireAuth()` で Bearer トークンを検証し、**その利用者として** Supabase に接続します（RLS 上 authenticated 扱い）。操作者名は記録（`by` / `confirmedBy` / `updatedBy`）に残します。
+すべて `requireAuth()` で Bearer トークンを検証し、**その利用者として** Supabase に接続します（RLS 上 authenticated 扱い）。操作者名は記録（`by` / `confirmedBy` / `updatedBy` / `approvedBy`）に残します。権限は 4.3 のとおり操作ごとに確かめます（足りなければ 403）。
 
 | エンドポイント | 内容 |
 |---|---|
 | `GET/POST /api/piping?facility=` | 拠点のストア取得・StoreAction の適用。本番（Vercel）は Supabase、ローカル `next dev` は `.local-data/` のファイル（`PIPING_STORE=supabase|file` で強制可） |
 | `GET /api/piping/diagram` | 使用中の版を返す。読む順：v2 構造 → 第1版構造 → プログラム内の仮想施設（`PIPING_DIAGRAM=builtin` で DB を読まない） |
-| `GET/POST /api/piping/diagram/versions` | 版の一覧・中身・取込（下書き作成）・使用中へ切替・下書き削除 |
+| `GET/POST /api/piping/diagram/versions` | 版の一覧・中身・取込（下書き作成）・使用中へ切替・下書き削除（管理者のみ） |
 | `GET /api/piping/facilities` | 拠点一覧と使用中の版番号 |
+| `GET /api/me` | ログイン中の利用者の名前・権限（画面の出し分けに使う） |
+| `GET/POST /api/admin/users` | ユーザー管理（管理者のみ、service role キー）。一覧・作成（ログイン ID＋初期パスワード、メール確認なし）・名前と権限の変更・パスワード再設定・無効化／有効に戻す |
 
 ## 6. 設計思想（守るべき原則）
 
@@ -164,4 +184,6 @@ DB（版：論理データ＋図面データ）
 - 開発サーバー：`.claude/launch.json` の `dev`（http://localhost:3000）または `dev-https`（実機カメラ試験用、`certificates/` の証明書）。LAN 実機からは `allowedDevOrigins` の 192.168.0.21。
 - ブランチ運用：`local/<機能名>` ブランチで作業 → main へ fast-forward → push（Vercel 自動デプロイ）。push はユーザーの承認後に行う。
 - SQL の変更：`supabase/` に新しいファイルを追加し、ユーザーに SQL Editor での実行を依頼する。
-- 利用者の追加：Supabase 管理画面で作成（Auto Confirm）。ログイン ID はメールの @ より前。
+- 利用者の追加：管理者がユーザー管理（`/admin/users`）で作成し、権限を付ける。ログイン ID はメールの @ より前（ID だけを入れると `ID@valve-check.local`）。
+- 環境変数：`SUPABASE_SERVICE_ROLE_KEY`（ユーザー管理に必須。サーバー側だけで使う）、`ADMIN_LOGIN_IDS`（最初の管理者）。ローカルは `.env.local`、本番は Vercel の環境変数に設定する（`.env.local.example` 参照）。
+- 同じフォルダーで `next dev` は1つしか動かせない（Next.js 16 のロック）。別のチャットが動かしているときは、その 3000 番のサーバーを使う。

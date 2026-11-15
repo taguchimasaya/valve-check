@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import UserBadge from "@/components/UserBadge";
+import { useMe } from "@/lib/auth";
+import { canOpen } from "@/lib/roles";
 
 const features = [
   {
@@ -7,6 +11,12 @@ const features = [
     desc: "機器マスターをインポートし、機器ごとにQRコードを発行します。",
     status: "実装済み",
     href: "/equipment",
+  },
+  {
+    title: "機器QRコード印刷",
+    desc: "機器マスターに登録済みの機器のQRコードを印刷します。",
+    status: "実装済み",
+    href: "/equipment/print",
   },
   {
     title: "チェックリスト取込",
@@ -35,6 +45,9 @@ const features = [
 ];
 
 export default function Home() {
+  // 権限で開けないメニューは出さない（配管系統図トップは誰でも開ける）
+  const me = useMe();
+  const visible = features.filter((f) => !f.href || canOpen(me?.roles, f.href));
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-16 dark:bg-black">
       <div className="mx-auto max-w-3xl">
@@ -49,6 +62,11 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             <UserBadge />
+            {canOpen(me?.roles, "/admin/users") && (
+              <Link href="/admin/users" className="text-sm text-zinc-600 hover:text-zinc-800 dark:text-zinc-400">
+                👥 ユーザー管理
+              </Link>
+            )}
             <Link href="/settings" className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300">
               <span className="text-2xl">⚙️</span>
             </Link>
@@ -59,7 +77,7 @@ export default function Home() {
         </p>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          {features.map((f) => {
+          {visible.map((f) => {
             const card = (
               <div
                 className={`rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950 ${
