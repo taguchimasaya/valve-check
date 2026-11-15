@@ -12,9 +12,9 @@
 
 | 項目 | 状態 |
 |---|---|
-| Git | main = origin/main = `697f4df`（系統図エディタ・運用停止範囲の設定まで反映）。作業ブランチはすべて main にマージ済み。未コミットは `CLAUDE.md` の変更と資料類（pptx・docx・xlsx・`SYSTEM_*.md`・`diagrams/`・`screenshots/`・`scripts/` など） |
+| Git | main = origin/main = `ccf5be7`（計算の部品まで反映）。作業ブランチはすべて main にマージ済み。未コミットは `CLAUDE.md` の変更と資料類（pptx・docx・xlsx・`SYSTEM_*.md`・`diagrams/`・`screenshots/`・`scripts/` など） |
 | 型チェック（type check） | `npx tsc --noEmit` 成功（エラー 0） |
-| 本番デプロイ | Vercel（main 自動デプロイ）。最終反映は `697f4df`（2026-11-15、系統図エディタ・運用停止範囲の設定） |
+| 本番デプロイ | Vercel（main 自動デプロイ）。最終反映は `ccf5be7`（2026-11-15、系統図エディタ・運用停止範囲の設定・計算の部品） |
 | 本番 DB の拠点 | `virtual-airport`（仮想空港 給油施設、第1版が使用中）、`virtual-site-2`（臨海石油基地、第6版が使用中、第1〜5版は保管） |
 | 本番 DB の件数 | equipment 184、checklist_templates 3、inspection_sessions 69、inspection_results 449、piping_nodes 2,518、piping_pipes 2,650、piping_sheets 7 |
 | piping_store | `main`（version 223）、`virtual-site-2`（version 3） |
