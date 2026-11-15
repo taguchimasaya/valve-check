@@ -36,7 +36,7 @@ export async function signIn(id: string, password: string) {
 }
 
 export async function signOut() {
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
 }
 
 /** ログイン中のセッション（読み込み中は undefined、未ログインは null） */
@@ -57,6 +57,6 @@ export async function authFetch(input: string, init: RequestInit = {}) {
   if (data.session) headers.set("Authorization", `Bearer ${data.session.access_token}`);
   const res = await fetch(input, { ...init, headers });
   // ログインが切れていれば、ログアウトしてログイン画面へ（AuthGate が移動する）
-  if (res.status === 401) await supabase.auth.signOut();
+  if (res.status === 401) await supabase.auth.signOut({ scope: "local" });
   return res;
 }
