@@ -119,7 +119,7 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 #### チェックリストの承認フロー（`src/lib/piping/approval.ts`）
 
 - 作成者（作業者）→ チームリーダー → G長 → 制御室。制御室の段は ⑤ 共通の設定（`rules.approval.requireControl`、拠点ごと、既定はあり）。
-- ① の作成画面は「プレビュー → 承認依頼する」（`savePlan`。保存すると承認・差し戻しは外れて最初から）。作成しない人（チームリーダー・G長・制御室）が ① を開くと承認の画面（`ApprovalBoard`）だけになる。管理者は両方。
+- ① の作成画面は「プレビュー → 承認依頼する」（`savePlan`。保存すると承認・差し戻しは外れて最初から）。作成しない人（チームリーダー・G長・制御室・管理者）が ① を開くと承認の画面（`ApprovalBoard`）だけになる。作成者本人は承認できないため、管理者にも作成の権限（`create`）は付けない（2026-11-16。作成・削除・周期の変更・Excel 取込は作業者だけ）。
 - 承認（`approvePlan`）は順番どおりの次の段だけ、その段の権限（管理者はどの段も）で、作成者本人は不可。差し戻し（`rejectPlan`）は承認フローのどれかの段の人が理由つきで行い、承認をすべて外す。差し戻し中は作成者が直して承認依頼し直すまで承認・差し戻しできない。点検の開始（`startExecution`）は最後の段まで承認されたものだけ。いずれも `/api/piping` で確かめる。
 - 保存先は `piping_store` の `SavedPlan.approvals`（段ごとの `{by, byId, at}`）・`rejection`・`updatedById`（作成者の利用者 ID）。印刷の「作成・確認・承認・制御室」欄に名前が入る。
 - メール通知（`src/lib/approvalMail.ts`）：⑤ 共通の「承認フローのメールを送る」（`rules.approval.notifyEmail`、既定はオフ）がオンの拠点で、承認依頼・各段の承認は次の段の権限を持つ人へ、差し戻しと最後の承認は作成者へ。宛先はユーザー管理の「通知先メール」（`user_metadata.notify_email`）。送信は Gmail などの SMTP（`SMTP_USER`・`SMTP_PASS`＝Gmail のアプリ パスワード、`SMTP_HOST` 既定 smtp.gmail.com・`SMTP_PORT` 既定 465。`nodemailer`）、無ければ Resend の API（`RESEND_API_KEY`）。送信元は `MAIL_FROM`。ユーザー管理の「テストメール」で設定を確かめられる。`/api/piping` の応答のあとに `after()` で送る（失敗しても操作は成功のまま）。
@@ -132,7 +132,7 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 | チームリーダー `approver` | 承認フローの1段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
 | G長 `manager` | 承認フローの2段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
 | 制御室 `control` | 承認フローの3段目（⑤ の設定で有無）、③ `/piping/control`（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、`/control-room` |
-| 管理者 `admin` | すべて（`/admin/users`、④ `/piping/data` `/piping/editor`、⑤ `/piping/rules`、機器マスター `/equipment`） |
+| 管理者 `admin` | チェックリストの作成以外のすべて（承認はどの段も、`/admin/users`、④ `/piping/data` `/piping/editor`、⑤ `/piping/rules`、機器マスター `/equipment`） |
 
 - **拠点ごとの権限**：作業者・チームリーダー・G長・制御室は拠点ごとに付ける（`app_metadata.siteRoles` = `{ 拠点ID: 権限[] }`。拠点ごとに担当者が違うため）。管理者だけは全拠点共通（`roles` の `admin`）。`roles` には全拠点を合わせた権限も入れ、拠点の区別が無い既存系の画面と DB 側の RLS はこれを使う。`siteRoles` が未設定の利用者は `roles` が全拠点に効く。配管系統図の画面・API は選択中の拠点での権限（`rolesAt()`）で判断し、権限の無い拠点は拠点の一覧にも出さず、データ・系統図の API も 403。ただし、どこかの拠点で制御室の人は、ほかの拠点も表示だけできる（`viewOnly`。配管系統図トップの現在状況のみ、操作は不可）。承認とメールの宛先も拠点での権限で決める。
 - **保存先**：Supabase Auth の `app_metadata.roles`（配列）・`siteRoles`。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：チームリーダー＋制御室）。

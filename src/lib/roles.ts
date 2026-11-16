@@ -8,7 +8,8 @@
 // - 制御室 control  ：③ 制御室・既存系の制御室ダッシュボード（運用入力・弁の手動変更・停止範囲・現場記録の確認）、
 //                     チェックリストの承認（3段目。⑤ の設定で有無を決める）
 // 承認フローの決まりは src/lib/piping/approval.ts。
-// - 管理者 admin    ：すべて（ユーザー管理、④ 系統図データ管理、⑤ チェックリスト作成のルール、機器マスター）
+// - 管理者 admin    ：チェックリストの作成以外のすべて（ユーザー管理、④ 系統図データ管理、⑤ チェックリスト作成のルール、機器マスター、
+//                     承認のどの段も）。作成者本人は承認できないため、作成は作業者だけにして作成と承認を分ける
 
 export const ROLES = ["worker", "approver", "manager", "control", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -26,7 +27,7 @@ export const ROLE_DESC: Record<Role, string> = {
   approver: "チェックリストの承認（1段目）、② 現場点検・QRコード印刷（作成はしない）",
   manager: "チェックリストの承認（2段目）、② 現場点検・QRコード印刷（作成はしない）",
   control: "③ 制御室（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、チェックリストの承認（3段目）",
-  admin: "すべて（ユーザー管理、④ 系統図データ管理、⑤ ルール、機器マスター）",
+  admin: "チェックリストの作成以外のすべて（ユーザー管理、④ 系統図データ管理、⑤ ルール、機器マスター、承認）",
 };
 
 /** 権限で許される操作の単位 */
@@ -44,7 +45,8 @@ const GRANTS: Record<Role, Permission[]> = {
   approver: ["checklist", "qr", "approveLeader"],
   manager: ["checklist", "qr", "approveManager"],
   control: ["control"],
-  admin: ["create", "checklist", "qr", "approveLeader", "approveManager", "control", "admin"],
+  // 作成（create）は付けない：作成者本人は承認できないため、作成は作業者、承認はそれ以外の人に分ける
+  admin: ["checklist", "qr", "approveLeader", "approveManager", "control", "admin"],
 };
 
 /** 保存値を権限の一覧にそろえる（知らない値は捨てる）。未設定なら null */
