@@ -121,7 +121,7 @@ export async function notifyApproval(opts: {
       mails.push({
         to: notifyEmailOf(u)!,
         subject: `【バルブ点検】承認のお願い（${STAGE_LABEL[next]}）：${plan.name}`,
-        text: `チェックリスト「${plan.name}」の承認をお願いします（${STAGE_LABEL[next]}の段）。\n\n${head}\n① チェックリスト作成の「チェックリストの承認」で、プレビューを確かめて承認または差し戻ししてください。\n${origin}/piping/planner\n${foot}`,
+        text: `チェックリスト「${plan.name}」の承認をお願いします（${STAGE_LABEL[next]}の段）。\n\n${head}\n① チェックリスト確認・承認で、プレビューを確かめて承認または差し戻ししてください。\n${origin}/piping/planner\n${foot}`,
       });
     }
   }

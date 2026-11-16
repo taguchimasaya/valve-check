@@ -9,13 +9,13 @@ import { describeOperation, OPERATION_META, type OperationKind } from "@/lib/pip
 import { useDiagramInfo, useGraph, usePipingStore, useSiteRoles } from "@/lib/piping/usePiping";
 import FacilitySwitcher from "@/components/piping/FacilitySwitcher";
 import UserBadge from "@/components/UserBadge";
-import { canOpen } from "@/lib/roles";
+import { can, canOpen } from "@/lib/roles";
 
 const menus = [
   {
     no: "①",
     title: "チェックリスト作成",
-    desc: "燃料抜取・末端部作業・タンク縁切り・消火設備機能試験などの作業を図面上で選び、操作バルブと工程を自動で算定してチェックリストを作成し、承認依頼します（チームリーダー・G長・制御室はここで承認します）。",
+    desc: "燃料抜取・末端部作業・タンク縁切り・消火設備機能試験などの作業を図面上で選び、操作バルブと工程を自動で算定してチェックリストを作成し、承認依頼します。",
     href: "/piping/planner",
   },
   {
@@ -37,6 +37,12 @@ const menus = [
     href: "/piping/qr",
   },
 ];
+
+/** 作成しない人（チームリーダー・G長・制御室・管理者）向けの ① */
+const REVIEW_MENU = {
+  title: "チェックリスト確認・承認",
+  desc: "作業者が作成・承認依頼したチェックリストを、図面と工程ごとの開閉で確認し、承認または差し戻しします。",
+};
 
 /** 管理設定（右上）：系統図データ・チェックリスト作成のルール・ユーザー管理（管理者だけに出す） */
 const settings = [
@@ -64,7 +70,10 @@ export default function PipingHome() {
   // 権限で開けないメニュー・管理設定は出さない
   // 選択中の拠点での権限（表示だけの拠点では、メニューは出さず現在の状況だけ）
   const roles = useSiteRoles();
-  const visibleMenus = menus.filter((m) => canOpen(roles, m.href));
+  // ① は作業者（作成する人）には「作成」、それ以外（チームリーダー・G長・制御室・管理者）には「確認・承認」として出す
+  const visibleMenus = menus
+    .filter((m) => canOpen(roles, m.href))
+    .map((m) => (m.href === "/piping/planner" && !can(roles, "create") ? { ...m, ...REVIEW_MENU } : m));
   const visibleSettings = settings.filter((m) => canOpen(roles, m.href));
   const graph = useGraph();
   const diagramInfo = useDiagramInfo();

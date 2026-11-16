@@ -768,7 +768,7 @@ export default function PlannerPage() {
           <Link href="/piping" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
             ← 配管系統図メニュー
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">① チェックリストの承認</h1>
+          <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">① チェックリスト確認・承認</h1>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">現場担当者が作成したチェックリストを確認して、承認または差し戻しします。</p>
           <div className="mt-4">
             <ApprovalBoard graph={g} store={store} base={baseline} act={act} />
