@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import NfcScanPanel from "@/components/NfcScanPanel";
-import PlanApproval from "@/components/piping/PlanApproval";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
@@ -32,6 +31,7 @@ import FillSupplyPicker from "@/components/piping/FillSupplyPicker";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
 import PlanPreview from "@/components/piping/PlanPreview";
 import { manualStepLabel, needsDayParams, workTypeOf } from "@/lib/piping/workTypes";
+import { versionMismatch } from "@/lib/piping/impact";
 
 const volumeLabel = (p: SavedPlan) => (workTypeOf(p) === "flush" ? "末端部容量" : "抜取量");
 import { useDiagramInfo, useGraph, useLocalValue, usePipingStore, useSiteRoles } from "@/lib/piping/usePiping";
@@ -267,9 +267,12 @@ export default function FieldPage() {
 
   // ───────────── 点検未選択：一覧 ─────────────
   if (!exec || !plan || !v) {
-    const plans = store?.plans ?? [];
+    const allPlans = store?.plans ?? [];
+    // 現場で開始できるのは最後まで承認されたチェックリストだけなので、一覧にも承認済みだけを出す（承認は ① で行う）
+    const plans = allPlans.filter((p) => approvalState(p, stages).complete);
+    const waiting = allPlans.length - plans.length;
     const executions = store?.executions ?? [];
-    const planById = new Map(plans.map((p) => [p.id, p]));
+    const planById = new Map(allPlans.map((p) => [p.id, p]));
     const q = normalize(search);
     const planHit = (p: SavedPlan | undefined) =>
       !!p &&
@@ -446,33 +449,44 @@ export default function FieldPage() {
                 </datalist>
               </div>
             )}
+            {waiting > 0 && (
+              <p className="mt-2 text-xs text-zinc-500">
+                承認済みのチェックリストだけを表示しています（承認待ち・差し戻し中の {waiting}件は{" "}
+                <Link href="/piping/planner" className="text-emerald-700 underline">①</Link> で確認できます）。
+              </p>
+            )}
             {plans.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">
-                チェックリストがありません。<Link href="/piping/planner" className="text-emerald-700 underline">①で作成</Link>
-                するか、既存形式のExcelを取り込んでください。
+                {waiting > 0 ? (
+                  "承認済みのチェックリストはまだありません。"
+                ) : (
+                  <>
+                    チェックリストがありません。<Link href="/piping/planner" className="text-emerald-700 underline">①で作成</Link>
+                    するか、既存形式のExcelを取り込んでください。
+                  </>
+                )}
               </p>
             ) : shownPlans.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">該当するチェックリストはありません。</p>
             ) : (
               <ul className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
                 {shownPlans.map((p) => (
-                  <li key={p.id} className="flex flex-wrap items-center gap-2 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        <span className="truncate">{p.name}</span>
-                        <PlanApproval plan={p} stages={stages} compact />
-                      </p>
+                  <li key={p.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
+                    {/* スマホでは名前・説明を全幅にして、ボタンはその下に並べる */}
+                    <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+                      <p className="break-words text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.name}</p>
                       <p className="text-xs text-zinc-500">
                         {p.source === "excel" ? "Excel取込" : p.purpose} ・ {p.steps.length}工程 ・ {p.rows.length}弁
                         {p.summary.volumeL ? ` ・ ${volumeLabel(p)} ${formatLiters(p.summary.volumeL)}` : ""}
                       </p>
                       {canCreate ? <PlanPeriodField plan={p} act={act} /> : p.period && <p className="text-xs text-zinc-500">周期：{p.period}</p>}
-                      {p.diagramVersionId && diagramInfo.versionId && p.diagramVersionId !== diagramInfo.versionId && (
+                      {versionMismatch(p, diagramInfo.versionId) && (
                         <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                          ⚠ 現在と違う版の系統図で作成されています。① で作り直してください。
+                          ⚠ {versionMismatch(p, diagramInfo.versionId)}① で作り直してください。
                         </p>
                       )}
                     </div>
+                    <div className="flex flex-wrap gap-2 sm:shrink-0">
                     <button
                       onClick={() => setPreview({ planId: p.id })}
                       className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700"
@@ -503,6 +517,7 @@ export default function FieldPage() {
                         削除
                       </button>
                     )}
+                    </div>
                   </li>
                 ))}
               </ul>

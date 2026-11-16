@@ -164,6 +164,9 @@ function applyAs(store: PipingStore, a: StoreAction, who: Actor): string | null 
     const rej = store.plans.find((p) => p.id === a.id)?.rejection;
     if (rej) rej.by = actor;
   }
+  if (a.action === "applyDiagramImpact") {
+    store.plans.forEach((p) => p.rejection && !p.rejection.by && (p.rejection.by = actor));
+  }
   return null;
 }
 
@@ -415,6 +418,46 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       if (f && (typeof f !== "object" || Array.isArray(f))) return "ルールの形式が正しくありません";
       store.rules = { ...a.rules, updatedAt: now };
       store.log.unshift({ at: now, type: "info", text: `チェックリスト作成のルールを更新しました${a.by ? `（${a.by}）` : ""}` });
+      store.log = store.log.slice(0, 100);
+      return null;
+    }
+    case "applyDiagramImpact": {
+      if (typeof a.versionId !== "string" || !a.versionId || !Array.isArray(a.results)) return "影響チェックの結果の形式が正しくありません";
+      const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+      const PATCH_KEYS = ["regionPipeIds", "sealPipeIds", "fillPipeIds", "flushPipeIds", "targets", "stepRoutes"];
+      let updated = 0;
+      let returned = 0;
+      for (const r of a.results) {
+        const plan = store.plans.find((p) => p.id === r?.planId);
+        if (!plan) continue;
+        if (r.level === "remake") {
+          const reasons = (Array.isArray(r.reasons) ? r.reasons : []).map(String);
+          const more = reasons.length > 3 ? `ほか${reasons.length - 3}件` : "";
+          const stage = approvalState(plan, approvalStages(store.rules)).next ?? "control";
+          plan.rejection = {
+            by: "",
+            at: now,
+            reason: `系統図の第${a.versionNo}版への更新で作り直しが必要です：${reasons.slice(0, 3).join("／")}${more}`.slice(0, 500),
+            stage,
+          };
+          delete plan.approvals;
+          returned++;
+        } else if (r.level === "none" || r.level === "drawing") {
+          if (r.level === "drawing" && r.patch) {
+            const p = r.patch as Record<string, unknown>;
+            if (Object.keys(p).some((k) => !PATCH_KEYS.includes(k))) return "影響チェックの付け替えの形式が正しくありません";
+            if (["regionPipeIds", "sealPipeIds", "fillPipeIds", "flushPipeIds"].some((k) => k in p && !ids(p[k]))) return "影響チェックの付け替えの形式が正しくありません";
+            Object.assign(plan, r.patch);
+          }
+          plan.diagramVersionId = a.versionId;
+          updated++;
+        } else return "影響チェックの判定が正しくありません";
+      }
+      store.log.unshift({
+        at: now,
+        type: "info",
+        text: `系統図の第${a.versionNo}版への更新に合わせてチェックリストを見直しました（版の更新 ${updated}件・差し戻し ${returned}件）`,
+      });
       store.log = store.log.slice(0, 100);
       return null;
     }

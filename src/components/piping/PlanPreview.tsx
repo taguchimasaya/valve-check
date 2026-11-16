@@ -9,6 +9,8 @@ import type { ValveState } from "@/lib/piping/types";
 import { formatLiters, formatMinutes } from "@/lib/piping/isolation";
 import { recordKey, type Execution } from "@/lib/piping/store";
 import { workTypeOf } from "@/lib/piping/workTypes";
+import { useDiagramInfo } from "@/lib/piping/usePiping";
+import { versionMismatch } from "@/lib/piping/impact";
 
 const volumeLabel = (p: SavedPlan) => (workTypeOf(p) === "flush" ? "末端部容量" : "抜取量");
 
@@ -52,6 +54,7 @@ export default function PlanPreview({
   pdfHref?: string | null;
 }) {
   const diagramRef = useRef<DiagramHandle>(null);
+  const diagramInfo = useDiagramInfo();
   // 表示する工程（点検中なら現在の工程から）
   const [step, setStep] = useState(exec && exec.status === "in_progress" ? exec.currentStep : 0);
 
@@ -143,6 +146,11 @@ export default function PlanPreview({
         </div>
 
         <div className="space-y-3 overflow-auto p-4">
+          {versionMismatch(plan, diagramInfo.versionId) && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-800 dark:bg-red-950 dark:text-red-200">
+              ⚠ {versionMismatch(plan, diagramInfo.versionId)}図面の範囲・流れの線がずれていることがあります。① で作り直してください。
+            </p>
+          )}
           {plan.summary.warnings.length > 0 && (
             <ul className="list-disc rounded-lg bg-amber-50 py-2 pl-8 pr-3 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
               {plan.summary.warnings.map((w) => (

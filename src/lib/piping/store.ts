@@ -6,6 +6,7 @@ import type { ValveState } from "./types";
 import type { ChecklistRules } from "./rules";
 import type { ApprovalStage } from "./approval";
 import { authFetch } from "../auth";
+import type { ImpactLevel, PlanPatch } from "./impact";
 
 // 配管系統図機能の共有ストア（現場・制御室で同じデータを見る）。
 // 保存先は API（/api/piping）側で切り替わる：本番は Supabase の piping_store テーブル、
@@ -97,6 +98,16 @@ export type StoreAction =
   | { action: "markStepDone"; execId: string; step: number }
   | { action: "setRules"; rules: ChecklistRules; by?: string }
   | { action: "setOutageDefs"; defs: OutageSetting[] }
+  /**
+   * 系統図の版の切り替えに合わせて、既存チェックリストに影響チェックの結果を当てはめる（④ の管理者）。
+   * 影響なし・図面だけ → 版の記録を新しくする（図面だけは配管番号も付け替える）、作り直し → 理由つきで差し戻す
+   */
+  | {
+      action: "applyDiagramImpact";
+      versionId: string;
+      versionNo: number;
+      results: { planId: string; level: ImpactLevel; reasons: string[]; patch?: PlanPatch }[];
+    }
   | {
       action: "setFillSupply";
       execId: string;

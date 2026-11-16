@@ -127,6 +127,8 @@ export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
   setOutageDefs: ["control"],
   // 管理
   setRules: ["admin"],
+  // 系統図の版の切り替えに合わせたチェックリストの更新・差し戻し（版の切り替えと同じく管理者）
+  applyDiagramImpact: ["admin"],
 };
 
 /** 権限が足りないときの案内文 */
