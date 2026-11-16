@@ -60,6 +60,10 @@ create trigger equipment_identifiers_touch
   before update on equipment_identifiers
   for each row execute function public.equipment_identifiers_touch();
 
+-- テーブルの権限。Supabase の設定によっては SQL Editor で作ったテーブルに自動で付かないため明示する
+-- （削除の権限は付けない。タグは無効化で管理する）
+grant select, insert, update on public.equipment_identifiers to authenticated;
+
 -- RLS（行単位のアクセス制御）
 alter table equipment_identifiers enable row level security;
 drop policy if exists "role: read equipment_identifiers" on equipment_identifiers;

@@ -38,7 +38,11 @@ function isMissingTable(e: PgError) {
 
 function dbError(e: NonNullable<PgError>): Error {
   if (isMissingTable(e)) return new Error(MISSING_TABLE_MESSAGE);
-  if (e.code === "42501") return new Error("NFC タグを登録・変更する権限がありません（QR コード印刷の権限が必要です）");
+  if (e.code === "42501")
+    return new Error(
+      `NFC タグのデータを読み書きする権限がありません。テーブルの権限（supabase/equipment_identifiers.sql の grant）と、` +
+        `利用者の権限（登録・変更は QR コード印刷の権限か管理者）を確認し、ログインし直してください。（${e.message}）`
+    );
   return new Error(e.message);
 }
 
