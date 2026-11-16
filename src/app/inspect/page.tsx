@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import NfcScanPanel from "@/components/NfcScanPanel";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
@@ -235,6 +236,12 @@ export default function InspectScannerPage() {
   useEffect(() => {
     tapConfirmRef.current = tapConfirm;
   }, [tapConfirm]);
+
+  // NFC読取から常に最新の handleScan を呼ぶ（stale closure 対策）
+  const handleScanRef = useRef(handleScan);
+  useEffect(() => {
+    handleScanRef.current = handleScan;
+  });
 
   // 最後の工程完了を定期的に検出してセッション終了
   useEffect(() => {
@@ -1191,6 +1198,13 @@ export default function InspectScannerPage() {
               {cameraError && (
                 <p className="mt-3 text-sm text-red-600 dark:text-red-400">{cameraError}</p>
               )}
+
+              <NfcScanPanel
+                onCode={(code) => void handleScanRef.current(code)}
+                nameOf={(code) => rows.find((r) => r.code === code)?.name}
+                canAccept={() => !scanLockRef.current && !tapConfirmRef.current}
+                onReject={() => void playResultBeep("NG")}
+              />
 
               <p className="mt-3 text-center text-xs text-zinc-400">
                 読み取れない場合は、下の一覧でバルブの丸をタップしても記録できます。

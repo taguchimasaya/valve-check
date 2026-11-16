@@ -5,6 +5,7 @@ import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
+import { NfcCardInfo, NfcTagPanel, NfcTagProvider } from "@/components/piping/NfcTagManager";
 
 // 配管系統図で使っている弁（仕切弁・ドレン弁・圧力計元弁）のQRコード印刷シート。
 // QRの中身は既存の機器マスターのQRと同じ「{origin}/inspect/{機器番号}」形式。
@@ -59,6 +60,7 @@ export default function PipingQrPage() {
   );
 
   return (
+    <NfcTagProvider nodes={g.facility.nodes}>
     <div className="min-h-screen bg-white px-4 py-6 print:p-0">
       <div className="mx-auto max-w-4xl">
         <div className="print:hidden">
@@ -125,6 +127,7 @@ export default function PipingQrPage() {
               印刷（{list.length}件）
             </button>
           </div>
+          <NfcTagPanel />
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 print:mt-0 print:grid-cols-3 print:gap-3">
@@ -136,11 +139,13 @@ export default function PipingQrPage() {
               <p className="text-[10px] text-zinc-400">
                 {n.area}・{KIND_LABEL[n.kind]}
               </p>
+              <NfcCardInfo code={n.label} />
             </div>
           ))}
         </div>
         {list.length === 0 && <p className="mt-6 text-center text-sm text-zinc-500">該当する機器がありません。</p>}
       </div>
     </div>
+    </NfcTagProvider>
   );
 }

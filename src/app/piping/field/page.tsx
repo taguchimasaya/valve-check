@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import NfcScanPanel from "@/components/NfcScanPanel";
 import PlanApproval from "@/components/piping/PlanApproval";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
@@ -697,6 +698,14 @@ export default function FieldPage() {
         </div>
 
         {flash && <FlashBar flash={flash} />}
+        <div className="mx-auto w-full max-w-sm">
+          <NfcScanPanel
+            onCode={(code) => handleCodeRef.current(code, true)}
+            nameOf={(code) => plan.rows.find((r) => r.code === code || r.nodeId === code)?.name}
+            canAccept={() => !pendingRef.current}
+            onReject={() => playBeep("NG")}
+          />
+        </div>
         {cameraError && <p className="mt-2 text-sm text-red-600">{cameraError}</p>}
         {scannerOpen && (
           <div ref={readerBoxRef} className="mx-auto mt-2 w-full max-w-sm">

@@ -53,6 +53,20 @@
 | 未使用コード | ⚠️ | `isLastStepComplete()`（`src/app/inspect/page.tsx`）、`/inspect/[code]` の `ensureActiveSession` import |
 | `/inspect` と `/control-room` の型・グリッド構築の共通化 | ❌ | 両ページで重複実装 |
 
+## 3.5 共通：NFC タグ識別（既存系・配管系統図系）
+
+QR に加えて NFC タグ（NXP NTAG215、7 バイト UID）の UID で同じ機器を識別します。QR は今までどおり使えます。
+
+| 機能 | 状態 | 備考 |
+|---|---|---|
+| NFC タグ識別テーブル（`equipment_identifiers`） | ⏳ | `supabase/equipment_identifiers.sql`。**本番未実行**（ユーザーが SQL Editor で `auth_roles_rls.sql` の後に実行）。既存テーブルは無変更。行は削除せず無効化のみ。RLS は読み取り全員、追加・更新は作業者・チームリーダー・G長・管理者。初期データ `equipment_identifiers_seed.sql`（デモ用タグ10枚、管理番号1〜10、未割当）、`demo_nfc_tags.csv`。ローカル Postgres 16 で冪等性・制約・RLS を確認済み |
+| UID の正規化・検証・表示、UID→機器番号の解決（`nfcUid.ts`・`identifiers.ts`） | ✅ | 未登録・無効・未割当のタグは点検へ進めない。重複時は相手の登録情報を返す（`IdentifierConflictError`）。UID 正規化の単体テストあり（`node --test tools/tests/*.test.mjs`、依存関係追加なし） |
+| NFC 読取（Web NFC、`useNfcReader.ts`） | ⚠️ | Android Chrome のみ（`NDEFReadingEvent.serialNumber` の UID を使用、NDEF の中身は使わない）。HTTPS・画面前面・ボタン操作が必要。iPhone・iPad・PC のブラウザは非対応。**Android 実機での読取は未確認**。同じ UID の連続読取は 2.5 秒抑止 |
+| 現場での NFC 読取（`/inspect`・`/piping/field`、`NfcScanPanel`） | ⚠️ | UID→機器番号の後は既存の QR 読取処理（`handleScan` / `handleCode`）をそのまま呼ぶ。既存処理は無変更。実機未確認 |
+| NFC タグ管理（`/piping/qr` の「NFCタグ管理」・各 QR カードの紐付けボタン、`NfcTagManager`） | ⏳ | 登録（手入力・NFC 読取）、重複検知、紐付け・付け替え・解除、管理番号、無効化・有効に戻す、タグ交換、検索（管理番号・設備名称・UID・機器番号）。画面のみで印刷結果は変わらない。テーブル未作成のため本番では使えない |
+| QR の扱い | ✅ | QR は今までどおり。`equipment_identifiers` に QR の行は作らない（`QR` 種別は将来用） |
+| UID の性質 | ⚠️ | UID は認証情報ではない。複製・偽装への対策は対象外。将来案：外付けリーダー（キーボード入力モード）や iPhone・Android をペアリングして読む構成 |
+
 ## 4. B. 配管系統図系（/piping）
 
 ### 4.1 チェックリスト作成（① `/piping/planner`）
@@ -115,3 +129,5 @@
 3. **既存系の操作者記録**：ログイン利用者名を `checked_by` / `confirmed_by` / `created_by` に設定する。
 4. **系統図の版とチェックリストの整合チェック**：使用中の版とチェックリスト作成時の版が違う場合の警告。
 5. **自動テストの導入**：`isolation.ts`・`workTypes.ts`・`fireTest.ts` などの算定ロジックは純粋関数のため、単体テスト（unit test）を入れやすい。
+6. **`equipment_identifiers.sql` の本番実行**（ユーザー作業）：`auth_roles_rls.sql` の後に SQL Editor で実行。NFC タグの登録・識別は、これが済むまで本番では動かない。
+7. **Android 実機での NFC 読取確認**：Chrome（HTTPS）で `/piping/qr` からタグを登録し、`/inspect`・`/piping/field` で読取を確認。読取できない場合は NFC の設定と画面の前面表示を確かめる。

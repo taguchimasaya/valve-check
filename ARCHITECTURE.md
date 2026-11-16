@@ -34,6 +34,7 @@
 | UI | React 19.2.8、Tailwind CSS 4 |
 | BaaS | Supabase（`@supabase/supabase-js` 2.115）：Postgres・Auth・Realtime |
 | QR | `html5-qrcode`（読取）、`qrcode.react`（生成） |
+| NFC 読取 | ブラウザ標準の Web NFC（`NDEFReader`）。Android Chrome のみ対応。NDEF の中身は使わず、タグの UID（`serialNumber`）だけを使う（`src/lib/useNfcReader.ts`） |
 | Excel | `xlsx` 0.18.5（取込・書出し） |
 | メール | `nodemailer` 10（Gmail などの SMTP で承認フローのメールを送る） |
 | 画面分割 | `react-rnd`（制御室の仮想デスクトップ） |
@@ -60,16 +61,22 @@ src/
     api/me/, api/admin/users/     ログイン中の利用者の権限・ユーザー管理の API
   components/
     AuthGate.tsx, UserBadge.tsx   ログイン必須化・ページごとの権限チェック・利用者と権限の表示
+    NfcScanPanel.tsx              現場の NFC 読取パネル（/inspect・/piping/field）
     piping/                       系統図描画（PipingDiagram）・プレビュー・各種ピッカー・ルール編集
+                                  NfcTagManager.tsx（/piping/qr の NFC タグ管理）
   lib/
     supabase.ts                   ブラウザ用 Supabase クライアント
     auth.ts                       ログイン・ログアウト・authFetch（Bearer トークン付き fetch）・useMe（自分の権限）
     roles.ts                      権限の定義（ロール→権限、ページごと・ストア操作ごとに必要な権限）
     serverAuth.ts                 API 側のトークン検証（requireAuth / requirePerm）、service role クライアント
+    nfcUid.ts                     NFC の UID 正規化・検証・表示
+    identifiers.ts                UID→機器番号の解決、タグの登録・交換（`equipment_identifiers`）
+    useNfcReader.ts               Web NFC（NDEFReader）の読取フック
     inspectionSession.ts ほか     既存系のセッション・音声・弁操作判定・Excel 解析
     piping/                       配管系統図系のドメインロジック（下記 5 章）
 supabase/                         SQL（SQL Editor で手動実行する。マイグレーションツールは未使用）
 tools/piping-diagram/             サンプル系統図データ生成スクリプト（seed・第2拠点）
+tools/tests/                      NFC の UID 正規化などの単体テスト（`node --test tools/tests/*.test.mjs`）
 .local-data/                      ローカル開発時の piping_store 保存先（git 管理外）
 ```
 
@@ -132,6 +139,35 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 - **未設定の利用者**は作業者として扱う。環境変数 `ADMIN_LOGIN_IDS`（ログイン ID のカンマ区切り）の利用者は常に管理者（`/api/me` を開いたときに `app_metadata` にも管理者を書き込む）。この利用者の管理者権限の削除・無効化、自分自身の無効化、最後の管理者の管理者権限の削除はできない。
 - **無効化**：Supabase Auth の利用停止（`ban_duration`）。ログイン・トークン更新ができなくなり、API（`requireAuth`）は `banned_until` を見て 401 を返す。利用者の削除はしない（記録に名前が残るため）。
 - **判定の場所**：定義は `src/lib/roles.ts` に集約。画面は `AuthGate` がページごとの権限（`PAGE_PERMS`）を見て中身を出さず、メニュー（ホーム・配管系統図トップ・⚙ 管理設定）も開けないものは出さない。API は `requirePerm()`（ユーザー管理・系統図の版）と、`/api/piping` の操作ごとの権限（`STORE_ACTION_PERMS`）で 403 を返す。既存系はブラウザから DB へ直接書くため、サーバー側の制限は `auth_roles_rls.sql`（RLS）で行う。RLS はトークンの `app_metadata` を見るため、権限の変更が DB 側に効くのはトークンの更新後（最長1時間）。列ごとの制限は無い（作業者は QR 発行済みの記録のため `equipment` を更新できるが、ほかの列も書き換えられる）。
+
+### 4.4 NFC タグ識別（`equipment_identifiers`）
+
+SQL は `supabase/equipment_identifiers.sql`。**本番未実行**（ユーザー作業。`auth_roles_rls.sql` の後に SQL Editor で実行）。既存テーブルは変更しません。ブラウザ（`src/lib/identifiers.ts`）から Supabase へ直接アクセスし、RLS で制限します。
+
+| 列 | 内容 |
+|---|---|
+| `identifier_type` | `QR` / `NFC`。`QR` は将来用で、QR はこのテーブルに行を作らない |
+| `identifier_value` | 正規化した UID（16 進大文字 14 桁、7 バイト） |
+| `equipment_code` | 機器番号（QR の中身と同じ）。`equipment.code` と配管系統図の `node.label` の両方を指すため、外部キーは持たない |
+| `display_number` | 管理番号 |
+| `status` | `ACTIVE` / `DISABLED` |
+| `note`・`updated_by`・`created_at`・`updated_at` | 備考・更新者・作成日時・更新日時 |
+
+| 制約 | 内容 |
+|---|---|
+| 一意 | (`identifier_type`, `identifier_value`) |
+| 形式 | NFC の UID 形式チェック |
+| 1 機器 1 枚 | 有効な NFC は 1 機器につき 1 枚 |
+| 管理番号 | 有効なタグの管理番号は重複不可 |
+| 削除 | 行は削除しない（`DISABLED` で無効化） |
+
+| RLS 操作 | 許可 |
+|---|---|
+| 読み取り | ログイン利用者全員 |
+| 追加・更新 | 作業者・チームリーダー・G長・管理者 |
+| 削除 | 削除ポリシー無し |
+
+初期データは `supabase/equipment_identifiers_seed.sql`（デモ用タグ 10 枚、管理番号 1〜10、未割当）と `supabase/demo_nfc_tags.csv`。SQL は、ローカル Postgres 16 で冪等性・制約・RLS を確認済みです。
 
 ## 5. 配管系統図系の設計
 
