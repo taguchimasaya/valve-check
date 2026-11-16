@@ -1,5 +1,45 @@
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
-import { can, deniedMessage, parseRoles, parseSiteRoles, rolesAt, siteAccess, type Permission, type Role, type SiteRoles } from "./roles";
+import {
+  can,
+  deniedMessage,
+  parseGrants,
+  parseRoles,
+  parseSiteRoles,
+  rolesAt,
+  setGrants,
+  siteAccess,
+  type Grants,
+  type Permission,
+  type Role,
+  type SiteRoles,
+} from "./roles";
+
+// ───── 権限×機能の表（全拠点共通）─────
+// DB の app_settings（key = role_grants）に保存する。テーブルが無い（SQL 未実行）・未設定なら既定の表。
+// 変更はすぐ効くよう短い時間だけ覚えておく（保存した API ではすぐ読み直す）。
+
+export const GRANTS_KEY = "role_grants";
+const GRANTS_TTL_MS = 15_000;
+let grantsCache: { at: number; grants: Grants | null; stored: boolean; tableMissing: boolean } | null = null;
+
+/** 権限×機能の表を読み込んで、この後の権限の判定に使う */
+export async function loadGrants(client: SupabaseClient, force = false) {
+  if (!force && grantsCache && Date.now() - grantsCache.at < GRANTS_TTL_MS) {
+    setGrants(grantsCache.grants);
+    return grantsCache;
+  }
+  const { data, error } = await client.from("app_settings").select("value").eq("key", GRANTS_KEY).maybeSingle();
+  const tableMissing = !!error && (error.code === "42P01" || error.code === "PGRST205");
+  // 読めなかったとき（一時的なエラー）は、覚えている表があればそれを使い続ける
+  if (error && !tableMissing && grantsCache) {
+    setGrants(grantsCache.grants);
+    return grantsCache;
+  }
+  const grants = data ? parseGrants(data.value) : null;
+  grantsCache = { at: Date.now(), grants, stored: !!grants, tableMissing };
+  setGrants(grants);
+  return grantsCache;
+}
 
 // API 側のログイン確認。端末から送られたトークンを Supabase で確かめ、
 // その利用者として DB に接続するクライアント（RLS で authenticated として扱われる）と、利用者の権限を返す。
@@ -81,6 +121,7 @@ export async function requireAuth(request: Request): Promise<AuthContext | Respo
   if (error || !data.user) return Response.json({ error: "ログインの有効期限が切れました。もう一度ログインしてください" }, { status: 401 });
   if (isDisabled(data.user)) return Response.json({ error: "この利用者は無効になっています。管理者に連絡してください" }, { status: 401 });
   const { roles, siteRoles, envAdmin } = rolesOf(data.user);
+  await loadGrants(client);
   return { client, userId: data.user.id, name: displayNameOf(data.user), loginId: loginIdOf(data.user.email), roles, siteRoles, envAdmin };
 }
 

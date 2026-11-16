@@ -40,7 +40,7 @@ function EquipmentPrintContent() {
   const [unissuedOnly, setUnissuedOnly] = useState(true);
   const [marking, setMarking] = useState(false);
   // 機器マスター管理は管理者だけが開けるため、それ以外はホームへ戻す
-  const isAdmin = can(useMe()?.roles, "admin");
+  const isAdmin = can(useMe()?.roles, "equipment");
 
   function loadEquipment() {
     supabase

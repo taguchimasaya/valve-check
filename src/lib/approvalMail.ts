@@ -1,7 +1,7 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { adminClient, isDisabled, rolesOf } from "./serverAuth";
-import { rolesAt } from "./roles";
-import { approvalRulesOf, approvalStages, approvalState, STAGE_LABEL, STAGE_ROLE, type ApprovalStage } from "./piping/approval";
+import { currentGrants, rolesAt } from "./roles";
+import { approvalRulesOf, approvalStages, approvalState, STAGE_LABEL, STAGE_PERM, type ApprovalStage } from "./piping/approval";
 import type { SavedPlan } from "./piping/checklist";
 import type { PipingStore, StoreAction } from "./piping/store";
 
@@ -114,10 +114,12 @@ export async function notifyApproval(opts: {
       });
     }
   } else if (next) {
-    // 次の段の権限を持つ人（作成者本人は承認できないので除く）
-    const role = STAGE_ROLE[next];
-    for (const u of users) {
-      if (!rolesAt(rolesOf(u), facility).includes(role) || u.id === plan.updatedById) continue;
+    // 次の段を承認できる人（作成者本人は承認できないので除く）。管理者はどの段も承認できるが、
+    // 毎回のお知らせが届かないよう、ほかのロールでその段を承認できる人がいないときだけ送る
+    const perm = STAGE_PERM[next];
+    const holders = users.filter((u) => u.id !== plan.updatedById && rolesAt(rolesOf(u), facility).some((r) => r !== "admin" && currentGrants()[r].includes(perm)));
+    const targets = holders.length ? holders : users.filter((u) => u.id !== plan.updatedById && rolesAt(rolesOf(u), facility).some((r) => currentGrants()[r].includes(perm)));
+    for (const u of targets) {
       mails.push({
         to: notifyEmailOf(u)!,
         subject: `【バルブ点検】承認のお願い（${STAGE_LABEL[next]}）：${plan.name}`,

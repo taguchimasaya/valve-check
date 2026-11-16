@@ -64,6 +64,12 @@ const settings = [
     desc: "利用者の一覧・作成・権限の変更・無効化（作業者／承認者／制御室／管理者）",
     href: "/admin/users",
   },
+  {
+    no: "🔑",
+    title: "権限の設定",
+    desc: "権限（ロール）ごとに使える機能を、権限×機能の表で決める（全拠点共通）",
+    href: "/admin/roles",
+  },
 ];
 
 export default function PipingHome() {

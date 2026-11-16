@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { Role, SiteRoles } from "./roles";
+import { setGrants, type Grants, type Role, type SiteRoles } from "./roles";
 
 // ログイン（Supabase Auth）。利用者は ID とパスワードでログインする。
 // ID はメールアドレスの @ より前（例：test@test.com なら「test」）。
@@ -74,6 +74,8 @@ export type Me = {
   /** 拠点ごとの権限（未設定なら null：roles がすべての拠点に効く） */
   siteRoles: SiteRoles | null;
   envAdmin: boolean;
+  /** 権限×機能の表（全拠点共通） */
+  grants?: Grants;
 };
 
 // 同じ利用者のあいだは1回だけ問い合わせる（画面を移っても使い回す）
@@ -83,7 +85,13 @@ const meListeners = new Set<() => void>();
 function loadMe(userId: string, force = false) {
   if (!force && meCache?.userId === userId) return meCache.promise;
   const promise = authFetch("/api/me", { cache: "no-store" })
-    .then(async (res) => (res.ok ? ((await res.json()) as Me) : null))
+    .then(async (res) => {
+      if (!res.ok) return null;
+      const me = (await res.json()) as Me;
+      // 画面側の権限の判定（can / canOpen）にもサーバーと同じ表を使う
+      setGrants(me.grants ?? null);
+      return me;
+    })
     .catch(() => null);
   meCache = { userId, promise };
   return promise;

@@ -74,7 +74,7 @@ function otherAdminExists(users: User[], selfId: string) {
 }
 
 export async function GET(request: Request) {
-  const auth = await requirePerm(request, "admin");
+  const auth = await requirePerm(request, "users");
   if (auth instanceof Response) return auth;
   const admin = adminClient();
   if (admin instanceof Response) return admin;
@@ -110,7 +110,7 @@ type Action =
   | { action: "testMail"; id: string };
 
 export async function POST(request: Request) {
-  const auth = await requirePerm(request, "admin");
+  const auth = await requirePerm(request, "users");
   if (auth instanceof Response) return auth;
   const admin = adminClient();
   if (admin instanceof Response) return admin;

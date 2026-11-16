@@ -1,4 +1,5 @@
 import { adminClient, requireAuth, rolesOf } from "@/lib/serverAuth";
+import { currentGrants } from "@/lib/roles";
 
 // ログイン中の利用者の名前と権限（画面のメニューの表示・ページの入口の判定に使う）。
 // ADMIN_LOGIN_IDS で管理者に指定された利用者は、app_metadata.roles にも管理者を書き込む
@@ -28,5 +29,7 @@ export async function GET(request: Request) {
     roles: auth.roles,
     siteRoles: auth.siteRoles,
     envAdmin: auth.envAdmin,
+    // 権限×機能の表（画面のメニュー・ページの入口の判定に使う）
+    grants: currentGrants(),
   });
 }

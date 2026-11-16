@@ -115,6 +115,7 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 - `auth_login_id.sql`：関数 `login_email(login_id)`（ID＝メールの @ より前 → メールアドレス）。**実行済み**。
 - `auth_rls.sql`：`demo: allow all` ポリシーを `logged in: all`（authenticated のみ）に置き換える。**2026-11-15 本番実行済み**（ユーザー作業）。匿名キー（anon key）では読み取り 0 件・書き込み拒否になる。
 - `auth_roles_rls.sql`：権限による書き込みの制限（読み取りはログイン利用者全員、書き込みはテーブルごとの権限。トークンの `app_metadata.roles` を見る）。**2026-11-15 本番実行済み**（`auth_rls.sql` の後にユーザーが実行）。テスト利用者4人で、権限ごとの書き込みの可否が下表どおりであることを確認済み。元に戻すときは `auth_rls.sql` を実行する。
+- `role_grants.sql`：権限×機能の表（`app_settings`、key = `role_grants`）と、表で判断する関数 `has_perm()`・`has_any_perm()`。各テーブルの書き込みの RLS をロールではなく機能で判断するよう置き換える（2026-11-16 作成、**本番未実行**）。実行しなくてもアプリは既定の表で今までどおり動く（権限の設定画面は保存できない）。
 
 #### チェックリストの承認フロー（`src/lib/piping/approval.ts`）
 
@@ -126,13 +127,22 @@ v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び�
 
 #### 権限（ロール）の設計
 
-| 権限 | できること |
-|---|---|
-| 作業者 `worker` | チェックリストの作成と承認依頼（①、権限 `create`）・実施（② `/checklists` `/inspect`）、QR コード印刷（`/equipment/print` `/piping/qr`） |
-| チームリーダー `approver` | 承認フローの1段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
-| G長 `manager` | 承認フローの2段目（① の承認画面）、② の実施・QR 印刷。作成はしない |
-| 制御室 `control` | 承認フローの3段目（⑤ の設定で有無）、③ `/piping/control`（運用入力・弁の手動変更・運用停止範囲・現場記録の確認）、`/control-room` |
-| 管理者 `admin` | チェックリストの作成以外のすべて（承認はどの段も、`/admin/users`、④ `/piping/data` `/piping/editor`、⑤ `/piping/rules`、機器マスター `/equipment`） |
+ロール（作業者・チームリーダー・G長・制御室・管理者）ごとに使える機能は、**権限×機能の表**で決める（全拠点共通、2026-11-16）。管理者が 🔑 権限の設定（`/admin/roles`）で変えられ、保存先は DB の `app_settings`（key = `role_grants`。`/api/admin/roles`）。未設定・テーブルが無いときは `DEFAULT_GRANTS`（`src/lib/roles.ts`、`role_grants.sql` の既定値と同じ）を使う。管理者の「ユーザー管理・権限の設定」は外せない（`LOCKED_GRANTS`）。
+
+| 機能 `Permission` | 内容 | 既定で使えるロール |
+|---|---|---|
+| `create` | ① チェックリストの作成・承認依頼・削除・周期の変更・Excel 取込 | 作業者 |
+| `checklist` | ② 現場点検、既存の QR 点検（`/checklists` `/inspect`） | 作業者・チームリーダー・G長・管理者 |
+| `qr` | QR コード印刷・NFC タグの登録 | 作業者・チームリーダー・G長・管理者 |
+| `approveLeader` / `approveManager` / `approveControl` | 承認フローの各段 | チームリーダー / G長 / 制御室（いずれも管理者も） |
+| `control` | ③ `/piping/control`・`/control-room` | 制御室・管理者 |
+| `diagram` | ④ `/piping/data` `/piping/editor`（版の切り替え・影響の反映） | 管理者 |
+| `rules` | ⑤ `/piping/rules` | 管理者 |
+| `equipment` | 機器マスター `/equipment` | 管理者 |
+| `users` | `/admin/users`・`/admin/roles` | 管理者（外せない） |
+
+- **表の読み込み**：サーバーは `requireAuth()` のたびに `loadGrants()` で読む（15 秒だけ覚える。保存した API ではすぐ読み直す）。画面は `/api/me` の `grants` を受け取り `setGrants()` してから判定する。DB 側は `has_perm()` が毎回表を読むので、表の変更はすぐ効く（ロールの付け替えはトークンの更新後）。
+- 承認のお知らせのメールは、管理者以外でその段を承認できる人へ（いなければ管理者へ）。
 
 - **拠点ごとの権限**：作業者・チームリーダー・G長・制御室は拠点ごとに付ける（`app_metadata.siteRoles` = `{ 拠点ID: 権限[] }`。拠点ごとに担当者が違うため）。管理者だけは全拠点共通（`roles` の `admin`）。`roles` には全拠点を合わせた権限も入れ、拠点の区別が無い既存系の画面と DB 側の RLS はこれを使う。`siteRoles` が未設定の利用者は `roles` が全拠点に効く。配管系統図の画面・API は選択中の拠点での権限（`rolesAt()`）で判断し、権限の無い拠点は拠点の一覧にも出さず、データ・系統図の API も 403。ただし、どこかの拠点で制御室の人は、ほかの拠点も表示だけできる（`viewOnly`。配管系統図トップの現在状況のみ、操作は不可）。承認とメールの宛先も拠点での権限で決める。
 - **保存先**：Supabase Auth の `app_metadata.roles`（配列）・`siteRoles`。service role キーでしか書き換えられず、ログインのトークン（JWT）にも入るため利用者が改ざんできない。新しいテーブルは無い。1人に複数付けられる（例：チームリーダー＋制御室）。

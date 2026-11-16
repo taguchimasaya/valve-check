@@ -33,7 +33,7 @@ async function count(c: SupabaseClient, table: string, versionId: string, extra?
 }
 
 export async function GET(request: Request) {
-  const auth = await requirePerm(request, "admin");
+  const auth = await requirePerm(request, "diagram");
   if (auth instanceof Response) return auth;
   const params = new URL(request.url).searchParams;
   const facilityId = params.get("facility") ?? DEFAULT_FACILITY;
@@ -114,7 +114,7 @@ async function insertChunks(c: SupabaseClient, table: string, rows: object[]) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requirePerm(request, "admin");
+  const auth = await requirePerm(request, "diagram");
   if (auth instanceof Response) return auth;
   const a = (await request.json()) as Action;
   const c = auth.client;

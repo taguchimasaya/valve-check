@@ -1,17 +1,17 @@
-import type { Role } from "../roles";
+import { can, type Permission, type Role } from "../roles";
 import type { SavedPlan } from "./checklist";
 import type { ChecklistRules } from "./rules";
 
 // チェックリストの承認フロー：作成者 → チームリーダー → G長 → 制御室（制御室の段は ⑤ 共通の設定で拠点ごとに有無を決める）。
-// 順番どおりにしか承認できず、各段はその権限の人（管理者はどの段も）だけが承認できる。作成者本人は承認できない。
+// 順番どおりにしか承認できず、各段はその段の承認の機能を持つ人（権限×機能の表で決まる）だけが承認できる。作成者本人は承認できない。
 // 差し戻すと承認はすべて外れる。保存し直したチェックリストは最初から承認をやり直す。点検は最後の段まで承認されてから開始できる。
 
 export const STAGES = ["leader", "manager", "control"] as const;
 export type ApprovalStage = (typeof STAGES)[number];
 
 export const STAGE_LABEL: Record<ApprovalStage, string> = { leader: "チームリーダー", manager: "G長", control: "制御室" };
-/** 各段を承認できる権限 */
-export const STAGE_ROLE: Record<ApprovalStage, Role> = { leader: "approver", manager: "manager", control: "control" };
+/** 各段の承認の機能（どのロールが使えるかは権限×機能の表で決まる） */
+export const STAGE_PERM: Record<ApprovalStage, Permission> = { leader: "approveLeader", manager: "approveManager", control: "approveControl" };
 
 export type ApprovalSign = { by: string; byId?: string; at: string };
 export type Rejection = { by: string; at: string; reason: string; stage: ApprovalStage };
@@ -35,8 +35,7 @@ export function approvalState(plan: Pick<SavedPlan, "approvals">, stages: Approv
   return { next, complete: next === null };
 }
 
-export const canApproveStage = (roles: readonly Role[] | null | undefined, stage: ApprovalStage) =>
-  !!roles && (roles.includes("admin") || roles.includes(STAGE_ROLE[stage]));
+export const canApproveStage = (roles: readonly Role[] | null | undefined, stage: ApprovalStage) => can(roles, STAGE_PERM[stage]);
 
 /** 承認フローのどれかの段を承認できる人（差し戻しもできる） */
 export const isApprover = (roles: readonly Role[] | null | undefined) => STAGES.some((s) => canApproveStage(roles, s));

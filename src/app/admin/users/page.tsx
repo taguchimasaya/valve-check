@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import UserBadge from "@/components/UserBadge";
 import { authFetch, refreshMe } from "@/lib/auth";
-import { ROLE_DESC, ROLE_LABEL, ROLES, SITE_ROLES, type Role, type SiteRoles } from "@/lib/roles";
+import { ROLE_LABEL, ROLES, SITE_ROLES, roleDesc, type Role, type SiteRoles } from "@/lib/roles";
 import { useFacilities, type FacilityItem } from "@/lib/piping/usePiping";
 import type { AdminUser } from "@/app/api/admin/users/route";
 
@@ -42,7 +42,7 @@ function AccessEditor({
           ✔ 管理者（全拠点・固定）
         </span>
       ) : (
-        <label title={ROLE_DESC.admin} className="flex items-center gap-1 text-sm">
+        <label title={roleDesc("admin")} className="flex items-center gap-1 text-sm">
           <input type="checkbox" checked={value.admin} onChange={(e) => onChange({ ...value, admin: e.target.checked })} />
           管理者（全拠点）
         </label>
@@ -118,7 +118,7 @@ function RoleChecks({
         }
         const locked = false;
         return (
-          <label key={r} title={ROLE_DESC[r]} className={`flex items-center gap-1 text-sm ${locked ? "font-semibold text-zinc-500" : ""}`}>
+          <label key={r} title={roleDesc(r)} className={`flex items-center gap-1 text-sm ${locked ? "font-semibold text-zinc-500" : ""}`}>
             <input
               type="checkbox"
               checked={value.includes(r)}
@@ -211,10 +211,15 @@ export default function UsersPage() {
         <ul className="mt-2 grid gap-1 text-xs text-zinc-600 sm:grid-cols-2 dark:text-zinc-400">
           {ROLES.map((r) => (
             <li key={r}>
-              <b className="text-zinc-800 dark:text-zinc-200">{ROLE_LABEL[r]}</b>（有効 {counts[r] ?? 0}人）：{ROLE_DESC[r]}
+              <b className="text-zinc-800 dark:text-zinc-200">{ROLE_LABEL[r]}</b>（有効 {counts[r] ?? 0}人）：{roleDesc(r)}
             </li>
           ))}
         </ul>
+        <p className="mt-1 text-xs">
+          <Link href="/admin/roles" className="text-sky-700 underline dark:text-sky-400">
+            🔑 権限の設定（どの権限でどの機能を使えるか）を変える
+          </Link>
+        </p>
 
         {message && (
           <p

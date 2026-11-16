@@ -88,7 +88,7 @@ export default function PlannerPage() {
   const me = useMe();
   // 権限は選択中の拠点での権限（拠点ごとに担当者が違う）
   const siteRoles = useSiteRoles();
-  const isAdmin = can(siteRoles, "admin");
+  const isAdmin = can(siteRoles, "rules");
   // ① の作成は作業者（現場担当者）だけ。チームリーダー・G長・制御室は承認の画面になる
   const canCreate = can(siteRoles, "create");
   const g = useGraph();
