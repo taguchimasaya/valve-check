@@ -21,7 +21,7 @@ import {
 } from "@/lib/piping/isolation";
 import { currentValveState, describeOperation, OPERATION_META, TANKS, type OperationKind } from "@/lib/piping/operations";
 import { planConflicts } from "@/lib/piping/execution";
-import { routeFlowGroups, stepFlow, type RouteFlowKind } from "@/lib/piping/flow";
+import { flowColor, routeFlowGroups, stepFlow, type RouteFlowKind } from "@/lib/piping/flow";
 import {
   ALL_PUMPS,
   buildDayChecklist,
@@ -364,10 +364,11 @@ export default function PlannerPage() {
       regionNodeIds: customIsoR.regionNodeIds,
       fillPipeIds: customIsoR.fillPipeIds,
     } as Parameters<typeof stepFlow>[1];
+    // 抜取（青）・充填（緑）の工程の流れ。燃料抜取の工程ごとのプレビューと同じ求め方
     return steps.flatMap((name, i) => {
-      if (name !== "抜取") return [];
+      if (name !== "抜取" && name !== "充填") return [];
       const f = stepFlow(g, plan, i, stateAtStep(baseline, rows, i));
-      return f ? [{ key: `flow-${i}`, color: "#0284c7", directions: f.directions }] : [];
+      return f ? [{ key: `flow-${i}`, color: flowColor(f.kind), directions: f.directions }] : [];
     });
   }, [g, customIsoR, steps, rows, baseline]);
   const layers: PipeLayer[] = [];
@@ -411,7 +412,7 @@ export default function PlannerPage() {
     layers.push({ key: "c-region", pipeIds: customIso.regionPipeIds, color: "#ef4444", opacity: 0.4 });
     layers.push({ key: "c-fill", pipeIds: customIso.fillPipeIds, color: "#0d9488", opacity: 0.6 });
     layers.push({ key: "c-seal", pipeIds: customIso.sealPipeIds, color: "#f59e0b", opacity: 0.55 });
-    // 燃料抜取と同じく、抜取の流れ（抜取系統）を向き付きで描く
+    // 燃料抜取と同じく、抜取・充填の流れを向き付きで描く
     customIsoFlows.forEach((f) =>
       layers.push({ key: `c-${f.key}`, pipeIds: [...f.directions.keys()], directions: f.directions, color: f.color, width: 5, flow: true })
     );

@@ -1,5 +1,5 @@
 // NFC UID の正規化・検証のテスト（依存関係を増やさず Node 22 の型除去と組み込みテストで動かす）
-// 実行：node --test tools/tests/*.test.mjs
+// 実行：node --import ./tools/tests/register.mjs --test tools/tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeUid, parseUid, uidFormatError, formatUid } from "../../src/lib/nfcUid.ts";

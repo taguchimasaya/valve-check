@@ -76,7 +76,7 @@ src/
     piping/                       配管系統図系のドメインロジック（下記 5 章）
 supabase/                         SQL（SQL Editor で手動実行する。マイグレーションツールは未使用）
 tools/piping-diagram/             サンプル系統図データ生成スクリプト（seed・第2拠点）
-tools/tests/                      NFC の UID 正規化などの単体テスト（`node --test tools/tests/*.test.mjs`）
+tools/tests/                      NFC の UID 正規化などの単体テスト（`node --import ./tools/tests/register.mjs --test tools/tests/*.test.mjs`）
 .local-data/                      ローカル開発時の piping_store 保存先（git 管理外）
 ```
 

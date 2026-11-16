@@ -233,6 +233,29 @@ function pipesWithinSection(g: Graph, sectionId: string, from: string, to: strin
   return c === from ? out : [...inSection];
 }
 
+/** pipesWithinSection と同じ。ただし経路が見つからなければ null（区間全体にはしない） */
+function pipesWithinSectionOrNull(g: Graph, sectionId: string, from: string, to: string): string[] | null {
+  const inSection = new Set(g.sectionById.get(sectionId)!.pipeIds);
+  const prev = new Map<string, { node: string; pipe: string }>();
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    if (cur === to) break;
+    if (cur !== from && g.nodeById.get(cur)!.kind === "valve") continue;
+    g.adj.get(cur)!.forEach(({ pipe, other }) => {
+      if (!inSection.has(pipe.id) || seen.has(other)) return;
+      seen.add(other);
+      prev.set(other, { node: cur, pipe: pipe.id });
+      queue.push(other);
+    });
+  }
+  if (to !== from && !prev.has(to)) return null;
+  const out: string[] = [];
+  for (let c = to; prev.has(c); c = prev.get(c)!.node) out.push(prev.get(c)!.pipe);
+  return out;
+}
+
 /** 充填ライン（充填弁のみ通過）で、供給元（移送系統）まで到達する経路 */
 function fillLineRoute(g: Graph, start: string[]): { valves: string[]; pipeIds: string[] } | null {
   const prev = new Map<string, { from: string; valve: string }>();
@@ -243,12 +266,17 @@ function fillLineRoute(g: Graph, start: string[]): { valves: string[]; pipeIds: 
     const sec = g.sectionById.get(cur)!;
     if (!start.includes(cur) && sec.nodeIds.some((n) => g.nodeById.get(n)!.fillSource)) {
       const valves: string[] = [];
-      // 供給元の区間からは、充填元弁につながる配管だけを表示に含める
+      // 供給元の区間からは、充填元弁から供給元（移送系統の分岐点）までの配管だけを表示に含める
+      // （間に節点があっても流れが供給元までつながるように。見つからなければ充填元弁につながる配管だけ）
       const lastValve = prev.get(cur)!.valve;
-      const pipeIds: string[] = sec.pipeIds.filter((pid) => {
-        const p = g.pipeById.get(pid)!;
-        return p.a === lastValve || p.b === lastValve;
-      });
+      const sourceNode = sec.nodeIds.find((n) => g.nodeById.get(n)!.fillSource)!;
+      const toSource = pipesWithinSectionOrNull(g, cur, lastValve, sourceNode);
+      const pipeIds: string[] =
+        toSource ??
+        sec.pipeIds.filter((pid) => {
+          const p = g.pipeById.get(pid)!;
+          return p.a === lastValve || p.b === lastValve;
+        });
       let c = cur;
       let exitValve = lastValve;
       while (!start.includes(c)) {

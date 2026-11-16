@@ -49,6 +49,26 @@ function spread(
   return directions;
 }
 
+/**
+ * 充填ラインの流れの起点。供給元（移送系統の分岐点）が充填ラインの上にあればそこ。
+ * 無ければ（充填元弁と供給元の間に節点がある系統図で作った、保存済みのチェックリストなど）
+ * 充填ラインの端のうち、抜取範囲の配管に接していない側（供給元側）を起点にする。
+ */
+function fillLineOrigins(g: Graph, fillPipes: string[], region: Set<string>): string[] {
+  if (!fillPipes.length) return [];
+  const count = new Map<string, number>();
+  fillPipes.forEach((pid) => {
+    const p = g.pipeById.get(pid);
+    if (!p) return;
+    [p.a, p.b].forEach((n) => count.set(n, (count.get(n) ?? 0) + 1));
+  });
+  const source = [...count.keys()].find((n) => g.nodeById.get(n)?.fillSource);
+  if (source) return [source];
+  return [...count]
+    .filter(([n, c]) => c === 1 && !g.adj.get(n)?.some(({ pipe }) => region.has(pipe.id)))
+    .map(([n]) => n);
+}
+
 /** 流れの線の色（抜取：青、充填：緑、循環・移送：紫） */
 export function flowColor(kind: StepFlow["kind"]) {
   return kind === "drain" ? "#0284c7" : kind === "fill" ? "#0d9488" : "#9333ea";
@@ -99,16 +119,13 @@ export function stepFlow(
     const supplyPipes = plan.fillSupply?.pipeIds ?? [];
     const allowed = new Set([...region, ...fillPipes, ...supplyPipes]);
     // 充填ラインがあれば供給元（移送系統の分岐点）から、無ければ微開する遮断弁から流れ込む
-    const source = fillPipes
-      .flatMap((pid) => {
-        const p = g.pipeById.get(pid)!;
-        return [p.a, p.b];
-      })
-      .find((n) => g.nodeById.get(n)?.fillSource);
+    const lineOrigins = fillLineOrigins(g, fillPipes, region);
     const origins = plan.fillSupply && supplyPipes.length
-      ? [plan.fillSupply.tank]
-      : source
-      ? [source]
+      ? // 充填元タンクから。保存済みのチェックリストで充填ラインが供給元までつながっていない場合に備えて、
+        // 充填ラインの供給元側の端からも流す
+        [plan.fillSupply.tank, ...lineOrigins]
+      : lineOrigins.length
+      ? lineOrigins
       : plan.rows.filter((r) => r.role === "boundary" && r.nodeId && r.states[step] === "open").map((r) => r.nodeId!);
     if (!origins.length) return null;
     return { kind: "fill", directions: spread(g, origins, allowed, state, false), origins };

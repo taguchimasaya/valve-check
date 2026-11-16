@@ -60,7 +60,7 @@ QR に加えて NFC タグ（NXP NTAG215、7 バイト UID）の UID で同じ�
 | 機能 | 状態 | 備考 |
 |---|---|---|
 | NFC タグ識別テーブル（`equipment_identifiers`） | ⏳ | `supabase/equipment_identifiers.sql`。**本番未実行**（ユーザーが SQL Editor で `auth_roles_rls.sql` の後に実行）。既存テーブルは無変更。行は削除せず無効化のみ。RLS は読み取り全員、追加・更新は作業者・チームリーダー・G長・管理者。初期データ `equipment_identifiers_seed.sql`（デモ用タグ10枚、管理番号1〜10、未割当）、`demo_nfc_tags.csv`。ローカル Postgres 16 で冪等性・制約・RLS を確認済み |
-| UID の正規化・検証・表示、UID→機器番号の解決（`nfcUid.ts`・`identifiers.ts`） | ✅ | 未登録・無効・未割当のタグは点検へ進めない。重複時は相手の登録情報を返す（`IdentifierConflictError`）。UID 正規化の単体テストあり（`node --test tools/tests/*.test.mjs`、依存関係追加なし） |
+| UID の正規化・検証・表示、UID→機器番号の解決（`nfcUid.ts`・`identifiers.ts`） | ✅ | 未登録・無効・未割当のタグは点検へ進めない。重複時は相手の登録情報を返す（`IdentifierConflictError`）。UID 正規化の単体テストあり（`node --import ./tools/tests/register.mjs --test tools/tests/*.test.mjs`、依存関係追加なし） |
 | NFC 読取（Web NFC、`useNfcReader.ts`） | ⚠️ | Android Chrome のみ（`NDEFReadingEvent.serialNumber` の UID を使用、NDEF の中身は使わない）。HTTPS・画面前面・ボタン操作が必要。iPhone・iPad・PC のブラウザは非対応。**Android 実機での読取は未確認**。同じ UID の連続読取は 2.5 秒抑止 |
 | 現場での NFC 読取（`/inspect`・`/piping/field`、`NfcScanPanel`） | ⚠️ | UID→機器番号の後は既存の QR 読取処理（`handleScan` / `handleCode`）をそのまま呼ぶ。既存処理は無変更。実機未確認 |
 | NFC タグ管理（`/piping/qr` の「NFCタグ管理」・各 QR カードの紐付けボタン、`NfcTagManager`） | ⏳ | 登録（手入力・NFC 読取）、重複検知、紐付け・付け替え・解除、管理番号、無効化・有効に戻す、タグ交換、検索（管理番号・設備名称・UID・機器番号）。画面のみで印刷結果は変わらない。テーブル未作成のため本番では使えない |
