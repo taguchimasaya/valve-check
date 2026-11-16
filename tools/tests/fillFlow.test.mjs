@@ -1,4 +1,5 @@
-// 充填工程の流れ：充填元弁（V-FLA）→ 充填ライン → 範囲側の充填弁 → 抜取範囲 を描くこと
+// 充填工程の流れ：供給元（J-FL）→ 充填元弁（V-FLA）→ 充填ライン → 範囲側の充填弁 → 抜取範囲 を描くこと
+// （充填元タンク・移送ポンプが未指定でも、分岐点 J-FL から描く）
 // 実行：node --import ./tools/tests/register.mjs --test tools/tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -45,7 +46,7 @@ for (const [name, make] of [
   ["逆止弁の向きが逆に登録された系統図", () => withCheck(withGap(), true)],
 ]) {
   for (const target of ["STR-RA1", "FLT-RA2"]) {
-    test(`${name}・${target}：充填の流れが V-FLA から範囲内まで、充填ラインに沿って描ける`, () => {
+    test(`${name}・${target}：充填の流れが J-FL から範囲内まで、充填ラインに沿って描ける`, () => {
       const f = make();
       const g = buildGraph(f);
       const base = normalValveState(f);
@@ -70,9 +71,8 @@ for (const [name, make] of [
         const plan = { steps: PLAN_STEPS, rows, regionPipeIds: iso.regionPipeIds, regionNodeIds: iso.regionNodeIds, fillPipeIds };
         const flow = stepFlow(g, plan, STEP, st);
         assert.equal(flow?.kind, "fill", `${v}：流れが無い`);
-        assert.deepEqual(flow.origins, ["V-FLA"], `${v}：起点が V-FLA でない`);
-        const lineToRegion = iso.fill.pipeIds.filter((p) => !(ends(g, p).includes("J-FL") || ends(g, p).includes("J-GAP")));
-        assert.deepEqual(lineToRegion.filter((p) => !flow.directions.has(p)), [], `${v}：V-FLA から先の充填ラインが描かれていない`);
+        assert.deepEqual(flow.origins, ["J-FL"], `${v}：起点が分岐点 J-FL でない`);
+        assert.deepEqual(iso.fill.pipeIds.filter((p) => !flow.directions.has(p)), [], `${v}：J-FL から先の充填ラインが描かれていない`);
         const stray = [...flow.directions.keys()].filter((p) => !region.has(p) && !iso.fill.pipeIds.includes(p));
         assert.deepEqual(stray, [], `${v}：充填ラインと範囲の外の配管まで描いている`);
         // 点検当日に充填元タンク・移送ポンプを選んだあと：タンクから範囲までつながる

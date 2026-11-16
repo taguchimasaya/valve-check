@@ -183,6 +183,17 @@ export function stepFlow(
         const toLine = source ? openPath(g, source, line.origin, (id) => state[id] === "open") : null;
         toLine?.pipeIds.forEach((pid, i) => directions.set(pid, toLine.nodeIds[i]));
         origins.unshift(plan.fillSupply.tank);
+      } else {
+        // 充填元タンク・移送ポンプが未指定でも、供給元（移送系統の分岐点）→ 充填元弁 は作成時点で決まるので描く。
+        // 充填元弁以外の弁は通らない（間に節点があってもよい）
+        const source = g.facility.nodes
+          .filter((n) => n.fillSource)
+          .map((n) => openPath(g, n.id, line.origin, (id) => id === line.origin))
+          .find((r) => r);
+        if (source) {
+          source.pipeIds.forEach((pid, i) => directions.set(pid, source.nodeIds[i]));
+          origins[0] = source.nodeIds[0];
+        }
       }
       return { kind: "fill", directions, origins };
     }
