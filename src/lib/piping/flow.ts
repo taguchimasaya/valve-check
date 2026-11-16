@@ -76,28 +76,44 @@ function fillLineFlow(
     const d = spread(g, [v], new Set(allPipes.filter((p) => !exclude.has(p))), state, false);
     return { touches: [...d.keys()].some((p) => region.has(p)), d };
   };
-  // 開いている充填弁どうしを結ぶ経路のうち、最も長いもの（充填元弁 → 範囲側の充填弁）
-  let best: { a: string; b: string; route: { nodeIds: string[]; pipeIds: string[] }; len: number } | null = null;
-  for (let i = 0; i < valves.length; i++)
-    for (let j = i + 1; j < valves.length; j++) {
-      const route = openPath(g, valves[i], valves[j], isOpen);
-      if (!route) continue;
-      const len = routeLengthM(g, route);
-      if (!best || len > best.len) best = { a: valves[i], b: valves[j], route, len };
-    }
+  // 開いている充填弁どうしを、流れの向き（充填元弁 → 範囲側の充填弁）に結ぶ経路のうち、最も長いもの。
+  // 逆止弁は流れの向きにしか通れないので、両方の向きで探し、通れた向きを流れの向きとする
+  // 向きを考えて見つからなければ、逆止弁の向きを見ずに探す（逆止弁の向きの設定が実際と違う系統図の予備）
+  type Best = { from: string; to: string; route: { nodeIds: string[]; pipeIds: string[] }; len: number };
+  const longest = (ignore: boolean): Best | null => {
+    let found: Best | null = null;
+    for (const a of valves)
+      for (const b of valves) {
+        if (a === b) continue;
+        const route = openPath(g, a, b, isOpen, ignore);
+        if (!route) continue;
+        const len = routeLengthM(g, route);
+        if (!found || len > found.len) found = { from: a, to: b, route, len };
+      }
+    return found;
+  };
+  let ignoreDirection = false;
+  let best = longest(false);
+  if (!best) {
+    ignoreDirection = true;
+    best = longest(true);
+  }
   if (!best) return null;
   const onRoute = new Set(best.route.pipeIds);
-  const fromB = reachesRegion(best.b, onRoute);
-  const fromA = fromB.touches ? null : reachesRegion(best.a, onRoute);
-  if (!fromB.touches && !fromA?.touches) return null;
-  // 起点（充填元弁）→ 範囲側の充填弁の向きにそろえる
-  const forward = fromB.touches;
-  const nodeIds = forward ? best.route.nodeIds : [...best.route.nodeIds].reverse();
-  const pipeIds = forward ? best.route.pipeIds : [...best.route.pipeIds].reverse();
+  // 範囲側の充填弁は経路の終点。逆止弁が無い系統図ではどちら向きにも通れるので、範囲につながる側を終点にする
+  let reach = reachesRegion(best.to, onRoute);
+  let { nodeIds, pipeIds } = best.route;
+  if (!reach.touches) {
+    const back = openPath(g, best.to, best.from, isOpen, ignoreDirection) ?? openPath(g, best.to, best.from, isOpen, true);
+    const r2 = back ? reachesRegion(best.from, onRoute) : null;
+    if (!back || !r2?.touches) return null;
+    reach = r2;
+    ({ nodeIds, pipeIds } = back);
+  }
   const directions = new Map<string, string>();
   pipeIds.forEach((pid, i) => directions.set(pid, nodeIds[i]));
   // 範囲側の充填弁 → 範囲内の最初の配管までのつなぎ → 範囲内（範囲の外へは広げない）
-  const d = forward ? fromB.d : fromA!.d;
+  const d = reach.d;
   const entry = [...d.keys()].find((p) => region.has(p))!;
   const entryNode = d.get(entry)!;
   const inlet = nodeIds[nodeIds.length - 1];

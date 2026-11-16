@@ -289,7 +289,9 @@ function fillLineRoute(g: Graph, start: string[]): { valves: string[]; pipeIds: 
       valves.reverse();
       // 充填ラインの配管は、範囲側の充填弁 → … → 充填元弁 → 供給元を、これらの弁だけを通ってたどる
       // （区間ごとに求めると、系統図の作り方によって区間全体が入ってしまうことがあるため）。たどれなければ従来の求め方
-      const traced = openPath(g, sourceNode, valves[0], (id) => valves.includes(id));
+      const traced =
+        openPath(g, sourceNode, valves[0], (id) => valves.includes(id)) ??
+        openPath(g, sourceNode, valves[0], (id) => valves.includes(id), true);
       return { valves, pipeIds: traced ? traced.pipeIds : pipeIds };
     }
     sec.valveIds.forEach((v) => {

@@ -20,10 +20,30 @@ function withGap() {
   return f;
 }
 
+/** 充填ラインの V-FLA の下流（範囲側）に、V-FLA → 範囲 の向きの逆止弁 CK-FL を入れた系統図 */
+function withCheck(base = buildFacility(), reversed = false) {
+  const f = base;
+  const p = f.pipes.find((x) => [x.a, x.b].includes("V-FLA") && ![x.a, x.b].includes("J-FL") && ![x.a, x.b].includes("J-GAP"));
+  const other = p.a === "V-FLA" ? p.b : p.a;
+  const fla = f.nodes.find((n) => n.id === "V-FLA");
+  f.nodes.push({ ...fla, id: "CK-FL", label: "CK-FL", kind: "check", dirFrom: "V-FLA", fillLine: undefined, service: undefined, normal: undefined, y: fla.y - 20 });
+  f.pipes.push({ ...p, id: "P-CK", a: "CK-FL", b: other });
+  if (reversed) f.nodes[f.nodes.length - 1].dirFrom = other; // 逆止弁の向きを実際と逆に登録した系統図
+  if (p.a === "V-FLA") p.b = "CK-FL";
+  else p.a = "CK-FL";
+  return f;
+}
+
 const STEP = PLAN_STEPS.indexOf("充填");
 const ends = (g, pid) => [g.pipeById.get(pid).a, g.pipeById.get(pid).b];
 
-for (const [name, make] of [["試作の系統図", buildFacility], ["間に節点がある系統図", withGap]]) {
+for (const [name, make] of [
+  ["試作の系統図", buildFacility],
+  ["間に節点がある系統図", withGap],
+  ["充填ラインに逆止弁がある系統図", () => withCheck()],
+  ["節点と逆止弁がある系統図", () => withCheck(withGap())],
+  ["逆止弁の向きが逆に登録された系統図", () => withCheck(withGap(), true)],
+]) {
   for (const target of ["STR-RA1", "FLT-RA2"]) {
     test(`${name}・${target}：充填の流れが V-FLA から範囲内まで、充填ラインに沿って描ける`, () => {
       const f = make();

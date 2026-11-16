@@ -368,7 +368,14 @@ export function shortestPath(
  * 充填ラインのような作業用ライン（service）も通る。shortestPath と違い、閉じた弁は通らない。
  * タンク・施設外接続点・ドレン口・圧力計取付口・安全弁は通過しない。逆止弁は順方向だけ。
  */
-export function openPath(g: Graph, from: string, to: string, isOpen: (id: string) => boolean): Route | null {
+export function openPath(
+  g: Graph,
+  from: string,
+  to: string,
+  isOpen: (id: string) => boolean,
+  /** true なら逆止弁の向きを見ない（系統図の逆止弁の向きの設定が実際と違う場合の予備） */
+  ignoreDirection = false
+): Route | null {
   const dist = new Map<string, number>([[from, 0]]);
   const prev = new Map<string, { node: string; pipe: string }>();
   const done = new Set<string>();
@@ -386,7 +393,7 @@ export function openPath(g: Graph, from: string, to: string, isOpen: (id: string
       if ((n.kind === "valve" || n.kind === "pump") && !isOpen(cur)) continue;
     }
     for (const { pipe, other } of g.adj.get(cur)!) {
-      if (done.has(other) || !canFlow(g, cur, other)) continue;
+      if (done.has(other) || (!ignoreDirection && !canFlow(g, cur, other))) continue;
       const nd = dist.get(cur)! + (g.pipeLengthM.get(pipe.id) ?? 0);
       if (nd < (dist.get(other) ?? Infinity)) {
         dist.set(other, nd);
