@@ -1,5 +1,5 @@
 import type { SavedPlan } from "./checklist";
-import { canFlow, shortestPath, type Graph } from "./graph";
+import { canFlow, openPath, routeLengthM, shortestPath, type Graph } from "./graph";
 import type { ValveState } from "./types";
 
 // 工程ごとの燃料の流れ（抜取：範囲内 → ドレン口、充填：供給元 → 範囲内）を求める。
@@ -50,23 +50,61 @@ function spread(
 }
 
 /**
- * 充填ラインの流れの起点。供給元（移送系統の分岐点）が充填ラインの上にあればそこ。
- * 無ければ（充填元弁と供給元の間に節点がある系統図で作った、保存済みのチェックリストなど）
- * 充填ラインの端のうち、抜取範囲の配管に接していない側（供給元側）を起点にする。
+ * 充填ラインの流れ：この工程で開ける充填弁（V-FLA などの充填元弁 → … → 範囲側の充填弁）を、
+ * 開いている弁だけを通ってたどる。保存した配管の一覧（fillPipeIds）には頼らない（系統図の作り方によって
+ * 区間全体が入っていることがあるため）。範囲側の充填弁からは、範囲内へ流れ込む向きで描く。
  */
-function fillLineOrigins(g: Graph, fillPipes: string[], region: Set<string>): string[] {
-  if (!fillPipes.length) return [];
-  const count = new Map<string, number>();
-  fillPipes.forEach((pid) => {
-    const p = g.pipeById.get(pid);
-    if (!p) return;
-    [p.a, p.b].forEach((n) => count.set(n, (count.get(n) ?? 0) + 1));
-  });
-  const source = [...count.keys()].find((n) => g.nodeById.get(n)?.fillSource);
-  if (source) return [source];
-  return [...count]
-    .filter(([n, c]) => c === 1 && !g.adj.get(n)?.some(({ pipe }) => region.has(pipe.id)))
-    .map(([n]) => n);
+function fillLineFlow(
+  g: Graph,
+  plan: SavedPlan,
+  step: number,
+  state: Record<string, ValveState>,
+  region: Set<string>
+): { origin: string; directions: Map<string, string> } | null {
+  const valves = [
+    ...new Set(
+      plan.rows
+        .filter((r) => r.role === "fill" && r.nodeId && r.states[step] === "open" && g.nodeById.get(r.nodeId)?.kind === "valve")
+        .map((r) => r.nodeId!)
+    ),
+  ];
+  if (valves.length < 2) return null;
+  const isOpen = (id: string) => state[id] === "open";
+  const allPipes = [...g.pipeById.keys()];
+  // 範囲側の充填弁：経路を除いた先が、閉じた弁を越えずに範囲内の配管へつながる弁
+  const reachesRegion = (v: string, exclude: Set<string>) => {
+    const d = spread(g, [v], new Set(allPipes.filter((p) => !exclude.has(p))), state, false);
+    return { touches: [...d.keys()].some((p) => region.has(p)), d };
+  };
+  // 開いている充填弁どうしを結ぶ経路のうち、最も長いもの（充填元弁 → 範囲側の充填弁）
+  let best: { a: string; b: string; route: { nodeIds: string[]; pipeIds: string[] }; len: number } | null = null;
+  for (let i = 0; i < valves.length; i++)
+    for (let j = i + 1; j < valves.length; j++) {
+      const route = openPath(g, valves[i], valves[j], isOpen);
+      if (!route) continue;
+      const len = routeLengthM(g, route);
+      if (!best || len > best.len) best = { a: valves[i], b: valves[j], route, len };
+    }
+  if (!best) return null;
+  const onRoute = new Set(best.route.pipeIds);
+  const fromB = reachesRegion(best.b, onRoute);
+  const fromA = fromB.touches ? null : reachesRegion(best.a, onRoute);
+  if (!fromB.touches && !fromA?.touches) return null;
+  // 起点（充填元弁）→ 範囲側の充填弁の向きにそろえる
+  const forward = fromB.touches;
+  const nodeIds = forward ? best.route.nodeIds : [...best.route.nodeIds].reverse();
+  const pipeIds = forward ? best.route.pipeIds : [...best.route.pipeIds].reverse();
+  const directions = new Map<string, string>();
+  pipeIds.forEach((pid, i) => directions.set(pid, nodeIds[i]));
+  // 範囲側の充填弁 → 範囲内の最初の配管までのつなぎ → 範囲内（範囲の外へは広げない）
+  const d = forward ? fromB.d : fromA!.d;
+  const entry = [...d.keys()].find((p) => region.has(p))!;
+  const entryNode = d.get(entry)!;
+  const inlet = nodeIds[nodeIds.length - 1];
+  const stub = openPath(g, inlet, entryNode, isOpen);
+  stub?.pipeIds.forEach((pid, i) => directions.set(pid, stub.nodeIds[i]));
+  spread(g, [entryNode], region, state, false).forEach((v, k) => directions.set(k, v));
+  return { origin: nodeIds[0], directions };
 }
 
 /** 流れの線の色（抜取：青、充填：緑、循環・移送：紫） */
@@ -115,18 +153,27 @@ export function stepFlow(
   }
 
   if (name === "充填") {
-    const fillPipes = plan.fillPipeIds ?? [];
     const supplyPipes = plan.fillSupply?.pipeIds ?? [];
+    const line = fillLineFlow(g, plan, step, state, region);
+    if (line) {
+      const directions = new Map(line.directions);
+      const origins = [line.origin];
+      // 当日に充填元タンク・移送ポンプを選んでいれば、充填元タンク → 移送ポンプ → 供給元 → 充填元弁 も描く
+      if (plan.fillSupply && supplyPipes.length) {
+        spread(g, [plan.fillSupply.tank], new Set(supplyPipes), state, false).forEach((v, k) => directions.set(k, v));
+        const source = supplyPipes
+          .flatMap((pid) => [g.pipeById.get(pid)?.a, g.pipeById.get(pid)?.b])
+          .find((n) => n && g.nodeById.get(n)?.fillSource);
+        const toLine = source ? openPath(g, source, line.origin, (id) => state[id] === "open") : null;
+        toLine?.pipeIds.forEach((pid, i) => directions.set(pid, toLine.nodeIds[i]));
+        origins.unshift(plan.fillSupply.tank);
+      }
+      return { kind: "fill", directions, origins };
+    }
+    // 充填ラインが無いときは、微開する遮断弁から範囲内へ流れ込む
+    const fillPipes = plan.fillPipeIds ?? [];
     const allowed = new Set([...region, ...fillPipes, ...supplyPipes]);
-    // 充填ラインがあれば供給元（移送系統の分岐点）から、無ければ微開する遮断弁から流れ込む
-    const lineOrigins = fillLineOrigins(g, fillPipes, region);
-    const origins = plan.fillSupply && supplyPipes.length
-      ? // 充填元タンクから。保存済みのチェックリストで充填ラインが供給元までつながっていない場合に備えて、
-        // 充填ラインの供給元側の端からも流す
-        [plan.fillSupply.tank, ...lineOrigins]
-      : lineOrigins.length
-      ? lineOrigins
-      : plan.rows.filter((r) => r.role === "boundary" && r.nodeId && r.states[step] === "open").map((r) => r.nodeId!);
+    const origins = plan.rows.filter((r) => r.role === "boundary" && r.nodeId && r.states[step] === "open").map((r) => r.nodeId!);
     if (!origins.length) return null;
     return { kind: "fill", directions: spread(g, origins, allowed, state, false), origins };
   }

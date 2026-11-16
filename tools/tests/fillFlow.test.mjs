@@ -1,4 +1,4 @@
-// 充填工程の流れ（供給元 → 充填ライン → 抜取範囲）が、充填元弁と供給元の間に節点がある系統図でも描けること
+// 充填工程の流れ：充填元弁（V-FLA）→ 充填ライン → 範囲側の充填弁 → 抜取範囲 を描くこと
 // 実行：node --import ./tools/tests/register.mjs --test tools/tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import { planIsolation, fillSupplyRoute } from "../../src/lib/piping/isolation.t
 import { buildPlanRows, stateAtStep, PLAN_STEPS } from "../../src/lib/piping/checklist.ts";
 import { stepFlow } from "../../src/lib/piping/flow.ts";
 
-/** 充填元弁 V-FLA と供給元 J-FL の間に節点 J-GAP を入れた系統図 */
+/** 充填元弁 V-FLA と供給元 J-FL の間に節点 J-GAP を入れた系統図（本番の系統図の構成） */
 function withGap() {
   const f = buildFacility();
   const p = f.pipes.find((x) => [x.a, x.b].includes("V-FLA") && [x.a, x.b].includes("J-FL"));
@@ -21,32 +21,46 @@ function withGap() {
 }
 
 const STEP = PLAN_STEPS.indexOf("充填");
+const ends = (g, pid) => [g.pipeById.get(pid).a, g.pipeById.get(pid).b];
 
 for (const [name, make] of [["試作の系統図", buildFacility], ["間に節点がある系統図", withGap]]) {
   for (const target of ["STR-RA1", "FLT-RA2"]) {
-    test(`${name}・${target}：充填の流れが充填ライン全体に描ける`, () => {
+    test(`${name}・${target}：充填の流れが V-FLA から範囲内まで、充填ラインに沿って描ける`, () => {
       const f = make();
       const g = buildGraph(f);
       const base = normalValveState(f);
       const iso = planIsolation(g, [{ type: "node", id: target }], { baseline: base, expandToDrain: true });
       assert.equal(iso.fill.method, "line");
+      assert.ok(iso.fill.openValves.includes("V-FLA"));
+      // 新しい充填ラインは V-FLA と供給元 J-FL を含む 1 本の線（枝が無い）
+      const deg = new Map();
+      iso.fill.pipeIds.forEach((p) => ends(g, p).forEach((n) => deg.set(n, (deg.get(n) ?? 0) + 1)));
+      assert.ok(deg.has("V-FLA") && deg.has("J-FL"), "充填ラインが V-FLA・J-FL を通らない");
+      assert.equal([...deg.values()].filter((d) => d === 1).length, 2, "充填ラインが 1 本の線になっていない");
+
       const rows = buildPlanRows(g, iso, base, iso.drainIds ?? [], []);
       const st = stateAtStep(base, rows, STEP);
-      const variants = {
-        新しいチェックリスト: iso.fill.pipeIds,
-        // 修正前の計算で保存したチェックリスト（充填ラインが供給元まで届いていない）
-        保存済みのチェックリスト: iso.fill.pipeIds.filter((p) => p !== "P-GAP"),
-      };
-      for (const [v, fillPipeIds] of Object.entries(variants)) {
+      const region = new Set(iso.regionPipeIds);
+      // 保存済みのチェックリストで、充填ラインの一覧に区間全体が入ってしまった場合（本番で起きたもの）
+      const sectionsOfLine = [...new Set(iso.fill.pipeIds.map((p) => g.sectionOfPipe?.get?.(p)).filter(Boolean))];
+      const bloated = sectionsOfLine.length
+        ? sectionsOfLine.flatMap((s) => g.sectionById.get(s).pipeIds)
+        : [...g.sections.filter((s) => s.pipeIds.some((p) => iso.fill.pipeIds.includes(p))).flatMap((s) => s.pipeIds)];
+      for (const [v, fillPipeIds] of Object.entries({ 新しいチェックリスト: iso.fill.pipeIds, 区間全体が入った一覧: bloated })) {
         const plan = { steps: PLAN_STEPS, rows, regionPipeIds: iso.regionPipeIds, regionNodeIds: iso.regionNodeIds, fillPipeIds };
         const flow = stepFlow(g, plan, STEP, st);
         assert.equal(flow?.kind, "fill", `${v}：流れが無い`);
-        assert.deepEqual(fillPipeIds.filter((p) => !flow.directions.has(p)), [], `${v}：流れが届かない充填ラインがある`);
-        // 点検当日に充填元タンク・移送ポンプを選んだあと
+        assert.deepEqual(flow.origins, ["V-FLA"], `${v}：起点が V-FLA でない`);
+        const lineToRegion = iso.fill.pipeIds.filter((p) => !(ends(g, p).includes("J-FL") || ends(g, p).includes("J-GAP")));
+        assert.deepEqual(lineToRegion.filter((p) => !flow.directions.has(p)), [], `${v}：V-FLA から先の充填ラインが描かれていない`);
+        const stray = [...flow.directions.keys()].filter((p) => !region.has(p) && !iso.fill.pipeIds.includes(p));
+        assert.deepEqual(stray, [], `${v}：充填ラインと範囲の外の配管まで描いている`);
+        // 点検当日に充填元タンク・移送ポンプを選んだあと：タンクから範囲までつながる
         const sup = fillSupplyRoute(g, "T-101", "TP-1");
-        const st2 = { ...st, ...Object.fromEntries(sup.valves.map((x) => [x, "open"])) };
+        const st2 = { ...st, ...Object.fromEntries(sup.valves.map((x) => [x, "open"])), "TP-1": "open" };
         const flow2 = stepFlow(g, { ...plan, fillSupply: { tank: "T-101", pump: "TP-1", pipeIds: sup.pipeIds } }, STEP, st2);
-        assert.deepEqual(fillPipeIds.filter((p) => !flow2?.directions.has(p)), [], `${v}：充填元選択後に流れが届かない`);
+        assert.equal(flow2.origins[0], "T-101");
+        assert.deepEqual(iso.fill.pipeIds.filter((p) => !flow2.directions.has(p)), [], `${v}：充填元選択後に供給元〜範囲がつながらない`);
       }
     });
   }

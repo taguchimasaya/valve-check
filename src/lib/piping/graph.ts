@@ -363,6 +363,55 @@ export function shortestPath(
   return { nodeIds: nodeIds.reverse(), pipeIds: pipeIds.reverse() };
 }
 
+/**
+ * 開いている弁・運転中のポンプだけを通る from → to の経路（配管長基準）。
+ * 充填ラインのような作業用ライン（service）も通る。shortestPath と違い、閉じた弁は通らない。
+ * タンク・施設外接続点・ドレン口・圧力計取付口・安全弁は通過しない。逆止弁は順方向だけ。
+ */
+export function openPath(g: Graph, from: string, to: string, isOpen: (id: string) => boolean): Route | null {
+  const dist = new Map<string, number>([[from, 0]]);
+  const prev = new Map<string, { node: string; pipe: string }>();
+  const done = new Set<string>();
+  const queue: string[] = [from];
+  while (queue.length) {
+    queue.sort((a, b) => dist.get(a)! - dist.get(b)!);
+    const cur = queue.shift()!;
+    if (done.has(cur)) continue;
+    done.add(cur);
+    if (cur === to) break;
+    const n = g.nodeById.get(cur)!;
+    if (cur !== from) {
+      if (n.kind === "tank" || n.kind === "source" || isOutlet(n.kind)) continue;
+      if (n.kind === "drain" || n.kind === "gauge" || n.kind === "psv") continue;
+      if ((n.kind === "valve" || n.kind === "pump") && !isOpen(cur)) continue;
+    }
+    for (const { pipe, other } of g.adj.get(cur)!) {
+      if (done.has(other) || !canFlow(g, cur, other)) continue;
+      const nd = dist.get(cur)! + (g.pipeLengthM.get(pipe.id) ?? 0);
+      if (nd < (dist.get(other) ?? Infinity)) {
+        dist.set(other, nd);
+        prev.set(other, { node: cur, pipe: pipe.id });
+        queue.push(other);
+      }
+    }
+  }
+  if (!done.has(to)) return null;
+  const nodeIds = [to];
+  const pipeIds: string[] = [];
+  for (let c = to; c !== from; ) {
+    const p = prev.get(c)!;
+    pipeIds.push(p.pipe);
+    nodeIds.push(p.node);
+    c = p.node;
+  }
+  return { nodeIds: nodeIds.reverse(), pipeIds: pipeIds.reverse() };
+}
+
+/** 経路の配管長（m） */
+export function routeLengthM(g: Graph, r: Pick<Route, "pipeIds">) {
+  return r.pipeIds.reduce((a, p) => a + (g.pipeLengthM.get(p) ?? 0), 0);
+}
+
 export function normalValveState(f: Facility): Record<string, ValveState> {
   const state: Record<string, ValveState> = {};
   f.nodes.forEach((n) => {
