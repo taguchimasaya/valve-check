@@ -21,9 +21,13 @@ type Props = {
   compact?: boolean;
   /** 表示だけ（当日の入力は制御室だけが行う） */
   readOnly?: boolean;
+  /** 入力のあとに続けて行う操作（③ の開始の承認）。指定すると、ボタンは「入力（変わっていれば）→ この操作」を1回で行う */
+  onSubmit?: () => Promise<void>;
+  submitLabel?: string;
+  submitDisabled?: boolean;
 };
 
-export default function FillSupplyPicker({ graph, plan, exec, base, act, compact, readOnly }: Props) {
+export default function FillSupplyPicker({ graph, plan, exec, base, act, compact, readOnly, onSubmit, submitLabel, submitDisabled }: Props) {
   // 既定の充填元：受入系統A の充填ラインなら第1ヤード、B なら第2ヤード
   const defaultTank = plan.rows.some((r) => r.code === "V-FLB") ? "T-201" : "T-101";
   const [tank, setTank] = useState(exec.fillSupply?.tank ?? defaultTank);
@@ -35,12 +39,13 @@ export default function FillSupplyPicker({ graph, plan, exec, base, act, compact
   const current = exec.fillSupply;
   const changed = !current || current.tank !== tank || current.pump !== pump;
 
-  async function apply() {
+  /** 充填元を保存する。保存できたら true */
+  async function save(): Promise<boolean> {
     setError(null);
     const supply = fillSupplyRoute(graph, tank, pump);
     if (supply.error) {
       setError(supply.error);
-      return;
+      return false;
     }
     setSaving(true);
     try {
@@ -50,6 +55,25 @@ export default function FillSupplyPicker({ graph, plan, exec, base, act, compact
         fillSupply: { tank, pump, pipeIds: supply.pipeIds },
         rows: supplyRows(graph, plan, supply, base),
       });
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function apply() {
+    if (!onSubmit) {
+      await save();
+      return;
+    }
+    // 変わっていれば先に保存し、続けて承認する
+    if (changed && !(await save())) return;
+    setSaving(true);
+    try {
+      await onSubmit();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -95,10 +119,10 @@ export default function FillSupplyPicker({ graph, plan, exec, base, act, compact
           </label>
           <button
             onClick={apply}
-            disabled={saving || !changed}
-            className="rounded bg-teal-700 px-3 py-1 font-semibold text-white hover:bg-teal-600 disabled:opacity-40"
+            disabled={saving || (onSubmit ? !!submitDisabled : !changed)}
+            className={`rounded px-3 py-1 font-semibold text-white disabled:opacity-40 ${onSubmit ? "bg-emerald-700 hover:bg-emerald-600" : "bg-teal-700 hover:bg-teal-600"}`}
           >
-            {current ? "変更する" : "この内容で設定"}
+            {onSubmit ? submitLabel ?? "この内容で決定" : current ? "変更する" : "この内容で設定"}
           </button>
         </div>
       ) : (

@@ -89,7 +89,7 @@ export type StoreAction =
   | { action: "startExecution"; planId: string; id: string }
   /** 制御室が開始を承認する。ラインが重なる点検があるときは ackOverlap が要る */
   | { action: "approveStart"; execId: string; ackOverlap?: boolean }
-  /** 制御室が開始の申請を断る（申請は消え、制御室の記録に残る） */
+  /** 制御室が点検開始を却下する（申請は消え、制御室の記録に残る） */
   | { action: "rejectStart"; execId: string; reason: string }
   | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
   | { action: "clearOutages" }

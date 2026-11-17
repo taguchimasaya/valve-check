@@ -61,6 +61,8 @@ function Request({
   if (!plan) return null;
   const conflicts = lineConflicts(store, plan, exec.id);
   const needDay = needsDayParams(plan);
+  // 充填元の欄で承認するか（タンク・ポンプの欄があればそちらで承認する）
+  const fillApprove = needsFillSupply(plan) && !needDay;
   const blocked = conflicts.length > 0 && !ack;
   const approve = () => act({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack });
 
@@ -92,12 +94,7 @@ function Request({
       <p className="text-xs text-zinc-600 dark:text-zinc-400">
         申請：{exec.ownerName ?? "—"}（{new Date(exec.startedAt).toLocaleString("ja-JP")}）
       </p>
-      {needsFillSupply(plan) && (
-        <div className="mt-2">
-          <FillSupplyPicker graph={graph} plan={plan} exec={exec} base={base} act={act} compact />
-          <p className="mt-0.5 text-[11px] text-zinc-500">充填元は承認後、充填工程の前までに入力しても構いません。</p>
-        </div>
-      )}
+
       {conflicts.length > 0 && (
         <div className="mt-2 rounded border-2 border-red-500 bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
           <p className="font-semibold">⚠ ほかの点検とラインが重なっています</p>
@@ -129,9 +126,30 @@ function Request({
           />
         </div>
       )}
+      {needsFillSupply(plan) && (
+        <div className="mt-2">
+          <FillSupplyPicker
+            graph={graph}
+            plan={plan}
+            exec={exec}
+            base={base}
+            act={act}
+            compact
+            {...(fillApprove
+              ? {
+                  onSubmit: async () => {
+                    await approve();
+                  },
+                  submitLabel: "この内容で開始を承認",
+                  submitDisabled: blocked,
+                }
+              : {})}
+          />
+        </div>
+      )}
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       <div className="mt-2 flex gap-2">
-        {!needDay && (
+        {!needDay && !fillApprove && (
           <button
             onClick={() => run({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack })}
             disabled={busy || blocked}
@@ -142,16 +160,20 @@ function Request({
         )}
         <button
           onClick={() => {
-            const reason = prompt(`「${exec.planName}」の開始の申請を断る理由`);
+            const reason = prompt(`「${exec.planName}」の点検開始を却下する理由`);
             if (reason?.trim()) run({ action: "rejectStart", execId: exec.id, reason });
           }}
           disabled={busy}
           className="rounded border border-red-300 px-3 py-1 text-xs text-red-700"
         >
-          断る
+          却下
         </button>
       </div>
-      {needDay && <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">当日のタンク・ポンプを選んで「この内容で開始を承認」を押してください。</p>}
+      {(needDay || fillApprove) && (
+        <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+          {needDay ? "当日のタンク・ポンプ" : "充填元のタンク・移送ポンプ"}を選んで「この内容で開始を承認」を押してください。
+        </p>
+      )}
     </li>
   );
 }

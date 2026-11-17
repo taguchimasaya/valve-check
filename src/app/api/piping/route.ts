@@ -254,7 +254,7 @@ function execCheck(store: PipingStore, a: StoreAction, who: Actor): string | nul
     }
     case "rejectStart":
       if (exec.status !== "pending") return "開始の申請中の点検ではありません";
-      if (!String(a.reason ?? "").trim()) return "お断りの理由を入力してください";
+      if (!String(a.reason ?? "").trim()) return "却下の理由を入力してください";
       return null;
     default:
       return null;
@@ -347,7 +347,7 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       store.log.unshift({
         at: now,
         type: "info",
-        text: `点検「${exec.planName}」${exec.ownerName ? `（${exec.ownerName}）` : ""}の開始の申請を断りました：${String(a.reason).trim().slice(0, 200)}`,
+        text: `点検「${exec.planName}」${exec.ownerName ? `（${exec.ownerName}）` : ""}の点検開始を却下しました：${String(a.reason).trim().slice(0, 200)}`,
       });
       store.log = store.log.slice(0, 100);
       return null;
