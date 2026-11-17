@@ -11,7 +11,7 @@ import { approvalStages, approvalState, canApproveStage, isApprover, isCreator, 
 import type { Role } from "@/lib/roles";
 import { after } from "next/server";
 import { notifyApproval } from "@/lib/approvalMail";
-import { activeExecOfPlan, conflictText, duplicatePlan, isOwner, lineConflicts } from "@/lib/piping/execRules";
+import { conflictText, duplicatePlan, isOwner, lineConflicts, startBlocker, targetConflicts } from "@/lib/piping/execRules";
 
 /** 操作した人（ログイン中の利用者） */
 type Actor = { name: string; userId: string; roles: Role[] };
@@ -205,7 +205,9 @@ function approvalCheck(store: PipingStore, a: StoreAction, who: Actor): string |
     const plan = store.plans.find((p) => p.id === a.planId);
     if (plan && !approvalState(plan, stages).complete) return "承認が済んでいないチェックリストは開始できません（① で承認を受けてください）";
     // 同じ点検は同時にできない（だれの点検かは知らせない）
-    if (plan && activeExecOfPlan(store, plan.id)) return "この点検はほかの作業者が開始しているため、開始できません（終わるまでお待ちください）";
+    // 同じ点検・同じ対象（機器）の点検は同時にできない（だれの点検かは知らせない）
+    const blocker = plan && startBlocker(store, plan);
+    if (blocker) return blocker;
   }
   if (a.action === "deletePlan" && !who.roles.includes("admin")) return "チェックリストの削除は管理者だけができます";
   if (a.action === "savePlan") {
@@ -247,7 +249,12 @@ function execCheck(store: PipingStore, a: StoreAction, who: Actor): string | nul
       const raw = store.plans.find((p) => p.id === exec.planId);
       if (!raw) return "チェックリストが見つかりません";
       if (needsDayParams(raw) && !exec.dayParams) return "当日のタンク・ポンプを入力してから承認してください";
-      if (activeExecOfPlan(store, raw.id, exec.id)) return "同じチェックリストの点検がほかにあるため、承認できません";
+      // 制御室には、どの点検と重複しているかを知らせる
+      const same = targetConflicts(store, raw, exec.id);
+      if (same.length) {
+        return `同じ機器を対象とする点検（${same.map((c) => `「${c.exec.planName}」`).join("・")}）が実施中のため、承認できません（却下してください）`;
+      }
+      if (startBlocker(store, raw, exec.id)) return "同じチェックリストの点検がほかにあるため、承認できません";
       const conflicts = lineConflicts(store, raw, exec.id);
       if (conflicts.length && !a.ackOverlap) return `ラインが重なる点検があります。確認のうえ承認してください：${conflicts.map(conflictText).join("／")}`;
       return null;

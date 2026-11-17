@@ -1,7 +1,8 @@
 // 点検・チェックリストの重複の決まり（画面と /api/piping で共通）。
 //
 // - チェックリスト：作業の種類・対象・周期がすべて同じものは2つ作れない（周期が違えば作れる）。
-// - 点検：同じチェックリストの点検は、開始の申請中・点検中のものが1つあるあいだは開始できない。
+// - 点検：同じチェックリストの点検、または同じ対象（機器・配管・タンク）を含む点検が申請中・点検中のあいだは開始できない
+//   （作業名が違っても、同じ機器を同時に点検することになるため）。
 // - 点検：ほかの点検（申請中・点検中）と同じライン（範囲の配管・使う弁が重なる）を使うときは、
 //   開始の申請はできるが、制御室が重なりを確認したうえで承認する（承認時に確認を求める）。
 // - 点検は開始した本人のもの（ownerId）。持ち主の決まる前に始めた点検（ownerId なし）は誰のものでもない扱い。
@@ -44,6 +45,52 @@ export const isActive = (e: Execution) => e.status === "pending" || e.status ===
 /** 同じチェックリストの、申請中・点検中の点検 */
 export function activeExecOfPlan(store: Pick<PipingStore, "executions">, planId: string, exceptExecId?: string) {
   return store.executions.find((e) => e.planId === planId && e.id !== exceptExecId && isActive(e));
+}
+
+/**
+ * チェックリストの対象（点検する機器・配管・タンク）。同じ対象を2つの点検で同時に点検しない。
+ * Excel 取込のチェックリストは対象を持たないため、ここでは比べない（弁の重なりは lineConflicts で見る）。
+ */
+export function planTargets(p: SavedPlan): string[] {
+  if (p.source === "excel") return [];
+  switch (workTypeOf(p)) {
+    case "flush":
+      return (p.flushPipeIds ?? []).map((id) => `pipe:${id}`);
+    case "tankIsolation":
+      return p.isolationTank ? [`tank:${p.isolationTank}`] : [];
+    case "fireTest":
+      return p.fireTestTank ? [`tank:${p.fireTestTank}`] : [];
+    case "custom":
+      if (!p.customTarget) return [];
+      return [p.customType?.target === "tank" ? `tank:${p.customTarget}` : `node:${p.customTarget}`];
+    default:
+      return p.targets.map((x) => `${x.type}:${x.id}`);
+  }
+}
+
+/** 同じ対象（機器・配管・タンク）を点検している、ほかのチェックリストの申請中・点検中の点検 */
+export function targetConflicts(store: Pick<PipingStore, "executions" | "plans">, plan: SavedPlan, exceptExecId?: string) {
+  const mine = new Set(planTargets(plan));
+  if (!mine.size) return [];
+  const out: { exec: Execution; plan: SavedPlan }[] = [];
+  for (const e of store.executions) {
+    if (e.id === exceptExecId || e.planId === plan.id || !isActive(e)) continue;
+    const other = store.plans.find((p) => p.id === e.planId);
+    if (other && planTargets(other).some((t) => mine.has(t))) out.push({ exec: e, plan: other });
+  }
+  return out;
+}
+
+/**
+ * 点検を開始できない理由（同じチェックリスト、または同じ対象の点検が申請中・点検中）。開始できるなら null。
+ * 作業者には、だれの・どの点検かは知らせない。
+ */
+export function startBlocker(store: Pick<PipingStore, "executions" | "plans">, plan: SavedPlan, exceptExecId?: string): string | null {
+  if (activeExecOfPlan(store, plan.id, exceptExecId)) return "この点検はほかの作業者が実施中のため、開始できません（終わるまでお待ちください）";
+  if (targetConflicts(store, plan, exceptExecId).length) {
+    return "同じ機器を対象とする点検がほかで実施中のため、開始できません（終わるまでお待ちください）";
+  }
+  return null;
 }
 
 /** チェックリストが使うライン：範囲・充填の配管と、使う弁 */

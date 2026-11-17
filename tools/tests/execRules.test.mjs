@@ -68,3 +68,25 @@ test("持ち主：本人だけ。持ち主の無い古い点検は誰でも", ()
   assert.ok(!isOwner({ ownerId: "u1" }, "u2"));
   assert.ok(isOwner({}, "u2"));
 });
+
+test("同じ対象（機器）を含む点検は、作業名が違っても開始できない", async () => {
+  const { startBlocker, targetConflicts, planTargets } = await import("../../src/lib/piping/execRules.ts");
+  const a = plan("a", { targets: [{ type: "node", id: "STR-RB1" }] });
+  const b = plan("b", { targets: [{ type: "node", id: "STR-RB1" }, { type: "node", id: "STR-RB2" }] });
+  const c = plan("c", { targets: [{ type: "node", id: "STR-RB2" }] });
+  const store = { plans: [a, b, c], executions: [exec("ea", "a", "in_progress")] };
+  assert.deepEqual(targetConflicts(store, b).map((x) => x.exec.id), ["ea"]);
+  assert.match(startBlocker(store, b), /同じ機器/);
+  assert.equal(startBlocker(store, c), null);
+  assert.match(startBlocker(store, a), /実施中/);
+  // 完了した点検は関係ない
+  store.executions[0].status = "completed";
+  assert.equal(startBlocker(store, b), null);
+  // タンクを対象とする作業どうし（縁切りと消火試験）も同じ対象
+  assert.deepEqual(planTargets(plan("t", { workType: "tankIsolation", isolationTank: "T-101" })), ["tank:T-101"]);
+  const iso = plan("iso", { workType: "tankIsolation", isolationTank: "T-101" });
+  const fire = plan("fire", { workType: "fireTest", fireTestTank: "T-101" });
+  assert.match(startBlocker({ plans: [iso, fire], executions: [exec("ei", "iso", "pending")] }, fire), /同じ機器/);
+  // Excel 取込は対象を持たないので、対象では止めない
+  assert.deepEqual(planTargets(plan("x", { source: "excel" })), []);
+});

@@ -6,7 +6,7 @@ import NfcScanPanel from "@/components/NfcScanPanel";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
 import { useMe } from "@/lib/auth";
-import { activeExecOfPlan, isOwner, lineConflicts } from "@/lib/piping/execRules";
+import { isOwner, lineConflicts, startBlocker } from "@/lib/piping/execRules";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
@@ -256,8 +256,9 @@ export default function FieldPage() {
   async function startPlan(planId: string) {
     const p = store?.plans.find((x) => x.id === planId);
     if (!store || !p) return;
-    if (activeExecOfPlan(store, planId)) {
-      showFlash({ type: "err", text: "この点検はほかの作業者が開始しているため、開始できません" });
+    const blocker = startBlocker(store, p);
+    if (blocker) {
+      showFlash({ type: "err", text: blocker });
       return;
     }
     // ほかの人の点検は見せないため、重なりは件数だけ知らせる（判断は制御室の承認で行う）
@@ -555,17 +556,17 @@ export default function FieldPage() {
                     </a>
                     <button
                       onClick={() => startPlan(p.id)}
-                      disabled={!approvalState(p, stages).complete || !!activeExecOfPlan(store!, p.id)}
+                      disabled={!approvalState(p, stages).complete || !!startBlocker(store!, p)}
                       title={
-                        activeExecOfPlan(store!, p.id)
-                          ? "この点検は実施中のため開始できません"
+                        startBlocker(store!, p)
+                          ? startBlocker(store!, p)!
                           : approvalState(p, stages).complete
                             ? "制御室が承認すると記録を始められます"
                             : "最後まで承認されると開始できます（承認は ① で行います）"
                       }
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {activeExecOfPlan(store!, p.id) ? "実施中" : "点検開始"}
+                      {startBlocker(store!, p) ? "実施中" : "点検開始"}
                     </button>
                     {isAdmin && (
                       <button
@@ -629,7 +630,7 @@ export default function FieldPage() {
                       selectExec(previewExec.id);
                     }
                   : undefined
-                : approvalState(previewPlan, stages).complete && !activeExecOfPlan(store!, previewPlan.id)
+                : approvalState(previewPlan, stages).complete && !startBlocker(store!, previewPlan)
                   ? () => {
                       setPreview(null);
                       startPlan(previewPlan.id);

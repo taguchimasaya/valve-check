@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Graph } from "@/lib/piping/graph";
 import { needsFillSupply } from "@/lib/piping/checklist";
-import { conflictText, lineConflicts } from "@/lib/piping/execRules";
+import { conflictText, lineConflicts, targetConflicts } from "@/lib/piping/execRules";
 import type { Execution, PipingStore, StoreAction } from "@/lib/piping/store";
 import type { ValveState } from "@/lib/piping/types";
 import { needsDayParams } from "@/lib/piping/workTypes";
@@ -78,11 +78,13 @@ function Request({
   const [error, setError] = useState<string | null>(null);
   const plan = store.plans.find((p) => p.id === exec.planId);
   if (!plan) return null;
-  const conflicts = lineConflicts(store, plan, exec.id);
+  // 同じ機器を対象とする点検が実施中なら承認できない（重複）。ラインだけが重なるなら確認して承認できる
+  const sameTarget = targetConflicts(store, plan, exec.id);
+  const conflicts = lineConflicts(store, plan, exec.id).filter((c) => !sameTarget.some((s) => s.exec.id === c.exec.id));
   const needDay = needsDayParams(plan);
   // 充填元の欄で承認するか（タンク・ポンプの欄があればそちらで承認する）
   const fillApprove = needsFillSupply(plan) && !needDay;
-  const blocked = conflicts.length > 0 && !ack;
+  const blocked = sameTarget.length > 0 || (conflicts.length > 0 && !ack);
   const approve = () => act({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack });
 
   async function run(a: StoreAction) {
@@ -114,6 +116,28 @@ function Request({
         申請：{exec.ownerName ?? "—"}（{new Date(exec.startedAt).toLocaleString("ja-JP")}）
       </p>
 
+      {sameTarget.length > 0 && (
+        <div className="mt-2 rounded border-2 border-red-600 bg-red-100 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-200">
+          <p className="font-semibold">⛔ 同じ機器を対象とする点検が実施中のため、承認できません</p>
+          <ul className="mt-1 list-disc pl-4">
+            {sameTarget.map((c) => (
+              <li key={c.exec.id}>
+                「{c.exec.planName}」（{c.exec.status === "pending" ? "承認待ち" : "点検中"}
+                {c.exec.ownerName ? `・${c.exec.ownerName}` : ""}）と点検する機器が重複しています
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">その点検が終わってから点検開始し直すよう、却下してください。</p>
+          {onShowOverlap && (
+            <button
+              onClick={() => onShowOverlap(showingOverlap ? null : exec.id)}
+              className={`mt-1 rounded px-2 py-0.5 font-semibold ${showingOverlap ? "bg-fuchsia-700 text-white" : "border border-fuchsia-600 text-fuchsia-700 dark:text-fuchsia-300"}`}
+            >
+              {showingOverlap ? "図面の重なり表示を消す" : "🗺 図面で重なりを見る"}
+            </button>
+          )}
+        </div>
+      )}
       {conflicts.length > 0 && (
         <div className="mt-2 rounded border-2 border-red-500 bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
           <p className="font-semibold">⚠ ほかの点検とラインが重なっています</p>
