@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import UserBadge from "@/components/UserBadge";
 import { authFetch, refreshMe } from "@/lib/auth";
-import { LOCKED_GRANTS, PERMISSION_INFO, PERMISSIONS, ROLE_LABEL, ROLES, type Grants, type Permission, type Role } from "@/lib/roles";
+import { FORBIDDEN_GRANTS, LOCKED_GRANTS, PERMISSION_INFO, PERMISSIONS, ROLE_LABEL, ROLES, type Grants, type Permission, type Role } from "@/lib/roles";
 
-// 権限の設定：ロール（作業者・チームリーダー・G長・制御室・管理者）ごとに使える機能を、権限×機能の表で決める（全拠点共通）。
+// 権限の設定：ロール（作業者・チームリーダー・G長・制御室・外部ベンダー・管理者）ごとに使える機能を、権限×機能の表で決める（全拠点共通）。
 // 保存は /api/admin/roles（DB の app_settings）。画面・API・DB 側の制限（RLS）がこの表を読む。
 
 type Loaded = { grants: Grants; defaults: Grants; stored: boolean; tableMissing: boolean };
@@ -18,7 +18,7 @@ async function call(init?: RequestInit): Promise<Loaded> {
   return body as Loaded;
 }
 
-const locked = (r: Role, p: Permission) => !!LOCKED_GRANTS[r]?.includes(p);
+const locked = (r: Role, p: Permission) => !!LOCKED_GRANTS[r]?.includes(p) || !!FORBIDDEN_GRANTS[r]?.includes(p);
 const groups = [...new Set(PERMISSIONS.map((p) => PERMISSION_INFO[p].group))];
 
 export default function RolesPage() {
@@ -55,7 +55,7 @@ export default function RolesPage() {
     const warn = reset
       ? "権限×機能の表を既定に戻しますか？"
       : `権限×機能の表を保存しますか？\n保存すると、全拠点の利用者の画面・操作にすぐ反映されます（開いている画面は再読み込みで反映）。${
-          !ROLES.some((r) => r !== "admin" && draft[r].includes("create")) ? "\n\n⚠ チェックリストを作成できるロールがありません。" : ""
+          !ROLES.some((r) => r !== "admin" && r !== "vendor" && draft[r].includes("create")) ? "\n\n⚠ チェックリストを作成できるロールがありません。" : ""
         }${draft.admin.includes("create") ? "\n\n⚠ 管理者に作成を付けると、管理者が作ったチェックリストは別の人が承認する必要があります。" : ""}`;
     if (!confirm(warn)) return;
     setBusy(true);
@@ -143,7 +143,7 @@ export default function RolesPage() {
           <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
             <span className="mr-auto text-xs text-zinc-500">
               {loaded?.stored ? "保存した表で動いています。" : "既定の表で動いています。"}
-              ◆＝既定と違う　🔒＝外せない（管理者のユーザー管理）
+              ◆＝既定と違う　🔒＝変えられない（管理者のユーザー管理は外せない、外部ベンダーのユーザー管理は付けられない）
             </span>
             {dirty && (
               <button onClick={() => setDraft(structuredClone(loaded!.grants))} disabled={busy} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700">
@@ -168,7 +168,7 @@ export default function RolesPage() {
 
         <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-zinc-500">
           <li>作成した本人は、どの権限でも自分のチェックリストを承認できません。作成と承認は別のロールに分けてください。</li>
-          <li>承認の段（チームリーダー・G長・制御室）は、その段の承認の機能を持つロールの人が承認します。承認のお知らせのメールは、管理者以外でその段を承認できる人に送ります（いなければ管理者）。</li>
+          <li>承認の段（チームリーダー・G長・制御室）は、その段の承認の機能を持つロールの人が承認します。承認のお知らせのメールは、管理者・外部ベンダー以外でその段を承認できる人に送ります（いなければ管理者）。</li>
           <li>表の変更は保存するとすぐ効きます。利用者に付けた権限（ロール）の変更は、DB 側では次のログインの更新（最長1時間）から効きます。</li>
         </ul>
       </div>

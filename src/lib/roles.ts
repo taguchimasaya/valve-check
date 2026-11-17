@@ -7,7 +7,7 @@
 // DB 側の RLS も同じ表を読む（supabase/role_grants.sql の has_perm）。
 // 承認フローの決まりは src/lib/piping/approval.ts。作成者本人は承認できないため、既定では作成は作業者だけ。
 
-export const ROLES = ["worker", "approver", "manager", "control", "admin"] as const;
+export const ROLES = ["worker", "approver", "manager", "control", "vendor", "admin"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -15,6 +15,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   approver: "チームリーダー",
   manager: "G長",
   control: "制御室",
+  vendor: "外部ベンダー",
   admin: "管理者",
 };
 
@@ -54,12 +55,20 @@ export const DEFAULT_GRANTS: Record<Role, Permission[]> = {
   approver: ["checklist", "qr", "approveLeader"],
   manager: ["checklist", "qr", "approveManager"],
   control: ["control", "approveControl"],
+  // 外部ベンダー：ユーザー管理・権限の設定だけができない（それ以外はすべて）。拠点ごとに付ける
+  vendor: ["create", "checklist", "qr", "approveLeader", "approveManager", "approveControl", "control", "diagram", "rules", "equipment"],
   // 作成（create）は付けない：作成者本人は承認できないため、作成は作業者、承認はそれ以外の人に分ける
   admin: ["checklist", "qr", "approveLeader", "approveManager", "approveControl", "control", "diagram", "rules", "equipment", "users"],
 };
 
 /** 外せない組み合わせ：管理者のユーザー管理（誰も権限を直せなくなるのを防ぐ） */
 export const LOCKED_GRANTS: Partial<Record<Role, Permission[]>> = { admin: ["users"] };
+
+/** 付けられない組み合わせ：外部ベンダーのユーザー管理・権限の設定 */
+export const FORBIDDEN_GRANTS: Partial<Record<Role, Permission[]>> = { vendor: ["users"] };
+
+/** 承認のお知らせメールの宛先・権限不足の案内で、通常の担当として扱わないロール */
+export const BACKSTAGE_ROLES: Role[] = ["admin", "vendor"];
 
 export type Grants = Record<Role, Permission[]>;
 
@@ -72,7 +81,7 @@ export function parseGrants(raw: unknown): Grants | null {
     const v = obj[r];
     const list = Array.isArray(v) ? PERMISSIONS.filter((p) => v.includes(p)) : [...DEFAULT_GRANTS[r]];
     (LOCKED_GRANTS[r] ?? []).forEach((p) => !list.includes(p) && list.push(p));
-    out[r] = PERMISSIONS.filter((p) => list.includes(p));
+    out[r] = PERMISSIONS.filter((p) => list.includes(p) && !FORBIDDEN_GRANTS[r]?.includes(p));
   }
   return out;
 }
@@ -176,7 +185,7 @@ export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
 
 /** 権限が足りないときの案内文 */
 export function deniedMessage(perms: Permission[]) {
-  const roles = ROLES.filter((r) => perms.some((p) => grants[r].includes(p) && r !== "admin"));
+  const roles = ROLES.filter((r) => perms.some((p) => grants[r].includes(p) && !BACKSTAGE_ROLES.includes(r)));
   const names = (roles.length ? roles : (["admin"] as Role[])).map((r) => ROLE_LABEL[r]);
   return `この操作には${names.join("・")}${names.length > 1 ? "のいずれかの" : ""}権限が必要です`;
 }

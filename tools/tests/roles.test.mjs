@@ -43,3 +43,14 @@ test("表を変えると、画面・承認の判定が変わる", () => {
   assert.equal(siteAccess({ roles: ["control"], siteRoles: { a: ["control"] } }, "b"), "view");
   assert.match(deniedMessage(["rules"]), /チームリーダー/);
 });
+
+test("外部ベンダー：ユーザー管理・権限の設定だけができない（表で付けても外れる）", () => {
+  assert.ok(!canOpen(["vendor"], "/admin/users") && !canOpen(["vendor"], "/admin/roles"));
+  for (const p of ["/piping/planner", "/piping/field", "/piping/control", "/piping/qr", "/piping/data", "/piping/rules", "/equipment", "/equipment/print", "/checklists", "/inspect", "/control-room"])
+    assert.ok(canOpen(["vendor"], p), p);
+  assert.ok(can(["vendor"], "create"));
+  for (const s of ["leader", "manager", "control"]) assert.ok(canApproveStage(["vendor"], s), s);
+  const g = parseGrants({ ...DEFAULT_GRANTS, vendor: ["users", "qr"] });
+  assert.deepEqual(g.vendor, ["qr"]);
+  assert.ok(!deniedMessage(["diagram"]).includes("外部ベンダー"));
+});

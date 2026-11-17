@@ -7,6 +7,7 @@
 --   機能：create 作成 / checklist 点検の実施 / qr QRコード・NFCタグ / approveLeader・approveManager・approveControl 承認の各段 /
 --         control 制御室 / diagram 系統図データ管理 / rules 作成のルール / equipment 機器マスター / users ユーザー管理・権限の設定
 --   管理者の users は外せません（誰も権限を直せなくなるのを防ぐため）。
+--   外部ベンダー（vendor）には users を付けられません（2026-11-17 追加。ユーザー管理以外はすべて使える）。
 --
 -- 書き込みの制限（読み取りは今までどおりログイン利用者全員）：
 --   checklist_templates ほか2表・inspection_sessions   点検の実施（checklist）
@@ -42,6 +43,7 @@ as $$
     "approver": ["checklist", "qr", "approveLeader"],
     "manager":  ["checklist", "qr", "approveManager"],
     "control":  ["control", "approveControl"],
+    "vendor":   ["create", "checklist", "qr", "approveLeader", "approveManager", "approveControl", "control", "diagram", "rules", "equipment"],
     "admin":    ["checklist", "qr", "approveLeader", "approveManager", "approveControl", "control", "diagram", "rules", "equipment", "users"]
   }'::jsonb;
 $$;
@@ -67,7 +69,7 @@ as $$
   select exists (
     select 1
     from unnest(public.app_roles()) as r(role)
-    where (public.role_grants() -> r.role) ? wanted
+    where ((public.role_grants() -> r.role) ? wanted and not (r.role = 'vendor' and wanted = 'users'))
        or (r.role = 'admin' and wanted = 'users')
   );
 $$;
