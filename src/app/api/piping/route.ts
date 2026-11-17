@@ -11,6 +11,7 @@ import { approvalStages, approvalState, canApproveStage, isApprover, isCreator, 
 import type { Role } from "@/lib/roles";
 import { after } from "next/server";
 import { notifyApproval } from "@/lib/approvalMail";
+import { activeExecOfPlan, conflictText, duplicatePlan, isOwner, lineConflicts } from "@/lib/piping/execRules";
 
 /** 操作した人（ログイン中の利用者） */
 type Actor = { name: string; userId: string; roles: Role[] };
@@ -156,6 +157,14 @@ function applyAs(store: PipingStore, a: StoreAction, who: Actor): string | null 
       plan.updatedById = who.userId;
     }
   }
+  if (a.action === "startExecution") {
+    const exec = store.executions.find((e) => e.id === a.id);
+    if (exec) Object.assign(exec, { ownerId: who.userId, ownerName: actor });
+  }
+  if (a.action === "approveStart") {
+    const exec = store.executions.find((e) => e.id === a.execId);
+    if (exec) exec.approvedBy = actor;
+  }
   if (a.action === "approvePlan") {
     const sign = store.plans.find((p) => p.id === a.id)?.approvals?.[a.stage];
     if (sign) Object.assign(sign, { by: actor, byId: who.userId });
@@ -195,8 +204,60 @@ function approvalCheck(store: PipingStore, a: StoreAction, who: Actor): string |
   if (a.action === "startExecution") {
     const plan = store.plans.find((p) => p.id === a.planId);
     if (plan && !approvalState(plan, stages).complete) return "承認が済んでいないチェックリストは開始できません（① で承認を受けてください）";
+    // 同じ点検は同時にできない（だれの点検かは知らせない）
+    if (plan && activeExecOfPlan(store, plan.id)) return "この点検はほかの作業者が開始しているため、開始できません（終わるまでお待ちください）";
   }
-  return null;
+  if (a.action === "savePlan") {
+    const dup = duplicatePlan(store.plans, a.plan);
+    if (dup) {
+      return `同じ作業・対象・周期のチェックリスト「${dup.name}」がすでにあります（周期を変えるか、既存のチェックリストを直してください）`;
+    }
+  }
+  return execCheck(store, a, who);
+}
+
+/** 点検の操作の確認：持ち主だけが現場の操作をする・点検中の点検だけ記録できる・開始の承認は制御室 */
+function execCheck(store: PipingStore, a: StoreAction, who: Actor): string | null {
+  if (!("execId" in a)) return null;
+  const exec = store.executions.find((e) => e.id === a.execId);
+  if (!exec) return "点検が見つかりません";
+  switch (a.action) {
+    case "record":
+    case "undoRecord":
+    case "advanceStep":
+    case "completeExecution":
+    case "markStepDone": {
+      // 工程の完了報告は制御室もできる。それ以外の現場の操作は開始した本人だけ
+      const control = a.action === "markStepDone" && can(who.roles, "control");
+      if (!control && !isOwner(exec, who.userId)) return "この点検は開始した本人だけが操作できます";
+      if (exec.status === "pending") return "制御室の開始の承認を待っています（承認されると記録できます）";
+      if (exec.status !== "in_progress") return "この点検は完了しています";
+      return null;
+    }
+    case "deleteExecution":
+      if (!isOwner(exec, who.userId)) return "この点検は開始した本人だけが削除できます";
+      return null;
+    case "setDayParams":
+    case "setFillSupply":
+      if (exec.status === "completed") return "この点検は完了しています";
+      return null;
+    case "approveStart": {
+      if (exec.status !== "pending") return "開始の申請中の点検ではありません";
+      const raw = store.plans.find((p) => p.id === exec.planId);
+      if (!raw) return "チェックリストが見つかりません";
+      if (needsDayParams(raw) && !exec.dayParams) return "当日のタンク・ポンプを入力してから承認してください";
+      if (activeExecOfPlan(store, raw.id, exec.id)) return "同じチェックリストの点検がほかにあるため、承認できません";
+      const conflicts = lineConflicts(store, raw, exec.id);
+      if (conflicts.length && !a.ackOverlap) return `ラインが重なる点検があります。確認のうえ承認してください：${conflicts.map(conflictText).join("／")}`;
+      return null;
+    }
+    case "rejectStart":
+      if (exec.status !== "pending") return "開始の申請中の点検ではありません";
+      if (!String(a.reason ?? "").trim()) return "お断りの理由を入力してください";
+      return null;
+    default:
+      return null;
+  }
 }
 
 function apply(store: PipingStore, a: StoreAction): string | null {
@@ -252,10 +313,38 @@ function apply(store: PipingStore, a: StoreAction): string | null {
         planName: plan.name,
         startedAt: now,
         currentStep: Math.min(1, plan.steps.length - 1),
-        status: "in_progress",
+        // 制御室が承認すると点検中になる（持ち主は applyAs で付ける）
+        status: "pending",
         records: {},
-        events: [{ at: now, type: "info", text: "点検を開始しました" }],
+        events: [{ at: now, type: "info", text: "点検の開始を申請しました（制御室の承認待ち）" }],
       });
+      return null;
+    }
+    case "approveStart": {
+      const exec = store.executions.find((e) => e.id === a.execId);
+      const raw = exec && store.plans.find((p) => p.id === exec.planId);
+      if (!exec || !raw) return "点検が見つかりません";
+      const conflicts = lineConflicts(store, raw, exec.id);
+      exec.status = "in_progress";
+      exec.approvedAt = now;
+      if (conflicts.length) exec.overlapAck = conflicts.map((c) => c.exec.planName);
+      exec.events.unshift({
+        at: now,
+        type: "info",
+        text: `制御室が点検の開始を承認しました${conflicts.length ? `（ラインの重なりを確認済み：${exec.overlapAck!.join("・")}）` : ""}`,
+      });
+      return null;
+    }
+    case "rejectStart": {
+      const exec = store.executions.find((e) => e.id === a.execId);
+      if (!exec) return "点検が見つかりません";
+      store.executions = store.executions.filter((e) => e.id !== a.execId);
+      store.log.unshift({
+        at: now,
+        type: "info",
+        text: `点検「${exec.planName}」${exec.ownerName ? `（${exec.ownerName}）` : ""}の開始の申請を断りました：${String(a.reason).trim().slice(0, 200)}`,
+      });
+      store.log = store.log.slice(0, 100);
       return null;
     }
     case "record": {

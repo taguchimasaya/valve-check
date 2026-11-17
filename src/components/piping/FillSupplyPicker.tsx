@@ -19,9 +19,11 @@ type Props = {
   base: Record<string, ValveState>;
   act: (a: StoreAction) => Promise<unknown>;
   compact?: boolean;
+  /** 表示だけ（当日の入力は制御室だけが行う） */
+  readOnly?: boolean;
 };
 
-export default function FillSupplyPicker({ graph, plan, exec, base, act, compact }: Props) {
+export default function FillSupplyPicker({ graph, plan, exec, base, act, compact, readOnly }: Props) {
   // 既定の充填元：受入系統A の充填ラインなら第1ヤード、B なら第2ヤード
   const defaultTank = plan.rows.some((r) => r.code === "V-FLB") ? "T-201" : "T-101";
   const [tank, setTank] = useState(exec.fillSupply?.tank ?? defaultTank);
@@ -69,10 +71,12 @@ export default function FillSupplyPicker({ graph, plan, exec, base, act, compact
             {current.tank} ／ 移送ポンプ {current.pump}
           </span>
         ) : (
-          <span className="text-amber-700 dark:text-amber-300">未選択（充填工程の前に選んでください）</span>
+          <span className="text-amber-700 dark:text-amber-300">{readOnly ? "未入力（制御室の入力待ち）" : "未選択（充填工程の前に選んでください）"}</span>
         )}
       </p>
-      {!locked ? (
+      {readOnly ? (
+        <p className="mt-1 text-zinc-500">制御室が当日の運用に合わせて入力します。</p>
+      ) : !locked ? (
         <div className={`mt-1 flex flex-wrap items-center gap-2 ${compact ? "" : "text-sm"}`}>
           <label className="flex items-center gap-1">
             タンク

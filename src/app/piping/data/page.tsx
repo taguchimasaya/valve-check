@@ -179,7 +179,7 @@ export default function DiagramDataPage() {
           // 読めない版は「作成時の版が見つかりません」として作り直しにする
         }
       }
-      const inProgress = new Set(store.executions.filter((e) => e.status === "in_progress").map((e) => e.planId));
+      const inProgress = new Set(store.executions.filter((e) => e.status === "in_progress" || e.status === "pending").map((e) => e.planId));
       setImpact({ version: v, activate, results: assessImpacts(store.plans, inProgress, v.id, target, versions) });
     } catch (e) {
       setMessage({ type: "err", text: `影響チェックができませんでした：${e instanceof Error ? e.message : String(e)}` });

@@ -5,6 +5,8 @@ import Link from "next/link";
 import NfcScanPanel from "@/components/NfcScanPanel";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
+import { useMe } from "@/lib/auth";
+import { activeExecOfPlan, isOwner, lineConflicts } from "@/lib/piping/execRules";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
@@ -46,7 +48,12 @@ export default function FieldPage() {
   const diagramInfo = useDiagramInfo();
   const { store, act, error } = usePipingStore(1500);
   // 取込・削除・周期の変更は作成する人（作業者）だけ。開始は最後まで承認されたチェックリストだけ
-  const canCreate = can(useSiteRoles(), "create");
+  const siteRoles = useSiteRoles();
+  const canCreate = can(siteRoles, "create");
+  // 当日のタンク・ポンプ・充填元の入力は制御室だけ
+  const canControl = can(siteRoles, "control");
+  // 点検は開始した本人のもの（ほかの人の点検は一覧に出さず、開けない）
+  const myId = useMe()?.userId ?? null;
   const stages = useMemo(() => approvalStages(store?.rules), [store?.rules]);
   const [execId, selectExec] = useLocalValue(EXEC_KEY);
   const [view, setView] = useState<"diagram" | "table">("diagram");
@@ -75,7 +82,8 @@ export default function FieldPage() {
   const [preview, setPreview] = useState<{ planId: string; execId?: string } | null>(null);
 
 
-  const exec = store?.executions.find((e) => e.id === execId) ?? null;
+  // 開けるのは自分の点検中の点検だけ（申請中・ほかの人の点検は一覧に戻す）
+  const exec = store?.executions.find((e) => e.id === execId && e.status !== "pending" && isOwner(e, myId)) ?? null;
   // 元のチェックリスト（rawPlan）と、当日の選択（充填元など）で加えた行を重ねた点検用のチェックリスト（plan）
   const rawPlan = exec ? store?.plans.find((p) => p.id === exec.planId) ?? null : null;
   const plan = useMemo(() => (rawPlan && exec ? execPlan(rawPlan, exec) : null), [rawPlan, exec]);
@@ -241,10 +249,26 @@ export default function FieldPage() {
   }
   useEffect(() => () => stopScanner(), []);
 
+  // 点検の開始を申請する（制御室が承認すると点検中になる）
   async function startPlan(planId: string) {
-    const id = newId();
-    await act({ action: "startExecution", planId, id });
-    selectExec(id);
+    const p = store?.plans.find((x) => x.id === planId);
+    if (!store || !p) return;
+    if (activeExecOfPlan(store, planId)) {
+      showFlash({ type: "err", text: "この点検はほかの作業者が開始しているため、開始できません" });
+      return;
+    }
+    // ほかの人の点検は見せないため、重なりは件数だけ知らせる（判断は制御室の承認で行う）
+    const n = lineConflicts(store, p).length;
+    const msg = `「${p.name}」の開始を申請しますか？\n制御室が承認すると点検を始められます。${
+      n ? `\n\n⚠ ほかの点検（${n}件）と同じラインを使います。制御室が重なりを確認して判断します。` : ""
+    }`;
+    if (!confirm(msg)) return;
+    try {
+      await act({ action: "startExecution", planId, id: newId() });
+      showFlash({ type: "info", text: `「${p.name}」の開始を申請しました。制御室の承認をお待ちください` });
+    } catch (e) {
+      showFlash({ type: "err", text: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   async function importExcel(file: File) {
@@ -278,8 +302,10 @@ export default function FieldPage() {
       !!p &&
       [p.name, p.purpose, ...p.rows.flatMap((r) => [r.code, r.name])].some((t) => normalize(t).includes(q));
     const execHit = (e: Execution) => !q || normalize(e.planName).includes(q) || planHit(planById.get(e.planId));
-    const running = executions.filter((e) => e.status === "in_progress" && execHit(e));
-    const completed = executions.filter((e) => e.status === "completed" && execHit(e));
+    // 一覧に出すのは自分の点検だけ（図面への反映は ③・トップですべての点検を出す）
+    const mine = executions.filter((e) => isOwner(e, myId));
+    const running = mine.filter((e) => (e.status === "in_progress" || e.status === "pending") && execHit(e));
+    const completed = mine.filter((e) => e.status === "completed" && execHit(e));
     // 機器名×周期の絞り込み（何も入れなければ全件）
     const equipOf = new Map(plans.map((p) => [p.id, planEquipment(p, g)]));
     const equipOptions = [...new Set(plans.flatMap((p) => equipOf.get(p.id) ?? []))].sort((a, b) => a.localeCompare(b, "ja"));
@@ -303,10 +329,19 @@ export default function FieldPage() {
       showFlash({ type: "info", text: `「${p.name}」を削除しました` });
     }
     async function deleteExec(e: Execution) {
-      if (!confirm(`点検「${e.planName}」（開始：${new Date(e.startedAt).toLocaleString("ja-JP")}）の記録を削除しますか？\n（元に戻せません）`)) return;
-      await act({ action: "deleteExecution", execId: e.id });
+      const pending = e.status === "pending";
+      const msg = pending
+        ? `点検「${e.planName}」の開始の申請を取り消しますか？`
+        : `点検「${e.planName}」（開始：${new Date(e.startedAt).toLocaleString("ja-JP")}）の記録を削除しますか？\n（元に戻せません）`;
+      if (!confirm(msg)) return;
+      try {
+        await act({ action: "deleteExecution", execId: e.id });
+      } catch (err) {
+        showFlash({ type: "err", text: err instanceof Error ? err.message : String(err) });
+        return;
+      }
       setPreview(null);
-      showFlash({ type: "info", text: `点検「${e.planName}」の記録を削除しました` });
+      showFlash({ type: "info", text: pending ? `「${e.planName}」の申請を取り消しました` : `点検「${e.planName}」の記録を削除しました` });
     }
 
     const previewPlan = preview ? planById.get(preview.planId) : undefined;
@@ -325,11 +360,20 @@ export default function FieldPage() {
         >
           <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.planName}</p>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            {tone === "running" ? `現在工程：${p?.steps[e.currentStep] ?? "—"} ／ ` : "完了 ／ "}
-            開始：{new Date(e.startedAt).toLocaleString("ja-JP")}
+            {e.status === "pending"
+              ? "制御室の開始の承認待ち ／ 申請："
+              : tone === "running"
+                ? `現在工程：${p?.steps[e.currentStep] ?? "—"} ／ 開始：`
+                : "完了 ／ 開始："}
+            {new Date(e.startedAt).toLocaleString("ja-JP")}
           </p>
+          {e.status === "pending" && (
+            <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
+              ⏳ 制御室が当日のタンク・ポンプの入力と開始の承認をすると、点検を始められます。
+            </p>
+          )}
           <div className="mt-2 flex gap-2">
-            {tone === "running" && (
+            {tone === "running" && e.status === "in_progress" && (
               <button
                 onClick={() => selectExec(e.id)}
                 className="flex-1 rounded-lg bg-emerald-700 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
@@ -356,7 +400,7 @@ export default function FieldPage() {
               onClick={() => deleteExec(e)}
               className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-zinc-900 dark:text-red-400"
             >
-              削除
+              {e.status === "pending" ? "申請を取り消す" : "削除"}
             </button>
           </div>
         </li>
@@ -389,7 +433,7 @@ export default function FieldPage() {
           </div>
 
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【点検中の作業】</p>
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【自分の点検（申請中・点検中）】</p>
             {running.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">{q ? "該当する点検中の作業はありません。" : "点検中の作業はありません。"}</p>
             ) : (
@@ -503,11 +547,17 @@ export default function FieldPage() {
                     </a>
                     <button
                       onClick={() => startPlan(p.id)}
-                      disabled={!approvalState(p, stages).complete}
-                      title={approvalState(p, stages).complete ? undefined : "最後まで承認されると開始できます（承認は ① で行います）"}
+                      disabled={!approvalState(p, stages).complete || !!activeExecOfPlan(store!, p.id)}
+                      title={
+                        activeExecOfPlan(store!, p.id)
+                          ? "この点検は実施中のため開始できません"
+                          : approvalState(p, stages).complete
+                            ? "開始を申請し、制御室の承認で点検を始めます"
+                            : "最後まで承認されると開始できます（承認は ① で行います）"
+                      }
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      開始
+                      {activeExecOfPlan(store!, p.id) ? "実施中" : "開始を申請"}
                     </button>
                     {canCreate && (
                       <button
@@ -565,21 +615,25 @@ export default function FieldPage() {
             onClose={() => setPreview(null)}
             onStart={
               previewExec
-                ? previewExec.status === "in_progress"
+                ? previewExec.status === "in_progress" && isOwner(previewExec, myId)
                   ? () => {
                       setPreview(null);
                       selectExec(previewExec.id);
                     }
                   : undefined
-                : approvalState(previewPlan, stages).complete
+                : approvalState(previewPlan, stages).complete && !activeExecOfPlan(store!, previewPlan.id)
                   ? () => {
                       setPreview(null);
                       startPlan(previewPlan.id);
                     }
                   : undefined
             }
-            startLabel={previewExec ? "この点検を再開" : "この内容で点検を開始"}
-            onDelete={previewExec || canCreate ? () => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan)) : undefined}
+            startLabel={previewExec ? "この点検を再開" : "この内容で開始を申請"}
+            onDelete={
+              (previewExec && isOwner(previewExec, myId)) || (!previewExec && canCreate)
+                ? () => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan))
+                : undefined
+            }
             deleteLabel={previewExec ? "この点検記録を削除" : "チェックリストを削除"}
           />
         )}
@@ -739,12 +793,12 @@ export default function FieldPage() {
 
         {rawPlan && needsFillSupply(rawPlan) && !completed && step <= plan.steps.indexOf("充填") && (
           <div className="mt-2">
-            <FillSupplyPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} />
+            <FillSupplyPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} readOnly={!canControl} />
           </div>
         )}
         {rawPlan && needsDayParams(rawPlan) && !completed && (
           <div className="mt-2">
-            <DayParamsPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} />
+            <DayParamsPicker graph={g} plan={rawPlan} exec={exec} base={base} act={act} readOnly={!canControl} />
           </div>
         )}
         {!completed && plan.stepNotes?.[step] && (
@@ -754,7 +808,7 @@ export default function FieldPage() {
         )}
         {v.waitingDay && (
           <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-            当日のタンク・ポンプを選んで設定すると、工程を進められます。
+            制御室が当日のタンク・ポンプを入力すると、工程を進められます。
           </p>
         )}
         {v.waitingSupply && (

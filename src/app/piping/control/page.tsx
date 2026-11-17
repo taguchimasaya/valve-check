@@ -21,6 +21,7 @@ import OutageSettings from "@/components/piping/OutageSettings";
 import { outageDefsFor } from "@/lib/piping/outages";
 import { OUTAGE_COLOR } from "@/lib/piping/live";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
+import StartRequests from "@/components/piping/StartRequests";
 import { manualStepLabel, needsDayParams } from "@/lib/piping/workTypes";
 import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { isStepCompleteAudioEnabled, isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
@@ -394,6 +395,9 @@ export default function ControlPage() {
 
           {/* 点検状況 */}
           <aside className="space-y-3">
+            <Panel title={`点検の開始の申請（${(store?.executions ?? []).filter((e) => e.status === "pending").length}）`}>
+              {store ? <StartRequests graph={g} store={store} base={opState.valveState} act={act} /> : null}
+            </Panel>
             <Panel title={`点検中の作業（${running.length}）`}>
               {running.length === 0 && <p className="text-sm text-zinc-400">点検中の作業はありません。</p>}
               <ul className="space-y-3">
@@ -420,6 +424,7 @@ export default function ControlPage() {
                         />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold">{e.planName}</p>
+                          {e.ownerName && <p className="text-[11px] text-zinc-500">担当：{e.ownerName}</p>}
                           <p className="text-xs text-zinc-500">
                             工程：{plan?.steps[e.currentStep]}
                             {vw && `（${vw.v.done}/${vw.v.total}）`}

@@ -34,11 +34,13 @@ type Props = {
   base: Record<string, ValveState>;
   act: (a: StoreAction) => Promise<unknown>;
   compact?: boolean;
+  /** 表示だけ（当日の入力は制御室だけが行う） */
+  readOnly?: boolean;
 };
 
 const yardOf = (tank: string) => tank.slice(2, 3);
 
-export default function DayParamsPicker({ graph: g, plan, exec, base, act, compact }: Props) {
+export default function DayParamsPicker({ graph: g, plan, exec, base, act, compact, readOnly }: Props) {
   // ユーザー定義の作業で計算の部品「循環経路」を使うものは、燃料末端部作業と同じ選び方
   const custom = workTypeOf(plan) === "custom";
   const type = isFlushLike(plan) ? "flush" : isTransferLike(plan) ? "tankIsolation" : workTypeOf(plan);
@@ -165,9 +167,11 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
     >
       <p className="font-semibold text-purple-800 dark:text-purple-300">
         {type === "flush" ? "循環経路" : "移送先"}（当日の運用で選択）：
-        {summary ?? <span className="text-amber-700 dark:text-amber-300">未選択（作業を始める前に選んでください）</span>}
+        {summary ?? <span className="text-amber-700 dark:text-amber-300">{readOnly ? "未入力（制御室の入力待ち）" : "未選択（作業を始める前に選んでください）"}</span>}
       </p>
-      {!locked ? (
+      {readOnly ? (
+        <p className="mt-1 text-zinc-500">制御室が当日の運用に合わせて入力します。</p>
+      ) : !locked ? (
         <div className={`mt-1 flex flex-wrap items-center gap-2 ${compact ? "" : "text-sm"}`}>
           {type === "flush" ? (
             <>
@@ -193,7 +197,7 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
       ) : (
         <p className="mt-1 text-zinc-500">弁を記録済みのため、変更できません。</p>
       )}
-      {!params && !locked && (
+      {!params && !locked && !readOnly && (
         <p className="mt-1 text-red-600">
           {type === "flush" ? "この送り元・戻り先では末端部へ届くポンプがありません。" : "この移送先への移送経路が見つかりません。"}
         </p>

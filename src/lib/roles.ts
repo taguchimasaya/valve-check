@@ -162,10 +162,13 @@ export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
   advanceStep: ["checklist"],
   completeExecution: ["checklist"],
   deleteExecution: ["checklist"],
-  // 当日の選択・工程の完了報告は現場と制御室の両方で行う
-  setDayParams: ["checklist", "control"],
-  setFillSupply: ["checklist", "control"],
+  // 当日の運用によるタンク・ポンプ・充填元の入力は制御室だけ。工程の完了報告は現場（本人）と制御室
+  setDayParams: ["control"],
+  setFillSupply: ["control"],
   markStepDone: ["checklist", "control"],
+  // 点検の開始の承認・お断り（制御室）
+  approveStart: ["control"],
+  rejectStart: ["control"],
   // 承認・差し戻し（どの段を承認できるかは /api/piping の中で確かめる。制御室の段は ③ で行う）
   approvePlan: ["approveLeader", "approveManager", "approveControl"],
   rejectPlan: ["approveLeader", "approveManager", "approveControl"],

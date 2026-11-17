@@ -1,0 +1,126 @@
+"use client";
+
+import { useState } from "react";
+import type { Graph } from "@/lib/piping/graph";
+import { needsFillSupply } from "@/lib/piping/checklist";
+import { conflictText, lineConflicts } from "@/lib/piping/execRules";
+import type { Execution, PipingStore, StoreAction } from "@/lib/piping/store";
+import type { ValveState } from "@/lib/piping/types";
+import { needsDayParams } from "@/lib/piping/workTypes";
+import FillSupplyPicker from "./FillSupplyPicker";
+import DayParamsPicker from "./DayParamsPicker";
+
+// ③ 制御室：現場から届いた点検の開始の申請。当日のタンク・ポンプを入力し、ラインの重なりを確かめて承認する。
+
+export default function StartRequests({
+  graph,
+  store,
+  base,
+  act,
+}: {
+  graph: Graph;
+  store: PipingStore;
+  base: Record<string, ValveState>;
+  act: (a: StoreAction) => Promise<unknown>;
+}) {
+  const pending = store.executions.filter((e) => e.status === "pending");
+  if (!pending.length) return <p className="text-sm text-zinc-400">開始の申請はありません。</p>;
+  return (
+    <ul className="space-y-3">
+      {pending.map((e) => (
+        <Request key={e.id} graph={graph} store={store} exec={e} base={base} act={act} />
+      ))}
+    </ul>
+  );
+}
+
+function Request({
+  graph,
+  store,
+  exec,
+  base,
+  act,
+}: {
+  graph: Graph;
+  store: PipingStore;
+  exec: Execution;
+  base: Record<string, ValveState>;
+  act: (a: StoreAction) => Promise<unknown>;
+}) {
+  const [ack, setAck] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const plan = store.plans.find((p) => p.id === exec.planId);
+  if (!plan) return null;
+  const conflicts = lineConflicts(store, plan, exec.id);
+  const needDay = needsDayParams(plan);
+  const waitingDay = needDay && !exec.dayParams;
+
+  async function run(a: StoreAction) {
+    setBusy(true);
+    setError(null);
+    try {
+      await act(a);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 dark:bg-amber-950">
+      <p className="text-sm font-semibold">{exec.planName}</p>
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        申請：{exec.ownerName ?? "—"}（{new Date(exec.startedAt).toLocaleString("ja-JP")}）
+      </p>
+      {needDay && (
+        <div className="mt-2">
+          <DayParamsPicker graph={graph} plan={plan} exec={exec} base={base} act={act} compact />
+        </div>
+      )}
+      {needsFillSupply(plan) && (
+        <div className="mt-2">
+          <FillSupplyPicker graph={graph} plan={plan} exec={exec} base={base} act={act} compact />
+          <p className="mt-0.5 text-[11px] text-zinc-500">充填元は承認後、充填工程の前までに入力しても構いません。</p>
+        </div>
+      )}
+      {conflicts.length > 0 && (
+        <div className="mt-2 rounded border-2 border-red-500 bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+          <p className="font-semibold">⚠ ほかの点検とラインが重なっています</p>
+          <ul className="mt-1 list-disc pl-4">
+            {conflicts.map((c) => (
+              <li key={c.exec.id}>{conflictText(c)}</li>
+            ))}
+          </ul>
+          <label className="mt-1 flex items-center gap-1 font-semibold">
+            <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+            重なりを確認し、同時に行っても問題ないと判断した
+          </label>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={() => run({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack })}
+          disabled={busy || waitingDay || (conflicts.length > 0 && !ack)}
+          title={waitingDay ? "当日のタンク・ポンプを入力してから承認してください" : undefined}
+          className="rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
+        >
+          開始を承認
+        </button>
+        <button
+          onClick={() => {
+            const reason = prompt(`「${exec.planName}」の開始の申請を断る理由`);
+            if (reason?.trim()) run({ action: "rejectStart", execId: exec.id, reason });
+          }}
+          disabled={busy}
+          className="rounded border border-red-300 px-3 py-1 text-xs text-red-700"
+        >
+          断る
+        </button>
+      </div>
+      {waitingDay && <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">当日のタンク・ポンプを入力すると承認できます。</p>}
+    </li>
+  );
+}

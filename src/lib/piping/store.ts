@@ -28,10 +28,20 @@ export type Execution = {
   id: string;
   planId: string;
   planName: string;
+  /** 開始を申請した日時（承認前の点検も含む） */
   startedAt: string;
+  /** 点検の持ち主（開始した人）。本人だけが ② で見る・操作する。無ければ持ち主の決まる前の点検（誰でも） */
+  ownerId?: string;
+  ownerName?: string;
+  /** 制御室が開始を承認した日時・人 */
+  approvedAt?: string;
+  approvedBy?: string;
+  /** 承認時に、ラインが重なる点検があることを制御室が確認した（その時の点検名） */
+  overlapAck?: string[];
   /** 現在の工程（0=作業前 は確認不要のため、1から開始） */
   currentStep: number;
-  status: "in_progress" | "completed";
+  /** pending＝開始の申請中（制御室の承認待ち）、in_progress＝点検中、completed＝完了 */
+  status: "pending" | "in_progress" | "completed";
   /** key: `${stepIndex}:${code}` */
   records: Record<string, ValveRecord>;
   events: ExecEvent[];
@@ -75,7 +85,12 @@ export type StoreAction =
   | { action: "rejectPlan"; id: string; reason: string }
   /** チェックリストの周期だけを変える（内容は変わらないので承認は外さない） */
   | { action: "setPlanPeriod"; id: string; period: string | null }
+  /** 点検の開始の申請（制御室の承認で点検中になる） */
   | { action: "startExecution"; planId: string; id: string }
+  /** 制御室が開始を承認する。ラインが重なる点検があるときは ackOverlap が要る */
+  | { action: "approveStart"; execId: string; ackOverlap?: boolean }
+  /** 制御室が開始の申請を断る（申請は消え、制御室の記録に残る） */
+  | { action: "rejectStart"; execId: string; reason: string }
   | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
   | { action: "clearOutages" }
   | { action: "record"; execId: string; step: number; code: string; result: "OK" | "NG" }
