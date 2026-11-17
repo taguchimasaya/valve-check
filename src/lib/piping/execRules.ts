@@ -54,16 +54,32 @@ function linesOf(p: SavedPlan) {
   };
 }
 
-/** 2つのチェックリストのラインが重なるか（重なった配管・弁の数） */
-export function lineOverlap(a: SavedPlan, b: SavedPlan): { pipes: number; valves: string[] } {
+export type Overlap = {
+  /** 重なった配管の数 */
+  pipes: number;
+  /** 重なった配管の ID（図面に描く） */
+  pipeIds: string[];
+  /** 重なった弁の番号 */
+  valves: string[];
+  /** 重なった弁の図面上の ID */
+  valveNodeIds: string[];
+};
+
+/** 2つのチェックリストのラインが重なるか（重なった配管・弁） */
+export function lineOverlap(a: SavedPlan, b: SavedPlan): Overlap {
   const la = linesOf(a);
   const lb = linesOf(b);
-  const pipes = [...la.pipes].filter((x) => lb.pipes.has(x)).length;
-  const valves = b.rows.filter((r) => la.valves.has(r.nodeId ?? r.code)).map((r) => r.code);
-  return { pipes, valves: [...new Set(valves)] };
+  const pipeIds = [...la.pipes].filter((x) => lb.pipes.has(x));
+  const rows = b.rows.filter((r) => la.valves.has(r.nodeId ?? r.code));
+  return {
+    pipes: pipeIds.length,
+    pipeIds,
+    valves: [...new Set(rows.map((r) => r.code))],
+    valveNodeIds: [...new Set(rows.map((r) => r.nodeId).filter((x): x is string => !!x))],
+  };
 }
 
-export type LineConflict = { exec: Execution; plan: SavedPlan; pipes: number; valves: string[] };
+export type LineConflict = { exec: Execution; plan: SavedPlan } & Overlap;
 
 /** このチェックリストとラインが重なる、ほかの申請中・点検中の点検（同じチェックリストの点検は含まない） */
 export function lineConflicts(store: Pick<PipingStore, "executions" | "plans">, plan: SavedPlan, exceptExecId?: string): LineConflict[] {

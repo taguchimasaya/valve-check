@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import PipingDiagram, { DiagramLegend } from "@/components/piping/PipingDiagram";
+import PipingDiagram, { DiagramLegend, type DiagramHandle, type NodeMark, type PipeLayer } from "@/components/piping/PipingDiagram";
+import { lineConflicts } from "@/lib/piping/execRules";
 import { needsFillSupply, newId } from "@/lib/piping/checklist";
 import { planConflicts } from "@/lib/piping/execution";
 import { liveDiagram } from "@/lib/piping/live";
@@ -81,6 +82,9 @@ export default function ControlPage() {
   const [valveDialog, setValveDialog] = useState<string | null>(null);
   // 作業名をクリックして開くチェックリストのプレビュー（点検の ID）
   const [previewExecId, setPreviewExecId] = useState<string | null>(null);
+  // 図面にラインの重なりを表示する点検開始の申請（点検の ID）
+  const [overlapExecId, setOverlapExecId] = useState<string | null>(null);
+  const diagramRef = useRef<DiagramHandle>(null);
 
   const operations = useMemo(() => store?.operations ?? [], [store?.operations]);
   const overrides = useMemo(() => store?.valveOverrides ?? {}, [store?.valveOverrides]);
@@ -88,7 +92,36 @@ export default function ControlPage() {
 
   // ───── 図面に重ねる表示（トップ画面と共通の「今の状態」） ─────
   const live = useMemo(() => liveDiagram(g, store, hidden), [g, store, hidden]);
-  const { opState, valveState, layers, marks } = live;
+  const { opState, valveState } = live;
+  // ラインの重なりの表示：申請の範囲（橙の破線）、重なった配管（紫・点滅）、重なった弁（紫の枠）
+  const overlap = useMemo(() => {
+    const e = overlapExecId ? store?.executions.find((x) => x.id === overlapExecId && x.status === "pending") : undefined;
+    const p = e ? store?.plans.find((x) => x.id === e.planId) : undefined;
+    if (!store || !e || !p) return null;
+    const conflicts = lineConflicts(store, p, e.id);
+    const pipeIds = [...new Set(conflicts.flatMap((c) => c.pipeIds))];
+    const valveIds = [...new Set(conflicts.flatMap((c) => c.valveNodeIds))];
+    return { plan: p, conflicts, pipeIds, valveIds };
+  }, [overlapExecId, store]);
+  const layers: PipeLayer[] = overlap
+    ? [
+        ...live.layers,
+        { key: "ov-region", pipeIds: overlap.plan.regionPipeIds, color: "#f97316", width: 14, opacity: 0.7, dash: "12 6" },
+        { key: "ov-hit", pipeIds: overlap.pipeIds, color: "#c026d3", width: 18, opacity: 0.85, blink: true },
+      ]
+    : live.layers;
+  const marks: Record<string, NodeMark> = overlap
+    ? { ...live.marks, ...Object.fromEntries(overlap.valveIds.map((id) => [id, "selected" as NodeMark])) }
+    : live.marks;
+  // 重なりを表示したら、その範囲が見えるように拡大する
+  useEffect(() => {
+    if (!overlap) return;
+    const ids = [...overlap.plan.regionNodeIds, ...overlap.valveIds, ...overlap.conflicts.flatMap((c) => c.plan.regionNodeIds)];
+    const t = setTimeout(() => diagramRef.current?.fitNodes(ids), 60);
+    return () => clearTimeout(t);
+    // 表示する申請を切り替えたときだけ合わせる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlapExecId]);
   const markOwner = new Map<string, { exec: Execution; step: number; code: string }>();
   const views = live.views.map(({ exec: e, plan, v }) => {
     for (const id of Object.keys(v.marks)) {
@@ -346,7 +379,19 @@ export default function ControlPage() {
 
           {/* 図面 */}
           <section className="min-w-0 space-y-2">
+            {overlap && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border-2 border-fuchsia-500 bg-fuchsia-50 px-3 py-2 text-xs text-fuchsia-900 dark:bg-fuchsia-950 dark:text-fuchsia-100">
+                <span className="font-semibold">ラインの重なりを表示中：「{overlap.plan.name}」</span>
+                <span>
+                  ↔ {overlap.conflicts.map((c) => `「${c.exec.planName}」`).join("・")}（配管 {overlap.pipeIds.length}本・弁 {overlap.valveIds.length}箇所）
+                </span>
+                <button onClick={() => setOverlapExecId(null)} className="ml-auto rounded border border-fuchsia-600 px-2 py-0.5">
+                  表示を消す
+                </button>
+              </div>
+            )}
             <PipingDiagram
+              ref={diagramRef}
               graph={g}
               valveState={valveState}
               layers={layers}
@@ -384,6 +429,12 @@ export default function ControlPage() {
                   label: `${OPERATION_META[k].label}ライン`,
                 })),
                 { color: "#ef4444", label: "点検ライン（点滅）" },
+                ...(overlap
+                  ? [
+                      { color: "#f97316", label: "開始の申請の範囲（橙の破線）" },
+                      { color: "#c026d3", label: "ほかの点検と重なる配管（紫・点滅）" },
+                    ]
+                  : []),
                 { color: "#0d9488", label: "充填ライン（充填工程中）" },
                 { color: OUTAGE_COLOR, label: "運用停止範囲（灰色の破線・枠）" },
                 { color: "#dc2626", label: "閉操作待ち（点滅）", kind: "blink" as const },
@@ -399,7 +450,17 @@ export default function ControlPage() {
           {/* 点検状況 */}
           <aside className="space-y-3">
             <Panel title={`点検の開始の申請（${(store?.executions ?? []).filter((e) => e.status === "pending").length}）`}>
-              {store ? <StartRequests graph={g} store={store} base={opState.valveState} act={act} onPreview={setPreviewExecId} /> : null}
+              {store ? (
+                <StartRequests
+                  graph={g}
+                  store={store}
+                  base={opState.valveState}
+                  act={act}
+                  onPreview={setPreviewExecId}
+                  overlapExecId={overlap ? overlapExecId : null}
+                  onShowOverlap={setOverlapExecId}
+                />
+              ) : null}
             </Panel>
             <Panel title={`点検中の作業（${running.length}）`}>
               {running.length === 0 && <p className="text-sm text-zinc-400">点検中の作業はありません。</p>}

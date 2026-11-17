@@ -20,6 +20,8 @@ export default function StartRequests({
   base,
   act,
   onPreview,
+  overlapExecId,
+  onShowOverlap,
 }: {
   graph: Graph;
   store: PipingStore;
@@ -27,13 +29,26 @@ export default function StartRequests({
   act: (a: StoreAction) => Promise<unknown>;
   /** 作業名をクリックしたときにチェックリストのプレビューを開く */
   onPreview?: (execId: string) => void;
+  /** 図面にラインの重なりを表示している申請（点検の ID）と、その切り替え */
+  overlapExecId?: string | null;
+  onShowOverlap?: (execId: string | null) => void;
 }) {
   const pending = store.executions.filter((e) => e.status === "pending");
   if (!pending.length) return <p className="text-sm text-zinc-400">開始の申請はありません。</p>;
   return (
     <ul className="space-y-3">
       {pending.map((e) => (
-        <Request key={e.id} graph={graph} store={store} exec={e} base={base} act={act} onPreview={onPreview} />
+        <Request
+          key={e.id}
+          graph={graph}
+          store={store}
+          exec={e}
+          base={base}
+          act={act}
+          onPreview={onPreview}
+          showingOverlap={overlapExecId === e.id}
+          onShowOverlap={onShowOverlap}
+        />
       ))}
     </ul>
   );
@@ -46,6 +61,8 @@ function Request({
   base,
   act,
   onPreview,
+  showingOverlap,
+  onShowOverlap,
 }: {
   graph: Graph;
   store: PipingStore;
@@ -53,6 +70,8 @@ function Request({
   base: Record<string, ValveState>;
   act: (a: StoreAction) => Promise<unknown>;
   onPreview?: (execId: string) => void;
+  showingOverlap?: boolean;
+  onShowOverlap?: (execId: string | null) => void;
 }) {
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -103,6 +122,14 @@ function Request({
               <li key={c.exec.id}>{conflictText(c)}</li>
             ))}
           </ul>
+          {onShowOverlap && (
+            <button
+              onClick={() => onShowOverlap(showingOverlap ? null : exec.id)}
+              className={`mt-1 rounded px-2 py-0.5 font-semibold ${showingOverlap ? "bg-fuchsia-700 text-white" : "border border-fuchsia-600 text-fuchsia-700 dark:text-fuchsia-300"}`}
+            >
+              {showingOverlap ? "図面の重なり表示を消す" : "🗺 図面で重なりを見る"}
+            </button>
+          )}
           <label className="mt-1 flex items-center gap-1 font-semibold">
             <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
             重なりを確認し、同時に行っても問題ないと判断した
