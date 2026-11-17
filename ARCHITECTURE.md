@@ -17,7 +17,7 @@
 | **A. 既存系（QRチェックリスト）** | `/equipment` `/equipment/print` `/checklists` `/inspect` `/inspect/[code]` `/control-room` `/settings` | 機器マスター（equipment）と Excel 取込のチェックリストを使い、現場 iPad の QR 読取で工程ごとに弁操作を記録し、制御室 PC がリアルタイム（Realtime）で監視する |
 | **B. 配管系統図系（/piping）** | `/piping/planner` `/piping/field` `/piping/control`（運用停止範囲の設定を含む） `/piping/qr` `/piping/print`、管理設定（トップ右上）：`/piping/data`（`/piping/editor` を含む） `/piping/rules` | 配管系統図（グラフ構造）から遮断範囲・操作弁を自動算定してチェックリストを作り、図面上で現場点検・制御室監視を行う |
 
-両系統はホーム画面（`/`）から入り、**ログイン（Supabase Auth）と権限（作業者・承認者・制御室・管理者）を共通**で使います。利用者は管理者がユーザー管理（`/admin/users`）で作ります。データは互いに独立しており、配管系統図系は既存系のテーブルに書き込みません（QR の形式 `/inspect/{code}` のみ共通）。
+両系統はホーム画面（`/`）から入り、**ログイン（Supabase Auth）と権限（作業者・チームリーダー・G長・制御室・外部ベンダー・管理者）を共通**で使います。利用者は管理者がユーザー管理（`/admin/users`）で作ります。データは互いに独立しており、配管系統図系は既存系のテーブルに書き込みません（QR の形式 `/inspect/{code}` のみ共通）。
 
 ```
 [iPad 現場] ─┐                         ┌─ Supabase Auth（ID・パスワード）
@@ -48,7 +48,8 @@
 ```
 src/
   app/
-    page.tsx, layout.tsx          ホーム・ルートレイアウト（AuthGate で全体を包む）
+    page.tsx, layout.tsx          ホーム（従来方式・新方式の2つの入口だけ）・ルートレイアウト（AuthGate で全体を包む）
+    classic/                      従来方式（チェックリスト単体）のメニュー
     login/                        ログイン画面（唯一の公開ページ）
     admin/users/                  ユーザー管理（管理者のみ。配管系統図トップの「⚙ 管理設定」とホームから開く）
     equipment/, equipment/print/  機器マスター・QR 印刷（既存系）
@@ -64,6 +65,7 @@ src/
     NfcScanPanel.tsx              現場の NFC 読取パネル（/inspect・/piping/field）
     piping/                       系統図描画（PipingDiagram）・プレビュー・各種ピッカー・ルール編集
                                   NfcTagManager.tsx（/piping/qr の NFC タグ管理）
+                                  QrImageExport.tsx（QR の画像出力ボタン。処理は lib/qrExport.ts）
   lib/
     supabase.ts                   ブラウザ用 Supabase クライアント
     auth.ts                       ログイン・ログアウト・authFetch（Bearer トークン付き fetch）・useMe（自分の権限）

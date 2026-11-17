@@ -11,7 +11,10 @@ import { mailMethod, notifyEmailOf, sendMails } from "@/lib/approvalMail";
 // POST {action:"update", id, name?, roles?, notifyEmail?} … 名前・権限・通知先メール（承認フローのメールの宛先）の変更
 // POST {action:"password", id, password}     … パスワードの再設定
 // POST {action:"disable" | "enable", id}     … 無効化（ログインできなくする）・有効に戻す
-// POST {action:"testMail", id}               … 通知先メールにテストメールを送る（メールの設定の確認用）
+// POST {action:"testMail", id, force?}       … 通知先メールにテストメールを送る（メールの設定の確認用）。
+//   送れたら app_metadata.test_mail = {to, at} に記録し、同じアドレスには force が無い限り送らない
+// POST {action:"testMailBulk", ids}          … 複数の利用者にまとめて送る（1回 20 人まで。送信済み・通知先なし・無効は飛ばす）
+// POST {action:"resetTestMail", id}          … 送信済みの記録を消す（もう一度送れるようにする）
 
 const LOGIN_DOMAIN = "valve-check.local";
 /** 無効化の期間（Supabase Auth の ban_duration。実質無期限） */
@@ -32,25 +35,40 @@ export type AdminUser = {
   rolesUnset: boolean;
   envAdmin: boolean;
   disabled: boolean;
+  /** テストメールを送れた記録（宛先と日時）。今の通知先と違うアドレスの記録は「未送信」扱い */
+  testMail: { to: string; at: string } | null;
+  /** 今の通知先メールにテストメールを送信済み */
+  testMailDone: boolean;
   createdAt: string;
   lastSignInAt: string | null;
 };
 
 const fail = (message: string, status = 400) => Response.json({ error: message }, { status });
 
+/** app_metadata のテストメール送信済みの記録 */
+function testMailOf(u: User): { to: string; at: string } | null {
+  const t = (u.app_metadata as { test_mail?: unknown } | undefined)?.test_mail as { to?: unknown; at?: unknown } | undefined;
+  return t && typeof t.to === "string" && typeof t.at === "string" ? { to: t.to, at: t.at } : null;
+}
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
 function toAdminUser(u: User): AdminUser {
   const { roles, siteRoles, envAdmin, stored } = rolesOf(u);
+  const notify = notifyEmailOf(u) ?? "";
+  const testMail = testMailOf(u);
   return {
     id: u.id,
     loginId: loginIdOf(u.email),
     email: u.email ?? "",
     name: displayNameOf(u),
-    notifyEmail: notifyEmailOf(u) ?? "",
+    notifyEmail: notify,
     roles,
     siteRoles,
     rolesUnset: stored === null && !siteRoles,
     envAdmin,
     disabled: isDisabled(u),
+    testMail,
+    testMailDone: !!notify && !!testMail && sameAddress(testMail.to, notify),
     createdAt: u.created_at,
     lastSignInAt: u.last_sign_in_at ?? null,
   };
@@ -107,7 +125,12 @@ type Action =
   | ({ action: "update"; id: string; name?: string; notifyEmail?: string } & AccessInput)
   | { action: "password"; id: string; password: string }
   | { action: "disable" | "enable"; id: string }
-  | { action: "testMail"; id: string };
+  | { action: "testMail"; id: string; force?: boolean }
+  | { action: "testMailBulk"; ids: string[] }
+  | { action: "resetTestMail"; id: string };
+
+export type TestMailResult = { id: string; status: "sent" | "skipped" | "noAddress" | "disabled" | "error"; to?: string; error?: string };
+const BULK_MAX = 20;
 
 export async function POST(request: Request) {
   const auth = await requirePerm(request, "users");
@@ -159,7 +182,8 @@ export async function POST(request: Request) {
           if (envAdminIds().has(loginIdOf(cur.user.email)) && !roles.includes("admin")) {
             return fail("この利用者は環境変数 ADMIN_LOGIN_IDS で管理者に指定されているため、管理者権限は外せません");
           }
-          patch.app_metadata = access;
+          // テストメールの送信済みの記録などは残す
+          patch.app_metadata = { ...(cur.user.app_metadata ?? {}), ...access };
         }
         if (a.name !== undefined || a.notifyEmail !== undefined) {
           const notify = a.notifyEmail === undefined ? notifyEmailOf(cur.user) ?? "" : String(a.notifyEmail).trim();
@@ -199,20 +223,39 @@ export async function POST(request: Request) {
         const method = mailMethod();
         if (!method) return fail("メールの送信方法が設定されていません（SMTP_USER・SMTP_PASS か RESEND_API_KEY を環境変数に設定してください）");
         const { data: cur } = await admin.auth.admin.getUserById(a.id);
-        const to = cur.user ? notifyEmailOf(cur.user) : null;
-        if (!to) return fail("この利用者には通知先メールが登録されていません");
-        try {
-          await sendMails([
-            {
-              to,
-              subject: "【バルブ点検】テストメール",
-              text: `バルブ点検アプリからのテストメールです（送信方法：${method === "smtp" ? "SMTP" : "Resend"}、送った人：${auth.name}）。\nこのメールが届けば、承認フローのメールを送れます。⑤ チェックリスト作成のルールの「共通」で、拠点ごとに送信をオンにしてください。\n`,
-            },
-          ]);
-        } catch (e) {
-          return fail(`送信できませんでした：${e instanceof Error ? e.message : String(e)}`, 502);
+        if (!cur.user) return fail("利用者が見つかりません", 404);
+        const r = await sendTestMail(admin, cur.user, method, auth.name, !!a.force);
+        if (r.status === "noAddress") return fail("この利用者には通知先メールが登録されていません");
+        if (r.status === "error") return fail(`送信できませんでした：${r.error}`, 502);
+        return Response.json({ ok: true, ...r });
+      }
+      case "testMailBulk": {
+        const method = mailMethod();
+        if (!method) return fail("メールの送信方法が設定されていません（SMTP_USER・SMTP_PASS か RESEND_API_KEY を環境変数に設定してください）");
+        const ids = Array.isArray(a.ids) ? [...new Set(a.ids.map(String))] : [];
+        if (!ids.length) return fail("送る利用者がいません");
+        if (ids.length > BULK_MAX) return fail(`1回に送れるのは${BULK_MAX}人までです`);
+        const results: TestMailResult[] = [];
+        for (const id of ids) {
+          const { data: cur } = await admin.auth.admin.getUserById(id);
+          if (!cur.user) {
+            results.push({ id, status: "error", error: "利用者が見つかりません" });
+            continue;
+          }
+          if (isDisabled(cur.user)) {
+            results.push({ id, status: "disabled" });
+            continue;
+          }
+          results.push({ id, ...(await sendTestMail(admin, cur.user, method, auth.name, false)) });
         }
-        return Response.json({ ok: true, to });
+        return Response.json({ results });
+      }
+      case "resetTestMail": {
+        const { data: cur, error: e1 } = await admin.auth.admin.getUserById(a.id);
+        if (e1 || !cur.user) return fail("利用者が見つかりません", 404);
+        const { data, error } = await admin.auth.admin.updateUserById(a.id, { app_metadata: { ...(cur.user.app_metadata ?? {}), test_mail: null } });
+        if (error) return fail(error.message);
+        return Response.json({ user: toAdminUser(data.user) });
       }
       default:
         return fail("不明な操作です");
@@ -220,4 +263,36 @@ export async function POST(request: Request) {
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e), 500);
   }
+}
+
+/** テストメールを1人に送り、送れたら送信済みを記録する。送信済み（今の通知先と同じアドレス）は force が無ければ送らない */
+async function sendTestMail(
+  admin: Admin,
+  u: User,
+  method: "smtp" | "resend",
+  sender: string,
+  force: boolean
+): Promise<Omit<TestMailResult, "id">> {
+  const to = notifyEmailOf(u);
+  if (!to) return { status: "noAddress" };
+  const done = testMailOf(u);
+  if (!force && done && sameAddress(done.to, to)) return { status: "skipped", to };
+  try {
+    await sendMails([
+      {
+        to,
+        subject: "【バルブ点検】テストメール",
+        text: `バルブ点検アプリからのテストメールです（送信方法：${method === "smtp" ? "SMTP" : "Resend"}、送った人：${sender}）。
+このメールが届けば、承認フローのメールを送れます。⑤ チェックリスト作成のルールの「共通」で、拠点ごとに送信をオンにしてください。
+`,
+      },
+    ]);
+  } catch (e) {
+    return { status: "error", to, error: e instanceof Error ? e.message : String(e) };
+  }
+  const { error } = await admin.auth.admin.updateUserById(u.id, {
+    app_metadata: { ...(u.app_metadata ?? {}), test_mail: { to, at: new Date().toISOString() } },
+  });
+  // 送信はできたので、記録に失敗しても送信済みとして返す（次回の一括送信で重複する可能性だけ伝える）
+  return error ? { status: "sent", to, error: `送信済みの記録に失敗：${error.message}` } : { status: "sent", to };
 }

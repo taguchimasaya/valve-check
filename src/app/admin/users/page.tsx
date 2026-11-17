@@ -6,7 +6,8 @@ import UserBadge from "@/components/UserBadge";
 import { authFetch, refreshMe } from "@/lib/auth";
 import { ROLE_LABEL, ROLES, SITE_ROLES, roleDesc, type Role, type SiteRoles } from "@/lib/roles";
 import { useFacilities, type FacilityItem } from "@/lib/piping/usePiping";
-import type { AdminUser } from "@/app/api/admin/users/route";
+import type { AdminUser, TestMailResult } from "@/app/api/admin/users/route";
+import { decodeCsv, parseCsvText, planImport, rolesAtFacility, usersToCsv, type ImportPlan } from "@/lib/userCsv";
 
 // ユーザー管理（管理者のみ）。利用者の作成・権限の変更・無効化は /api/admin/users（service role キー）で行う。
 // 権限は拠点ごと（作業者・チームリーダー・G長・制御室）。管理者だけは全拠点共通。
@@ -138,7 +139,15 @@ export default function UsersPage() {
   const [meId, setMeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showDisabled, setShowDisabled] = useState(true);
+  // 一覧の絞り込み
+  const [q, setQ] = useState("");
+  const [roleFilter, setRoleFilter] = useState<Role | "">("");
+  const [siteFilter, setSiteFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "disabled">("");
+  const [mailFilter, setMailFilter] = useState<"" | "todo" | "done" | "none">("");
+  // CSV 取込のプレビュー・進み具合
+  const [importPlan, setImportPlan] = useState<(ImportPlan & { file: string }) | null>(null);
+  const [progress, setProgress] = useState("");
   // 権限・名前の編集中の値（利用者ID → 値）
   const [edits, setEdits] = useState<Record<string, { access: Access; name: string; notifyEmail: string }>>({});
   // 拠点の一覧（管理者はすべての拠点が見える）
@@ -177,7 +186,118 @@ export default function UsersPage() {
     }
   };
 
-  const shown = useMemo(() => (users ?? []).filter((u) => showDisabled || !u.disabled), [users, showDisabled]);
+  const shown = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return (users ?? []).filter((u) => {
+      if (statusFilter === "active" && u.disabled) return false;
+      if (statusFilter === "disabled" && !u.disabled) return false;
+      if (t && ![u.loginId, u.name, u.email, u.notifyEmail].some((x) => x.toLowerCase().includes(t))) return false;
+      const isAdmin = u.roles.includes("admin");
+      // 拠点：その拠点に権限がある人（管理者は全拠点に含む）
+      if (siteFilter && !isAdmin && !rolesAtFacility(u, siteFilter).length) return false;
+      if (roleFilter) {
+        if (roleFilter === "admin") {
+          if (!isAdmin) return false;
+        } else if (siteFilter ? !rolesAtFacility(u, siteFilter).includes(roleFilter) : !u.roles.includes(roleFilter)) return false;
+      }
+      if (mailFilter === "none" && u.notifyEmail) return false;
+      if (mailFilter === "done" && !u.testMailDone) return false;
+      if (mailFilter === "todo" && (!u.notifyEmail || u.testMailDone)) return false;
+      return true;
+    });
+  }, [users, q, roleFilter, siteFilter, statusFilter, mailFilter]);
+  const filtered = !!(q.trim() || roleFilter || siteFilter || statusFilter || mailFilter);
+  // 一括テストメールの対象：表示中で有効・通知先あり・未送信
+  const mailTargets = useMemo(() => shown.filter((u) => !u.disabled && u.notifyEmail && !u.testMailDone), [shown]);
+  const clearFilters = () => {
+    setQ("");
+    setRoleFilter("");
+    setSiteFilter("");
+    setStatusFilter("");
+    setMailFilter("");
+  };
+
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob([usersToCsv(shown, facilities)], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `利用者一覧_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const readCsv = async (file: File) => {
+    setMessage(null);
+    const rows = parseCsvText(decodeCsv(await file.arrayBuffer()));
+    setImportPlan({ ...planImport(rows, users ?? [], facilities), file: file.name });
+  };
+
+  // CSV の変更を1件ずつ反映する（有効に戻す → 更新 → 無効にする の順）
+  const applyImport = async () => {
+    if (!importPlan) return;
+    const done: string[] = [];
+    const failed: string[] = [];
+    setBusy(true);
+    setMessage(null);
+    for (const [i, c] of importPlan.changes.entries()) {
+      setProgress(`反映中 ${i + 1}/${importPlan.changes.length}：${c.loginId}`);
+      try {
+        if (c.kind === "create") await post(c.body);
+        else {
+          if (c.status === "enable") await post({ action: "enable", id: c.id });
+          if (c.body) await post(c.body);
+          if (c.status === "disable") await post({ action: "disable", id: c.id });
+        }
+        done.push(c.loginId);
+      } catch (e) {
+        failed.push(`${c.loginId}（${e instanceof Error ? e.message : String(e)}）`);
+      }
+    }
+    setProgress("");
+    setBusy(false);
+    setImportPlan(null);
+    await load();
+    refreshMe();
+    setMessage(
+      failed.length
+        ? { type: "err", text: `${done.length}件を反映しました。反映できなかったもの：${failed.join("、")}` }
+        : { type: "ok", text: `CSV の${done.length}件を反映しました。` }
+    );
+  };
+
+  // 一括テストメール（20人ずつ。送信済みのアドレスにはサーバー側でも送らない）
+  const bulkTestMail = async () => {
+    const list = mailTargets;
+    if (!list.length) return;
+    if (!confirm(`表示中の未送信の${list.length}人にテストメールを送りますか？\n（送信済みのアドレスには送りません）`)) return;
+    setBusy(true);
+    setMessage(null);
+    const results: TestMailResult[] = [];
+    try {
+      for (let i = 0; i < list.length; i += 20) {
+        setProgress(`テストメール送信中 ${Math.min(i + 20, list.length)}/${list.length}`);
+        const r = await post<{ results: TestMailResult[] }>({ action: "testMailBulk", ids: list.slice(i, i + 20).map((u) => u.id) });
+        results.push(...r.results);
+      }
+    } catch (e) {
+      results.push({ id: "", status: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+    setProgress("");
+    setBusy(false);
+    await load();
+    const n = (st: TestMailResult["status"]) => results.filter((x) => x.status === st).length;
+    const errors = results.filter((x) => x.status === "error" || x.error);
+    const loginOf = (id: string) => users?.find((u) => u.id === id)?.loginId ?? id;
+    setMessage({
+      type: errors.length ? "err" : "ok",
+      text:
+        `テストメール：送信 ${n("sent")}件、送信済みのため省略 ${n("skipped")}件` +
+        (n("noAddress") + n("disabled") ? `、対象外 ${n("noAddress") + n("disabled")}件` : "") +
+        (errors.length
+          ? `。エラー：${errors.map((x) => `${x.id ? loginOf(x.id) : ""}${x.to ? `（${x.to}）` : ""} ${x.error}`).join("、")}`
+          : "。届いたか本人に確認してください。"),
+    });
+  };
   const counts = useMemo(() => {
     const active = (users ?? []).filter((u) => !u.disabled);
     return Object.fromEntries(ROLES.map((r) => [r, active.filter((u) => u.roles.includes(r)).length])) as Record<Role, number>;
@@ -293,12 +413,148 @@ export default function UsersPage() {
         {/* 一覧 */}
         <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">利用者の一覧（{users?.length ?? "…"}）</h2>
-            <label className="flex items-center gap-1 text-xs text-zinc-600">
-              <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
-              無効の利用者も表示
-            </label>
+            <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">
+              利用者の一覧（{filtered ? `${shown.length} / ` : ""}
+              {users?.length ?? "…"}）
+            </h2>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button
+                onClick={bulkTestMail}
+                disabled={busy || !mailTargets.length}
+                title="表示中の利用者のうち、有効で通知先メールがあり、まだテストメールを送っていない人に送ります"
+                className="rounded-lg border border-sky-300 px-2.5 py-1.5 text-sky-700 disabled:opacity-40 dark:border-sky-900 dark:text-sky-400"
+              >
+                ✉ 未送信の{mailTargets.length}人にテストメール
+              </button>
+              <button onClick={exportCsv} disabled={!users?.length} className="rounded-lg border border-zinc-300 px-2.5 py-1.5 disabled:opacity-40 dark:border-zinc-700">
+                ⬇ CSV出力（表示中の{shown.length}人）
+              </button>
+              <label className={`cursor-pointer rounded-lg border border-zinc-300 px-2.5 py-1.5 dark:border-zinc-700 ${busy || !users ? "pointer-events-none opacity-40" : ""}`}>
+                ⬆ CSV取込（一括設定）
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) readCsv(f);
+                  }}
+                />
+              </label>
+            </div>
           </div>
+          {progress && <p className="mt-2 text-xs text-sky-700">{progress}</p>}
+
+          {/* 絞り込み */}
+          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
+            <label className="min-w-40 flex-1">
+              <span className="block text-zinc-500">検索</span>
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="ログインID・表示名・メール"
+                className="mt-0.5 w-full rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+              />
+            </label>
+            <label>
+              <span className="block text-zinc-500">拠点</span>
+              <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className="mt-0.5 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950">
+                <option value="">すべて</option>
+                {facilities.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="block text-zinc-500">権限{siteFilter ? "（その拠点で）" : ""}</span>
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as Role | "")} className="mt-0.5 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950">
+                <option value="">すべて</option>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="block text-zinc-500">状態</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                className="mt-0.5 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                <option value="">すべて</option>
+                <option value="active">有効</option>
+                <option value="disabled">無効</option>
+              </select>
+            </label>
+            <label>
+              <span className="block text-zinc-500">テストメール</span>
+              <select
+                value={mailFilter}
+                onChange={(e) => setMailFilter(e.target.value as typeof mailFilter)}
+                className="mt-0.5 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                <option value="">すべて</option>
+                <option value="todo">未送信</option>
+                <option value="done">送信済み</option>
+                <option value="none">通知先なし</option>
+              </select>
+            </label>
+            {filtered && (
+              <button onClick={clearFilters} className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700">
+                絞り込みを解除
+              </button>
+            )}
+          </div>
+
+          {/* CSV 取込の確認 */}
+          {importPlan && (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+              <p className="font-semibold">
+                CSV取込の確認：{importPlan.file}（変更 {importPlan.changes.length}件・変更なし {importPlan.unchanged}件・エラー {importPlan.errors.length}件）
+              </p>
+              {importPlan.errors.length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-xs text-red-700 dark:text-red-300">
+                  {importPlan.errors.map((e, i) => (
+                    <li key={i}>
+                      {e.line}行目：{e.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {importPlan.changes.length > 0 && (
+                <table className="mt-2 w-full text-xs">
+                  <tbody>
+                    {importPlan.changes.map((c) => (
+                      <tr key={c.line} className="border-t border-amber-200 align-top dark:border-amber-900">
+                        <td className="whitespace-nowrap py-1 pr-2 text-zinc-500">{c.line}行目</td>
+                        <td className="py-1 pr-2 font-mono">{c.loginId}</td>
+                        <td className="py-1">{c.summary.join(" ／ ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">エラーの行は反映しません。直した CSV をもう一度取り込むこともできます。</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={applyImport}
+                  disabled={busy || !importPlan.changes.length}
+                  className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  {importPlan.changes.length}件を反映する
+                </button>
+                <button onClick={() => setImportPlan(null)} disabled={busy} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs dark:border-zinc-700">
+                  やめる
+                </button>
+              </div>
+            </div>
+          )}
           {!users ? (
             <p className="mt-2 text-sm text-zinc-500">読み込み中…</p>
           ) : (
@@ -310,7 +566,7 @@ export default function UsersPage() {
                     <th className="pr-2">表示名・通知先メール</th>
                     <th className="pr-2">権限</th>
                     <th className="pr-2">最終ログイン</th>
-                    <th className="pr-2">状態</th>
+                    <th className="pr-2">状態・テストメール</th>
                     <th />
                   </tr>
                 </thead>
@@ -368,6 +624,27 @@ export default function UsersPage() {
                           ) : (
                             <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-800">有効</span>
                           )}
+                          <span className="mt-1 block whitespace-nowrap text-[10px] text-zinc-500">
+                            {!u.notifyEmail ? (
+                              "通知先なし"
+                            ) : u.testMailDone ? (
+                              <>
+                                <span className="text-emerald-700" title={fmt(u.testMail?.at ?? null)}>
+                                  ✉ テスト送信済み
+                                </span>
+                                <button
+                                  disabled={busy}
+                                  onClick={() => run(() => post({ action: "resetTestMail", id: u.id }), `「${u.loginId}」のテストメールを未送信に戻しました`)}
+                                  className="ml-1 text-sky-700 underline"
+                                  title="届かなかったときなど、一括送信の対象に戻します"
+                                >
+                                  未送信に戻す
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-amber-700">✉ テスト未送信</span>
+                            )}
+                          </span>
                         </td>
                         <td className="whitespace-nowrap py-1.5 text-right">
                           {!u.disabled && (
@@ -387,11 +664,16 @@ export default function UsersPage() {
                           {!u.disabled && u.notifyEmail && (
                             <button
                               disabled={busy}
-                              title="通知先メールにテストメールを送ります（メールの設定の確認）"
-                              onClick={() => run(() => post({ action: "testMail", id: u.id }), `「${u.notifyEmail}」にテストメールを送りました。届いたか確認してください`)}
+                              title={
+                                u.testMailDone ? `${fmt(u.testMail?.at ?? null)} に送信済みです。もう一度送ります` : "通知先メールにテストメールを送ります（メールの設定の確認）"
+                              }
+                              onClick={() => {
+                                if (u.testMailDone && !confirm(`「${u.notifyEmail}」には ${fmt(u.testMail?.at ?? null)} にテストメールを送信済みです。もう一度送りますか？`)) return;
+                                run(() => post({ action: "testMail", id: u.id, force: u.testMailDone }), `「${u.notifyEmail}」にテストメールを送りました。届いたか確認してください`);
+                              }}
                               className="ml-1 rounded-lg border border-sky-300 px-2.5 py-1 text-xs text-sky-700 dark:border-sky-900 dark:text-sky-400"
                             >
-                              テストメール
+                              {u.testMailDone ? "再送" : "テストメール"}
                             </button>
                           )}
                           {!u.disabled && (
@@ -438,6 +720,14 @@ export default function UsersPage() {
             </div>
           )}
           <p className="mt-3 text-xs text-zinc-500">
+            CSV出力は表示中の利用者を、権限は拠点ごとの列（「チームリーダー・制御室」のように「・」区切り、空欄は権限なし）で出します。Excel
+            で直して取り込むと、違うところだけをまとめて反映します（反映前に確認を表示）。新しい利用者の行には初期パスワード（8文字以上）を入れてください。ログインIDの変更・利用者の削除は
+            CSV ではできません。
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            テストメールは、送れたアドレスを記録し、一括送信では同じアドレスにもう一度送りません（通知先を変えると未送信に戻ります）。
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
             無効にした利用者はログインできなくなります（配管系統図の画面は次の操作で、ほかの画面も最長1時間でログインが切れます）。利用者の削除はできません（点検記録に名前が残るため）。
           </p>
         </section>
