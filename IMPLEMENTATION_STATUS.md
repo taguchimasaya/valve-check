@@ -45,7 +45,7 @@
 
 | 機能 | 状態 | 備考 |
 |---|---|---|
-| 機器マスター管理・Excel/CSV 取込・QR 発行／印刷 | ✅ | `/equipment`、`/equipment/print`。QR の画像出力（PNG／SVG、複数は ZIP）あり。出力後も自動で発行済みにする |
+| 機器マスター管理・Excel/CSV 取込・QR 発行／印刷 | ✅ | `/equipment`、`/equipment/print`。QR の画像出力（PNG／SVG、縦・横の並べ方、複数は ZIP）あり。出力後も自動で発行済みにする |
 | 手順チェックリスト Excel 取込・プレビュー・書出し | ✅ | `/checklists` |
 | 現場チェック（QR 読取 → 開閉選択ダイアログ → 記録） | ✅ | `/inspect`、`/inspect/[code]`。対象外の弁は NG ビープ |
 | 工程の開始・完了通知と読み上げ | ✅ | `step_notifications` / `step_start_notifications` を Realtime で制御室へ |
@@ -98,7 +98,7 @@ QR に加えて NFC タグ（NXP NTAG215、7 バイト UID）の UID で同じ�
 | 制御室（運用入力→運用ライン表示、点検ラインの点滅、操作済み弁の点灯、確認） | ✅ | `/piping/control` |
 | 当日の運用停止範囲 | ✅ | 制御室で入力し、トップ・制御室の図面に表示 |
 | トップの現在状況図 | ✅ | `/piping` |
-| 系統図の弁 QR 印刷 | ✅ | `/piping/qr`（既存機器 QR と同じ形式）。QR の画像出力（PNG／SVG、複数は ZIP）あり |
+| 系統図の弁 QR 印刷 | ✅ | `/piping/qr`（既存機器 QR と同じ形式）。QR の画像出力（PNG／SVG、縦・横の並べ方、複数は ZIP）あり |
 | 現場⇔制御室の同期 | ⚠️ | 1.5 秒ポーリング（Realtime ではない）。piping_store は拠点ごと1行 JSON のため、データ増加で読み書き量が増える |
 
 ### 4.3 系統図データ・ルール
