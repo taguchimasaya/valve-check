@@ -971,8 +971,8 @@ export default function InspectScannerPage() {
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-8 dark:bg-black">
       <div className="mx-auto max-w-3xl">
-        <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
-          ← ホームに戻る
+        <Link href="/classic" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+          ← 従来方式のメニューに戻る
         </Link>
         <h1 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
           現場チェック
@@ -1133,10 +1133,10 @@ export default function InspectScannerPage() {
                 新規セッションを開始
               </button>
               <Link
-                href="/"
+                href="/classic"
                 className="rounded-lg border border-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-400 dark:text-emerald-400 dark:hover:bg-emerald-950"
               >
-                ホームに戻る
+                メニューに戻る
               </Link>
             </div>
           </div>

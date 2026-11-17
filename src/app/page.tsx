@@ -5,60 +5,35 @@ import UserBadge from "@/components/UserBadge";
 import { useMe } from "@/lib/auth";
 import { canOpen } from "@/lib/roles";
 
-const features = [
+// トップは2つの入口だけ：従来方式（チェックリスト単体）と新方式（図面連動方式）
+const CLASSIC_PAGES = ["/equipment", "/equipment/print", "/checklists", "/inspect", "/control-room"];
+
+const entrances = [
   {
-    title: "機器マスター / QR発行",
-    desc: "機器マスターをインポートし、機器ごとにQRコードを発行します。",
-    status: "実装済み",
-    href: "/equipment",
+    title: "従来方式（チェックリスト単体）",
+    desc: "Excel のチェックリストを取り込み、QRコードの読み取りで弁ごとに記録します。機器マスター・QR発行・現場チェック・点検ダッシュボード。",
+    href: "/classic",
+    pages: CLASSIC_PAGES,
   },
   {
-    title: "機器QRコード印刷",
-    desc: "機器マスターに登録済みの機器のQRコードを印刷します。",
-    status: "実装済み",
-    href: "/equipment/print",
-  },
-  {
-    title: "チェックリスト取込",
-    desc: "既存のExcelチェックリストを読み込み、点検項目として登録します。",
-    status: "実装済み",
-    href: "/checklists",
-  },
-  {
-    title: "現場チェック（iPad）",
-    desc: "QRコードを読み取り、対象バルブのチェックリストにその場で記録します。",
-    status: "実装済み",
-    href: "/inspect",
-  },
-  {
-    title: "点検ダッシュボード（制御室PC）",
-    desc: "現場のチェック状況をリアルタイムに確認します。",
-    status: "実装済み",
-    href: "/control-room",
-  },
-  {
-    title: "配管系統図（チェックリスト作成・図面ビュー）",
-    desc: "仮想給油施設の系統図で、抜取範囲の算定・チェックリスト作成、図面での現場点検・制御室確認を試せます。",
-    status: "試作",
+    title: "新方式（図面連動方式）",
+    desc: "配管系統図から抜取範囲と操作する弁を算定してチェックリストを作り、図面上で現場点検・制御室の確認を行います。",
     href: "/piping",
+    pages: null, // 配管系統図トップは誰でも開ける
   },
 ];
 
 export default function Home() {
-  // 権限で開けないメニューは出さない（配管系統図トップは誰でも開ける）
   const me = useMe();
-  const visible = features.filter((f) => !f.href || canOpen(me?.roles, f.href));
+  // 従来方式は、中の機能を1つも開けない人には出さない
+  const visible = entrances.filter((e) => !e.pages || e.pages.some((p) => canOpen(me?.roles, p)));
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-16 dark:bg-black">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-              Valve Inspection App
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
-              バルブ点検アプリ
-            </h1>
+            <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Valve Inspection App</p>
+            <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">バルブ点検アプリ</h1>
           </div>
           <div className="flex items-center gap-4">
             <UserBadge />
@@ -72,45 +47,17 @@ export default function Home() {
             </Link>
           </div>
         </div>
-        <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-          QRコードでバルブ点検を担保する現場点検システムです。開発中のため、下記機能は順次追加されます。
-        </p>
+        <p className="mt-2 text-zinc-600 dark:text-zinc-400">点検の方式を選んでください。</p>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          {visible.map((f) => {
-            const card = (
-              <div
-                className={`rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950 ${
-                  f.href ? "transition-colors hover:border-emerald-400" : ""
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
-                    {f.title}
-                  </h2>
-                  <span
-                    className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                      f.status === "実装済み"
-                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
-                        : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                    }`}
-                  >
-                    {f.status}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                  {f.desc}
-                </p>
+          {visible.map((e) => (
+            <Link key={e.href} href={e.href}>
+              <div className="h-full rounded-xl border border-zinc-200 bg-white p-6 transition-colors hover:border-emerald-400 dark:border-zinc-800 dark:bg-zinc-950">
+                <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{e.title}</h2>
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{e.desc}</p>
               </div>
-            );
-            return f.href ? (
-              <Link key={f.title} href={f.href}>
-                {card}
-              </Link>
-            ) : (
-              <div key={f.title}>{card}</div>
-            );
-          })}
+            </Link>
+          ))}
         </div>
       </div>
     </main>

@@ -402,10 +402,10 @@ export default function ChecklistsPage() {
     <main className="min-h-screen bg-zinc-50 px-6 py-12 dark:bg-black">
       <div className="mx-auto max-w-3xl">
         <Link
-          href="/"
+          href="/classic"
           className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400"
         >
-          ← ホームに戻る
+          ← 従来方式のメニューに戻る
         </Link>
         <h1 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
           チェックリスト管理

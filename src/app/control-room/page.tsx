@@ -771,8 +771,8 @@ export default function ControlRoomPage() {
       <div className="flex-none border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex items-center justify-between">
           <div>
-            <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
-              ← ホームに戻る
+            <Link href="/classic" className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+              ← 従来方式のメニューに戻る
             </Link>
             <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
               点検ダッシュボード（制御室）
