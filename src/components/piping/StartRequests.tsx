@@ -4,6 +4,8 @@ import { useState } from "react";
 import type { Graph } from "@/lib/piping/graph";
 import { needsFillSupply } from "@/lib/piping/checklist";
 import { conflictText, lineConflicts, targetConflicts } from "@/lib/piping/execRules";
+import { OPERATION_BLOCK_HINT, operationBlockers, operationContext } from "@/lib/piping/operationSafety";
+import { execPlan } from "@/lib/piping/store";
 import type { Execution, PipingStore, StoreAction } from "@/lib/piping/store";
 import type { ValveState } from "@/lib/piping/types";
 import { needsDayParams } from "@/lib/piping/workTypes";
@@ -84,7 +86,9 @@ function Request({
   const needDay = needsDayParams(plan);
   // 充填元の欄で承認するか（タンク・ポンプの欄があればそちらで承認する）
   const fillApprove = needsFillSupply(plan) && !needDay;
-  const blocked = sameTarget.length > 0 || (conflicts.length > 0 && !ack);
+  // 安全機構：運用中のラインと重なる点検は承認できない（運用停止範囲の中なら可）。当日の選択で加えた弁も見る
+  const opBlock = operationBlockers(operationContext(graph, store), execPlan(plan, exec));
+  const blocked = sameTarget.length > 0 || opBlock.length > 0 || (conflicts.length > 0 && !ack);
   const approve = () => act({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack });
 
   async function run(a: StoreAction) {
@@ -116,6 +120,17 @@ function Request({
         申請：{exec.ownerName ?? "—"}（{new Date(exec.startedAt).toLocaleString("ja-JP")}）
       </p>
 
+      {opBlock.length > 0 && (
+        <div className="mt-2 rounded border-2 border-red-600 bg-red-100 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-200">
+          <p className="font-semibold">⛔ 運用中のラインと重なるため、承認できません</p>
+          <ul className="mt-1 list-disc pl-4">
+            {opBlock.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+          <p className="mt-1">{OPERATION_BLOCK_HINT}</p>
+        </div>
+      )}
       {sameTarget.length > 0 && (
         <div className="mt-2 rounded border-2 border-red-600 bg-red-100 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-200">
           <p className="font-semibold">⛔ 同じ機器を対象とする点検が実施中のため、承認できません</p>

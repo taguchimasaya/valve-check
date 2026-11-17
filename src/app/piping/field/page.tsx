@@ -7,6 +7,7 @@ import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
 import { useMe } from "@/lib/auth";
 import { BLOCK_LABEL, isOwner, lineConflicts, startBlockKind, startBlocker } from "@/lib/piping/execRules";
+import { OPERATION_BLOCK_HINT, operationBlockers, operationContext } from "@/lib/piping/operationSafety";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
@@ -92,6 +93,8 @@ export default function FieldPage() {
   const plan = useMemo(() => (rawPlan && exec ? execPlan(rawPlan, exec) : null), [rawPlan, exec]);
   // 実際の弁状態の基準＝制御室で入力された運用状態（未入力なら待機状態）
   const operations = store?.operations;
+  // 安全機構：運用中のラインと重なる点検は開始できない（運用停止範囲の中なら可）
+  const opCtx = useMemo(() => operationContext(g, store), [g, store]);
   const overrides = store?.valveOverrides;
   const base = useMemo(
     () => currentValveState(g, operations ?? [], overrides ?? {}).valveState,
@@ -259,6 +262,11 @@ export default function FieldPage() {
     const blocker = startBlocker(store, p);
     if (blocker) {
       showFlash({ type: "err", text: blocker });
+      return;
+    }
+    const opBlock = operationBlockers(opCtx, p);
+    if (opBlock.length) {
+      showFlash({ type: "err", text: `運用中の範囲のため開始できません：${opBlock.join("／")}。${OPERATION_BLOCK_HINT}` });
       return;
     }
     // ほかの人の点検は見せないため、重なりは件数だけ知らせる（判断は制御室の承認で行う）
@@ -576,10 +584,12 @@ export default function FieldPage() {
                     </a>
                     <button
                       onClick={() => startPlan(p.id)}
-                      disabled={!approvalState(p, stages).complete || !!startBlocker(store!, p)}
+                      disabled={!approvalState(p, stages).complete || !!startBlocker(store!, p) || operationBlockers(opCtx, p).length > 0}
                       title={
                         startBlocker(store!, p)
                           ? startBlocker(store!, p)!
+                          : operationBlockers(opCtx, p).length
+                            ? `運用中の範囲のため開始できません：${operationBlockers(opCtx, p).join("／")}`
                           : approvalState(p, stages).complete
                             ? "制御室が承認すると記録を始められます"
                             : "最後まで承認されると開始できます（承認は ① で行います）"
@@ -588,7 +598,7 @@ export default function FieldPage() {
                     >
                       {(() => {
                         const kind = startBlockKind(store!, p);
-                        return kind ? BLOCK_LABEL[kind] : "点検開始";
+                        return kind ? BLOCK_LABEL[kind] : operationBlockers(opCtx, p).length ? "運用中のため不可" : "点検開始";
                       })()}
                     </button>
                     {isAdmin && (
@@ -653,7 +663,7 @@ export default function FieldPage() {
                       selectExec(previewExec.id);
                     }
                   : undefined
-                : approvalState(previewPlan, stages).complete && !startBlocker(store!, previewPlan)
+                : approvalState(previewPlan, stages).complete && !startBlocker(store!, previewPlan) && !operationBlockers(opCtx, previewPlan).length
                   ? () => {
                       setPreview(null);
                       startPlan(previewPlan.id);
