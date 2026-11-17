@@ -11,8 +11,7 @@ declare
     -- 既存の点検機能
     'equipment', 'checklist_templates', 'checklist_items', 'checklist_item_equipment',
     'inspection_sessions', 'inspection_results', 'step_notifications', 'step_start_notifications',
-    -- 配管系統図
-    'piping_store',
+    -- 配管系統図（piping_store は API だけが読み書きするため対象外：security_lockdown.sql）
     'piping_facilities', 'piping_diagram_versions', 'piping_diagram_areas', 'piping_diagram_nodes', 'piping_diagram_pipes',
     'piping_source_documents', 'piping_sheets', 'piping_pipe_specs', 'piping_nodes', 'piping_pipes',
     'piping_node_symbols', 'piping_pipe_geometries', 'piping_areas', 'piping_import_batches', 'piping_validation_issues'

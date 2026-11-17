@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireAuth, requireSite, rolesAtSite } from "@/lib/serverAuth";
+import { adminClient, requireAuth, requireSite, rolesAtSite } from "@/lib/serverAuth";
 import { can, deniedMessage, STORE_ACTION_PERMS } from "@/lib/roles";
 import { EMPTY_STORE, execPlan, recordKey, type PipingStore, type StoreAction } from "@/lib/piping/store";
 import { manualStepsOf, needsDayParams } from "@/lib/piping/workTypes";
@@ -88,6 +88,24 @@ const isMissingTable = (code?: string) => code === "42P01" || code === "PGRST205
 
 const TABLE_MISSING =
   "配管系統図の保存テーブル（piping_store）がありません。supabase/piping_store.sql を Supabase の SQL Editor で実行してください。";
+
+/**
+ * piping_store を読み書きする接続。
+ * 利用者の権限では piping_store を直接読み書きできないようにし（supabase/security_lockdown.sql）、
+ * この API がサーバー専用キー（service role）で読み書きする。API の確認（承認フロー・本人だけの操作など）を
+ * ブラウザから Supabase を直接呼んですり抜けられないようにするため。
+ * サーバー専用キーにまだ表の権限が無い（security_grant_service_role.sql の実行前）ときだけ、利用者の接続で読み書きする。
+ */
+let serviceReady = false;
+async function storeClient(userClient: SupabaseClient): Promise<SupabaseClient> {
+  const admin = adminClient();
+  if (admin instanceof Response) return userClient;
+  if (serviceReady) return admin;
+  const { error } = await admin.from("piping_store").select("id").limit(1);
+  if (error?.code === "42501") return userClient;
+  serviceReady = !error;
+  return admin;
+}
 
 async function loadDb(client: SupabaseClient, facility: string): Promise<PipingStore> {
   const { data, error } = await client.from("piping_store").select("data, version").eq("id", rowId(facility)).maybeSingle();
@@ -592,7 +610,7 @@ export async function GET(request: Request) {
     // 権限のある拠点（どこかの拠点で制御室の人は、ほかの拠点も表示だけ）
     const site = requireSite(auth, facility);
     if (site instanceof Response) return site;
-    return Response.json(BACKEND === "supabase" ? await loadDb(auth.client, facility) : await loadFile(facility));
+    return Response.json(BACKEND === "supabase" ? await loadDb(await storeClient(auth.client), facility) : await loadFile(facility));
   } catch (e) {
     return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
   }
@@ -617,7 +635,7 @@ export async function POST(request: Request) {
   let res: Response;
   if (BACKEND === "supabase") {
     try {
-      res = await updateDb(auth.client, facility, action, { name: auth.name, userId: auth.userId, roles });
+      res = await updateDb(await storeClient(auth.client), facility, action, { name: auth.name, userId: auth.userId, roles });
     } catch (e) {
       return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }

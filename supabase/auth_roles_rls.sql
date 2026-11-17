@@ -1,7 +1,7 @@
 -- 権限（ロール）による DB の読み書きの制限。auth_rls.sql（ログイン利用者だけ）の次の段階です。
 --
 -- 権限はアプリのユーザー管理（/admin/users）で付け、Supabase Auth の app_metadata.roles に保存されます。
--- ログインのトークン（JWT）に入るため、DB 側では auth.jwt() で読めます。未設定の利用者は作業者として扱います。
+-- ログインのトークン（JWT）に入るため、DB 側では auth.jwt() で読めます。未設定の利用者は権限なし（2026-11-17 変更。以前は作業者）。
 --   worker 作業者 / approver チームリーダー / manager G長 / control 制御室 / admin 管理者（すべて）
 --   2026-11-15：G長（manager）を追加。作業者・チームリーダーと同じ表に書き込める（承認は piping_store に保存）
 --
@@ -20,7 +20,7 @@
 --   2. 権限の変更はトークンの更新（最長1時間）までは DB 側に反映されない
 -- 存在しないテーブルは飛ばすので、何度実行しても問題ありません。元に戻すときは auth_rls.sql を実行してください。
 
--- ログイン中の利用者の権限（未設定なら作業者）
+-- ログイン中の利用者の権限（未設定なら権限なし）
 create or replace function public.app_roles()
 returns text[]
 language sql
@@ -30,7 +30,7 @@ as $$
   select case
     when jsonb_typeof(auth.jwt() -> 'app_metadata' -> 'roles') = 'array'
       then array(select jsonb_array_elements_text(auth.jwt() -> 'app_metadata' -> 'roles'))
-    else array['worker']
+    else array[]::text[]
   end;
 $$;
 
@@ -58,7 +58,6 @@ declare
     'step_notifications', '{worker,approver,manager,control}',
     'step_start_notifications', '{worker,approver,manager,control}',
     'inspection_start_notifications', '{worker,approver,manager,control}',
-    'piping_store', '{worker,approver,manager,control}',
     'piping_facilities', '{}',
     'piping_diagram_versions', '{}',
     'piping_diagram_areas', '{}',

@@ -80,7 +80,8 @@ export function envAdminIds(): Set<string> {
 }
 
 /**
- * 利用者の権限：app_metadata.roles。未設定の利用者は作業者として扱う。
+ * 利用者の権限：app_metadata.roles。未設定の利用者は権限なし（何もできない）として扱う。
+ * （以前は作業者として扱っていたが、Supabase の新規登録で作られたアカウントが作業者になってしまうため変更した）
  * ADMIN_LOGIN_IDS に書かれた利用者は、保存値にかかわらず管理者（管理者が誰もいなくなるのを防ぐ）。
  */
 export function rolesOf(user: Pick<User, "email" | "app_metadata">): {
@@ -92,7 +93,7 @@ export function rolesOf(user: Pick<User, "email" | "app_metadata">): {
   const stored = parseRoles(user.app_metadata?.roles);
   const siteRoles = parseSiteRoles(user.app_metadata?.siteRoles);
   const envAdmin = envAdminIds().has(loginIdOf(user.email));
-  const roles = [...(stored ?? (siteRoles ? [] : ["worker"]))] as Role[];
+  const roles = [...(stored ?? [])] as Role[];
   if (envAdmin && !roles.includes("admin")) roles.push("admin");
   return { roles, siteRoles, envAdmin, stored };
 }

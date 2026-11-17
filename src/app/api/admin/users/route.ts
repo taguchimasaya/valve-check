@@ -31,7 +31,7 @@ export type AdminUser = {
   roles: Role[];
   /** 拠点ごとの権限（null なら roles が全拠点に効く） */
   siteRoles: SiteRoles | null;
-  /** 権限が未設定（作業者として扱っている） */
+  /** 権限が未設定（何もできない） */
   rolesUnset: boolean;
   envAdmin: boolean;
   disabled: boolean;

@@ -12,7 +12,7 @@
 -- 書き込みの制限（読み取りは今までどおりログイン利用者全員）：
 --   checklist_templates ほか2表・inspection_sessions   点検の実施（checklist）
 --   inspection_results・各種通知                       点検の実施・制御室（checklist / control）
---   piping_store                                      作成・点検・承認・制御室・ルール・系統図のどれか（操作ごとの確認は /api/piping）
+--   piping_store                                      利用者は読み書きできない（API がサーバー専用キーで読み書き：security_lockdown.sql）
 --   piping_ の系統図データ                              系統図データ管理（diagram）
 --   equipment                                         追加・削除は機器マスター、更新（QR 発行済みの記録）は QR・機器マスター
 --   equipment_identifiers（NFC タグ）                  QR コード・NFC タグ（qr）・機器マスター
@@ -107,7 +107,6 @@ declare
     'step_notifications', '{checklist,control}',
     'step_start_notifications', '{checklist,control}',
     'inspection_start_notifications', '{checklist,control}',
-    'piping_store', '{create,checklist,approveLeader,approveManager,approveControl,control,rules,diagram}',
     'piping_facilities', '{diagram}',
     'piping_diagram_versions', '{diagram}',
     'piping_diagram_areas', '{diagram}',

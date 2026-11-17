@@ -14,10 +14,8 @@ create table if not exists piping_store (
 
 insert into piping_store (id) values ('main') on conflict (id) do nothing;
 
-grant usage on schema public to anon, authenticated;
-grant select, insert, update on piping_store to anon, authenticated;
-
--- 既存テーブルと同じく、ログイン機能を作るまでの間は匿名キーからの読み書きを許可する。
+-- 2026-11-17：読み書きはアプリの API（/api/piping）がサーバー専用キー（service role）で行う。
+-- 利用者（anon / authenticated）には読み書きの権限を与えない（API の確認をすり抜けられないようにするため）。
+-- 詳しくは supabase/security_lockdown.sql。
+grant select, insert, update, delete on piping_store to service_role;
 alter table piping_store enable row level security;
-drop policy if exists "demo: allow all on piping_store" on piping_store;
-create policy "demo: allow all on piping_store" on piping_store for all using (true) with check (true);

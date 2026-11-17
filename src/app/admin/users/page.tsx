@@ -614,7 +614,7 @@ export default function UsersPage() {
                             lockAdmin={u.envAdmin}
                             disabled={u.disabled}
                           />
-                          {u.rolesUnset && <span className="text-[10px] text-amber-700">権限が未設定のため、全拠点で作業者として扱っています</span>}
+                          {u.rolesUnset && <span className="text-[10px] text-amber-700">権限が未設定のため、何もできません（権限を付けてください）</span>}
                           {!u.siteRoles && !u.rolesUnset && <span className="block text-[10px] text-amber-700">拠点ごとに分けるまでは、全拠点で同じ権限です</span>}
                         </td>
                         <td className="py-2 pr-2 text-xs text-zinc-500">{fmt(u.lastSignInAt)}</td>
