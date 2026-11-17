@@ -6,7 +6,7 @@ import NfcScanPanel from "@/components/NfcScanPanel";
 import { approvalStages, approvalState } from "@/lib/piping/approval";
 import { can } from "@/lib/roles";
 import { useMe } from "@/lib/auth";
-import { isOwner, lineConflicts, startBlocker } from "@/lib/piping/execRules";
+import { BLOCK_LABEL, isOwner, lineConflicts, startBlockKind, startBlocker } from "@/lib/piping/execRules";
 import { PERIOD_MAX, periodOptions, planEquipment } from "@/lib/piping/period";
 import PipingDiagram, {
   DiagramLegend,
@@ -308,7 +308,8 @@ export default function FieldPage() {
     const execHit = (e: Execution) => !q || normalize(e.planName).includes(q) || planHit(planById.get(e.planId));
     // 一覧に出すのは自分の点検だけ（図面への反映は ③・トップですべての点検を出す）
     const mine = executions.filter((e) => isOwner(e, myId));
-    const running = mine.filter((e) => (e.status === "in_progress" || e.status === "pending") && execHit(e));
+    // 却下された点検も、本人が確認するまで一覧に残す
+    const running = mine.filter((e) => (e.status === "in_progress" || e.status === "pending" || e.status === "rejected") && execHit(e));
     const completed = mine.filter((e) => e.status === "completed" && execHit(e));
     // 機器名×周期の絞り込み（何も入れなければ全件）
     const equipOf = new Map(plans.map((p) => [p.id, planEquipment(p, g)]));
@@ -338,6 +339,15 @@ export default function FieldPage() {
       showFlash({ type: "info", text: `「${p.name}」を削除しました` });
     }
     async function deleteExec(e: Execution) {
+      // 却下を確認して一覧から消す
+      if (e.status === "rejected") {
+        try {
+          await act({ action: "deleteExecution", execId: e.id });
+        } catch (err) {
+          showFlash({ type: "err", text: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
       const pending = e.status === "pending";
       const msg = pending
         ? `点検「${e.planName}」の開始の申請を取り消しますか？`
@@ -362,20 +372,30 @@ export default function FieldPage() {
         <li
           key={e.id}
           className={`rounded-lg border p-3 ${
-            tone === "running"
+            e.status === "rejected"
+              ? "border-red-400 bg-red-50 dark:border-red-800 dark:bg-red-950"
+              : tone === "running"
               ? "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950"
               : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
           }`}
         >
           <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.planName}</p>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            {e.status === "pending"
+            {e.status === "rejected"
+              ? "制御室で却下 ／ 点検開始："
+              : e.status === "pending"
               ? "制御室の開始の承認待ち ／ 申請："
               : tone === "running"
                 ? `現在工程：${p?.steps[e.currentStep] ?? "—"} ／ 開始：`
                 : "完了 ／ 開始："}
             {new Date(e.startedAt).toLocaleString("ja-JP")}
           </p>
+          {e.status === "rejected" && (
+            <p className="mt-1 text-sm font-semibold text-red-700 dark:text-red-300">
+              ✖ 点検開始は却下されました：{e.rejectReason ?? "（理由なし）"}
+              {e.rejectedBy && <span className="ml-1 text-xs font-normal">（{e.rejectedBy}）</span>}
+            </p>
+          )}
           {e.status === "pending" && (
             <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
               ⏳ 制御室が当日のタンク・ポンプの入力と開始の承認をすると、点検を始められます。
@@ -409,7 +429,7 @@ export default function FieldPage() {
               onClick={() => deleteExec(e)}
               className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-zinc-900 dark:text-red-400"
             >
-              {e.status === "pending" ? "申請を取り消す" : "削除"}
+              {e.status === "rejected" ? "確認した（一覧から消す）" : e.status === "pending" ? "申請を取り消す" : "削除"}
             </button>
           </div>
         </li>
@@ -442,7 +462,7 @@ export default function FieldPage() {
           </div>
 
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【自分の点検（承認待ち・点検中）】</p>
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【自分の点検（承認待ち・点検中・却下）】</p>
             {running.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">{q ? "該当する点検中の作業はありません。" : "点検中の作業はありません。"}</p>
             ) : (
@@ -566,7 +586,10 @@ export default function FieldPage() {
                       }
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {startBlocker(store!, p) ? "実施中" : "点検開始"}
+                      {(() => {
+                        const kind = startBlockKind(store!, p);
+                        return kind ? BLOCK_LABEL[kind] : "点検開始";
+                      })()}
                     </button>
                     {isAdmin && (
                       <button

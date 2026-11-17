@@ -165,6 +165,10 @@ function applyAs(store: PipingStore, a: StoreAction, who: Actor): string | null 
     const exec = store.executions.find((e) => e.id === a.execId);
     if (exec) exec.approvedBy = actor;
   }
+  if (a.action === "rejectStart") {
+    const exec = store.executions.find((e) => e.id === a.execId);
+    if (exec) exec.rejectedBy = actor;
+  }
   if (a.action === "approvePlan") {
     const sign = store.plans.find((p) => p.id === a.id)?.approvals?.[a.stage];
     if (sign) Object.assign(sign, { by: actor, byId: who.userId });
@@ -234,6 +238,7 @@ function execCheck(store: PipingStore, a: StoreAction, who: Actor): string | nul
       const control = a.action === "markStepDone" && can(who.roles, "control");
       if (!control && !isOwner(exec, who.userId)) return "この点検は開始した本人だけが操作できます";
       if (exec.status === "pending") return "制御室の開始の承認を待っています（承認されると記録できます）";
+      if (exec.status === "rejected") return "この点検開始は制御室で却下されました";
       if (exec.status !== "in_progress") return "この点検は完了しています";
       return null;
     }
@@ -350,7 +355,11 @@ function apply(store: PipingStore, a: StoreAction): string | null {
     case "rejectStart": {
       const exec = store.executions.find((e) => e.id === a.execId);
       if (!exec) return "点検が見つかりません";
-      store.executions = store.executions.filter((e) => e.id !== a.execId);
+      // 本人に理由を知らせるため、却下として残す（本人が確認すると消える）
+      exec.status = "rejected";
+      exec.rejectedAt = now;
+      exec.rejectReason = String(a.reason).trim().slice(0, 200);
+      exec.events.unshift({ at: now, type: "info", text: `制御室が点検開始を却下しました：${exec.rejectReason}` });
       store.log.unshift({
         at: now,
         type: "info",

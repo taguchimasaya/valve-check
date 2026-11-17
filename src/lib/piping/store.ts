@@ -40,8 +40,12 @@ export type Execution = {
   overlapAck?: string[];
   /** 現在の工程（0=作業前 は確認不要のため、1から開始） */
   currentStep: number;
-  /** pending＝開始の申請中（制御室の承認待ち）、in_progress＝点検中、completed＝完了 */
-  status: "pending" | "in_progress" | "completed";
+  /** pending＝開始の申請中（制御室の承認待ち）、in_progress＝点検中、completed＝完了、rejected＝制御室が却下（本人が確認するまで残す） */
+  status: "pending" | "in_progress" | "completed" | "rejected";
+  /** 却下の日時・人・理由 */
+  rejectedAt?: string;
+  rejectedBy?: string;
+  rejectReason?: string;
   /** key: `${stepIndex}:${code}` */
   records: Record<string, ValveRecord>;
   events: ExecEvent[];
@@ -89,7 +93,7 @@ export type StoreAction =
   | { action: "startExecution"; planId: string; id: string }
   /** 制御室が開始を承認する。ラインが重なる点検があるときは ackOverlap が要る */
   | { action: "approveStart"; execId: string; ackOverlap?: boolean }
-  /** 制御室が点検開始を却下する（申請は消え、制御室の記録に残る） */
+  /** 制御室が点検開始を却下する（理由つきで本人の一覧に残り、本人が確認すると消える。制御室の記録にも残る） */
   | { action: "rejectStart"; execId: string; reason: string }
   | { action: "setOutage"; key: OutageKey; on: boolean; note?: string }
   | { action: "clearOutages" }

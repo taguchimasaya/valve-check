@@ -81,15 +81,24 @@ export function targetConflicts(store: Pick<PipingStore, "executions" | "plans">
   return out;
 }
 
+/** 点検を開始できない種類：same＝同じチェックリストの点検が実施中、target＝同じ機器を対象とする別の点検が実施中 */
+export function startBlockKind(store: Pick<PipingStore, "executions" | "plans">, plan: SavedPlan, exceptExecId?: string): "same" | "target" | null {
+  if (activeExecOfPlan(store, plan.id, exceptExecId)) return "same";
+  if (targetConflicts(store, plan, exceptExecId).length) return "target";
+  return null;
+}
+
+/** 開始できない種類の短い表示（② のボタン） */
+export const BLOCK_LABEL = { same: "実施中", target: "対象機器を点検中" } as const;
+
 /**
  * 点検を開始できない理由（同じチェックリスト、または同じ対象の点検が申請中・点検中）。開始できるなら null。
  * 作業者には、だれの・どの点検かは知らせない。
  */
 export function startBlocker(store: Pick<PipingStore, "executions" | "plans">, plan: SavedPlan, exceptExecId?: string): string | null {
-  if (activeExecOfPlan(store, plan.id, exceptExecId)) return "この点検はほかの作業者が実施中のため、開始できません（終わるまでお待ちください）";
-  if (targetConflicts(store, plan, exceptExecId).length) {
-    return "同じ機器を対象とする点検がほかで実施中のため、開始できません（終わるまでお待ちください）";
-  }
+  const kind = startBlockKind(store, plan, exceptExecId);
+  if (kind === "same") return "この点検はほかの作業者が実施中のため、開始できません（終わるまでお待ちください）";
+  if (kind === "target") return "同じ機器を対象とする別の点検が実施中のため、開始できません（その点検が終わるまでお待ちください）";
   return null;
 }
 
