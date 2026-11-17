@@ -1552,14 +1552,6 @@ export default function PlannerPage() {
                         ) : (
                           <span className="text-[11px] text-zinc-500">② で取り込み直す</span>
                         )}
-                        <button
-                          onClick={() => {
-                            if (confirm(`「${p.name}」を削除しますか？（元に戻せません）`)) act({ action: "deletePlan", id: p.id });
-                          }}
-                          className="text-xs text-red-600"
-                        >
-                          削除
-                        </button>
                       </div>
                       <div className="mt-0.5">
                         <PlanApproval plan={p} stages={approvalStages(store?.rules)} />

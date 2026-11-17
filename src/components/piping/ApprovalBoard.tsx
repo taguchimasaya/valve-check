@@ -133,6 +133,19 @@ export default function ApprovalBoard({
                   差し戻す
                 </button>
               )}
+              {/* チェックリストの削除は管理者だけ */}
+              {me?.roles.includes("admin") && (
+                <button
+                  onClick={() => {
+                    if (confirm(`チェックリスト「${p.name}」を削除しますか？\nこのチェックリストの点検記録も削除されます（元に戻せません）`)) {
+                      run(() => act({ action: "deletePlan", id: p.id }), `「${p.name}」を削除しました`);
+                    }
+                  }}
+                  className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
+                >
+                  削除
+                </button>
+              )}
             </li>
           ))}
         </ul>

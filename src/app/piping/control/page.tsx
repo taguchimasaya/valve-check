@@ -22,6 +22,7 @@ import { outageDefsFor } from "@/lib/piping/outages";
 import { OUTAGE_COLOR } from "@/lib/piping/live";
 import DayParamsPicker from "@/components/piping/DayParamsPicker";
 import StartRequests from "@/components/piping/StartRequests";
+import PlanPreview from "@/components/piping/PlanPreview";
 import { manualStepLabel, needsDayParams } from "@/lib/piping/workTypes";
 import { DEFAULT_FACILITY, useDiagramInfo, useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import { isStepCompleteAudioEnabled, isValveActionAudioEnabled, speak } from "@/lib/audioSettings";
@@ -78,6 +79,8 @@ export default function ControlPage() {
   // 図面クリック時の動作：確認（現場操作の確認）／弁操作（オペレーターによる開閉変更）
   const [clickMode, setClickMode] = useState<"confirm" | "operate">("confirm");
   const [valveDialog, setValveDialog] = useState<string | null>(null);
+  // 作業名をクリックして開くチェックリストのプレビュー（点検の ID）
+  const [previewExecId, setPreviewExecId] = useState<string | null>(null);
 
   const operations = useMemo(() => store?.operations ?? [], [store?.operations]);
   const overrides = useMemo(() => store?.valveOverrides ?? {}, [store?.valveOverrides]);
@@ -396,7 +399,7 @@ export default function ControlPage() {
           {/* 点検状況 */}
           <aside className="space-y-3">
             <Panel title={`点検の開始の申請（${(store?.executions ?? []).filter((e) => e.status === "pending").length}）`}>
-              {store ? <StartRequests graph={g} store={store} base={opState.valveState} act={act} /> : null}
+              {store ? <StartRequests graph={g} store={store} base={opState.valveState} act={act} onPreview={setPreviewExecId} /> : null}
             </Panel>
             <Panel title={`点検中の作業（${running.length}）`}>
               {running.length === 0 && <p className="text-sm text-zinc-400">点検中の作業はありません。</p>}
@@ -423,7 +426,13 @@ export default function ControlPage() {
                           title="図面に表示"
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold">{e.planName}</p>
+                          <button
+                            onClick={() => setPreviewExecId(e.id)}
+                            title="チェックリストのプレビュー（工程ごとの操作・次の工程）を開く"
+                            className="block max-w-full truncate text-left text-sm font-semibold text-sky-800 underline decoration-dotted underline-offset-2 hover:text-sky-600 dark:text-sky-300"
+                          >
+                            {e.planName}
+                          </button>
                           {e.ownerName && <p className="text-[11px] text-zinc-500">担当：{e.ownerName}</p>}
                           <p className="text-xs text-zinc-500">
                             工程：{plan?.steps[e.currentStep]}
@@ -525,6 +534,23 @@ export default function ControlPage() {
           </aside>
         </div>
       </div>
+      {(() => {
+        // 当日の選択（タンク・ポンプ・充填元）で加えた行も重ねて、今の工程から表示する
+        const pe = previewExecId ? store?.executions.find((x) => x.id === previewExecId) : undefined;
+        const raw = pe ? store?.plans.find((p) => p.id === pe.planId) : undefined;
+        if (!pe || !raw) return null;
+        return (
+          <PlanPreview
+            graph={g}
+            plan={execPlan(raw, pe)}
+            exec={pe}
+            base={opState.valveState}
+            onClose={() => setPreviewExecId(null)}
+            startLabel=""
+            pdfHref={`/piping/print?exec=${pe.id}`}
+          />
+        );
+      })()}
       {valveDialog && (
         <ValveDialog
           name={g.nodeById.get(valveDialog)!.name}

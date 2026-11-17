@@ -207,6 +207,7 @@ function approvalCheck(store: PipingStore, a: StoreAction, who: Actor): string |
     // 同じ点検は同時にできない（だれの点検かは知らせない）
     if (plan && activeExecOfPlan(store, plan.id)) return "この点検はほかの作業者が開始しているため、開始できません（終わるまでお待ちください）";
   }
+  if (a.action === "deletePlan" && !who.roles.includes("admin")) return "チェックリストの削除は管理者だけができます";
   if (a.action === "savePlan") {
     const dup = duplicatePlan(store.plans, a.plan);
     if (dup) {
@@ -301,6 +302,10 @@ function apply(store: PipingStore, a: StoreAction): string | null {
       return null;
     }
     case "deletePlan":
+      // 管理者だけ（approvalCheck で確認済み）。点検中・承認待ちの点検があるときは消さない
+      if (store.executions.some((e) => e.planId === a.id && (e.status === "pending" || e.status === "in_progress"))) {
+        return "このチェックリストは点検中（または承認待ち）のため削除できません";
+      }
       store.plans = store.plans.filter((p) => p.id !== a.id);
       store.executions = store.executions.filter((e) => e.planId !== a.id);
       return null;

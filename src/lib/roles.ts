@@ -153,7 +153,8 @@ export function canOpen(roles: readonly Role[] | null | undefined, pathname: str
 export const STORE_ACTION_PERMS: Record<string, Permission[]> = {
   // チェックリストの作成・承認依頼（作業者）
   savePlan: ["create"],
-  deletePlan: ["create"],
+  // チェックリストの削除は管理者だけ（/api/piping で管理者のロールも確かめる）
+  deletePlan: ["users"],
   setPlanPeriod: ["create"],
   // 実施
   startExecution: ["checklist"],

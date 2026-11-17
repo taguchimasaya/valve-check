@@ -53,7 +53,10 @@ export default function FieldPage() {
   // 当日のタンク・ポンプ・充填元の入力は制御室だけ
   const canControl = can(siteRoles, "control");
   // 点検は開始した本人のもの（ほかの人の点検は一覧に出さず、開けない）
-  const myId = useMe()?.userId ?? null;
+  const me = useMe();
+  const myId = me?.userId ?? null;
+  // チェックリストの削除は管理者だけ
+  const isAdmin = !!me?.roles.includes("admin");
   const stages = useMemo(() => approvalStages(store?.rules), [store?.rules]);
   const [execId, selectExec] = useLocalValue(EXEC_KEY);
   const [view, setView] = useState<"diagram" | "table">("diagram");
@@ -249,7 +252,7 @@ export default function FieldPage() {
   }
   useEffect(() => () => stopScanner(), []);
 
-  // 点検の開始を申請する（制御室が承認すると点検中になる）
+  // 点検開始：制御室へ開始の承認を求める（制御室が承認すると点検中になる）
   async function startPlan(planId: string) {
     const p = store?.plans.find((x) => x.id === planId);
     if (!store || !p) return;
@@ -259,13 +262,13 @@ export default function FieldPage() {
     }
     // ほかの人の点検は見せないため、重なりは件数だけ知らせる（判断は制御室の承認で行う）
     const n = lineConflicts(store, p).length;
-    const msg = `「${p.name}」の開始を申請しますか？\n制御室が承認すると点検を始められます。${
+    const msg = `「${p.name}」の点検を開始しますか？\n制御室が承認すると記録を始められます。${
       n ? `\n\n⚠ ほかの点検（${n}件）と同じラインを使います。制御室が重なりを確認して判断します。` : ""
     }`;
     if (!confirm(msg)) return;
     try {
       await act({ action: "startExecution", planId, id: newId() });
-      showFlash({ type: "info", text: `「${p.name}」の開始を申請しました。制御室の承認をお待ちください` });
+      showFlash({ type: "info", text: `「${p.name}」の点検開始を制御室へ送りました。制御室の承認をお待ちください` });
     } catch (e) {
       showFlash({ type: "err", text: e instanceof Error ? e.message : String(e) });
     }
@@ -324,7 +327,12 @@ export default function FieldPage() {
       const n = executions.filter((e) => e.planId === p.id).length;
       const msg = `チェックリスト「${p.name}」を削除しますか？${n ? `\nこのチェックリストの点検記録（${n}件）も削除されます。` : ""}\n（元に戻せません）`;
       if (!confirm(msg)) return;
-      await act({ action: "deletePlan", id: p.id });
+      try {
+        await act({ action: "deletePlan", id: p.id });
+      } catch (err) {
+        showFlash({ type: "err", text: err instanceof Error ? err.message : String(err) });
+        return;
+      }
       setPreview(null);
       showFlash({ type: "info", text: `「${p.name}」を削除しました` });
     }
@@ -433,7 +441,7 @@ export default function FieldPage() {
           </div>
 
           <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【自分の点検（申請中・点検中）】</p>
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">【自分の点検（承認待ち・点検中）】</p>
             {running.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">{q ? "該当する点検中の作業はありません。" : "点検中の作業はありません。"}</p>
             ) : (
@@ -552,14 +560,14 @@ export default function FieldPage() {
                         activeExecOfPlan(store!, p.id)
                           ? "この点検は実施中のため開始できません"
                           : approvalState(p, stages).complete
-                            ? "開始を申請し、制御室の承認で点検を始めます"
+                            ? "制御室が承認すると記録を始められます"
                             : "最後まで承認されると開始できます（承認は ① で行います）"
                       }
                       className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {activeExecOfPlan(store!, p.id) ? "実施中" : "開始を申請"}
+                      {activeExecOfPlan(store!, p.id) ? "実施中" : "点検開始"}
                     </button>
-                    {canCreate && (
+                    {isAdmin && (
                       <button
                         onClick={() => deletePlan(p)}
                         className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-900 dark:text-red-400"
@@ -628,11 +636,16 @@ export default function FieldPage() {
                     }
                   : undefined
             }
-            startLabel={previewExec ? "この点検を再開" : "この内容で開始を申請"}
+            startLabel={previewExec ? "この点検を再開" : "この内容で点検開始"}
+            // 点検記録は本人、チェックリストは管理者だけが削除できる
             onDelete={
-              (previewExec && isOwner(previewExec, myId)) || (!previewExec && canCreate)
-                ? () => (previewExec ? deleteExec(previewExec) : deletePlan(previewPlan))
-                : undefined
+              previewExec
+                ? isOwner(previewExec, myId)
+                  ? () => deleteExec(previewExec)
+                  : undefined
+                : isAdmin
+                  ? () => deletePlan(previewPlan)
+                  : undefined
             }
             deleteLabel={previewExec ? "この点検記録を削除" : "チェックリストを削除"}
           />

@@ -10,25 +10,30 @@ import { needsDayParams } from "@/lib/piping/workTypes";
 import FillSupplyPicker from "./FillSupplyPicker";
 import DayParamsPicker from "./DayParamsPicker";
 
-// ③ 制御室：現場から届いた点検の開始の申請。当日のタンク・ポンプを入力し、ラインの重なりを確かめて承認する。
+// ③ 制御室：現場で「点検開始」が押された点検の承認。
+// タンク・ポンプを選ぶ作業は、選んで「この内容で開始を承認」を押すだけ（入力と承認を1回で行う）。
+// タンク・ポンプを選ばない作業は「開始を承認」だけ。ラインが重なる点検があれば、確認のチェックが要る。
 
 export default function StartRequests({
   graph,
   store,
   base,
   act,
+  onPreview,
 }: {
   graph: Graph;
   store: PipingStore;
   base: Record<string, ValveState>;
   act: (a: StoreAction) => Promise<unknown>;
+  /** 作業名をクリックしたときにチェックリストのプレビューを開く */
+  onPreview?: (execId: string) => void;
 }) {
   const pending = store.executions.filter((e) => e.status === "pending");
   if (!pending.length) return <p className="text-sm text-zinc-400">開始の申請はありません。</p>;
   return (
     <ul className="space-y-3">
       {pending.map((e) => (
-        <Request key={e.id} graph={graph} store={store} exec={e} base={base} act={act} />
+        <Request key={e.id} graph={graph} store={store} exec={e} base={base} act={act} onPreview={onPreview} />
       ))}
     </ul>
   );
@@ -40,12 +45,14 @@ function Request({
   exec,
   base,
   act,
+  onPreview,
 }: {
   graph: Graph;
   store: PipingStore;
   exec: Execution;
   base: Record<string, ValveState>;
   act: (a: StoreAction) => Promise<unknown>;
+  onPreview?: (execId: string) => void;
 }) {
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,7 +61,8 @@ function Request({
   if (!plan) return null;
   const conflicts = lineConflicts(store, plan, exec.id);
   const needDay = needsDayParams(plan);
-  const waitingDay = needDay && !exec.dayParams;
+  const blocked = conflicts.length > 0 && !ack;
+  const approve = () => act({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack });
 
   async function run(a: StoreAction) {
     setBusy(true);
@@ -70,15 +78,20 @@ function Request({
 
   return (
     <li className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 dark:bg-amber-950">
-      <p className="text-sm font-semibold">{exec.planName}</p>
+      {onPreview ? (
+        <button
+          onClick={() => onPreview(exec.id)}
+          title="チェックリストのプレビューを開く"
+          className="text-left text-sm font-semibold text-sky-800 underline decoration-dotted underline-offset-2 hover:text-sky-600 dark:text-sky-300"
+        >
+          {exec.planName}
+        </button>
+      ) : (
+        <p className="text-sm font-semibold">{exec.planName}</p>
+      )}
       <p className="text-xs text-zinc-600 dark:text-zinc-400">
         申請：{exec.ownerName ?? "—"}（{new Date(exec.startedAt).toLocaleString("ja-JP")}）
       </p>
-      {needDay && (
-        <div className="mt-2">
-          <DayParamsPicker graph={graph} plan={plan} exec={exec} base={base} act={act} compact />
-        </div>
-      )}
       {needsFillSupply(plan) && (
         <div className="mt-2">
           <FillSupplyPicker graph={graph} plan={plan} exec={exec} base={base} act={act} compact />
@@ -99,16 +112,34 @@ function Request({
           </label>
         </div>
       )}
+      {needDay && (
+        <div className="mt-2">
+          <DayParamsPicker
+            graph={graph}
+            plan={plan}
+            exec={exec}
+            base={base}
+            act={act}
+            compact
+            onSubmit={async () => {
+              await approve();
+            }}
+            submitLabel="この内容で開始を承認"
+            submitDisabled={blocked}
+          />
+        </div>
+      )}
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       <div className="mt-2 flex gap-2">
-        <button
-          onClick={() => run({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack })}
-          disabled={busy || waitingDay || (conflicts.length > 0 && !ack)}
-          title={waitingDay ? "当日のタンク・ポンプを入力してから承認してください" : undefined}
-          className="rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
-        >
-          開始を承認
-        </button>
+        {!needDay && (
+          <button
+            onClick={() => run({ action: "approveStart", execId: exec.id, ackOverlap: conflicts.length > 0 && ack })}
+            disabled={busy || blocked}
+            className="rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
+          >
+            開始を承認
+          </button>
+        )}
         <button
           onClick={() => {
             const reason = prompt(`「${exec.planName}」の開始の申請を断る理由`);
@@ -120,7 +151,7 @@ function Request({
           断る
         </button>
       </div>
-      {waitingDay && <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">当日のタンク・ポンプを入力すると承認できます。</p>}
+      {needDay && <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">当日のタンク・ポンプを選んで「この内容で開始を承認」を押してください。</p>}
     </li>
   );
 }

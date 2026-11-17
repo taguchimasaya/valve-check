@@ -36,11 +36,17 @@ type Props = {
   compact?: boolean;
   /** 表示だけ（当日の入力は制御室だけが行う） */
   readOnly?: boolean;
+  /**
+   * 入力のあとに続けて行う操作（③ の開始の承認）。指定すると、ボタンは「入力（変わっていれば）→ この操作」を1回で行う
+   */
+  onSubmit?: () => Promise<void>;
+  submitLabel?: string;
+  submitDisabled?: boolean;
 };
 
 const yardOf = (tank: string) => tank.slice(2, 3);
 
-export default function DayParamsPicker({ graph: g, plan, exec, base, act, compact, readOnly }: Props) {
+export default function DayParamsPicker({ graph: g, plan, exec, base, act, compact, readOnly, onSubmit, submitLabel, submitDisabled }: Props) {
   // ユーザー定義の作業で計算の部品「循環経路」を使うものは、燃料末端部作業と同じ選び方
   const custom = workTypeOf(plan) === "custom";
   const type = isFlushLike(plan) ? "flush" : isTransferLike(plan) ? "tankIsolation" : workTypeOf(plan);
@@ -92,9 +98,10 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
   const current = exec.dayParams;
   const changed = JSON.stringify(current) !== JSON.stringify(params);
 
-  async function apply() {
+  /** 当日の選択を保存する。保存できたら true */
+  async function save(): Promise<boolean> {
     setError(null);
-    if (!params) return;
+    if (!params) return false;
     // ユーザー定義の作業：作成時の作業の定義（工程・ルール・計算の部品）で作り直す
     if (custom && plan.customType) {
       const c =
@@ -103,23 +110,24 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
           : buildCustomChecklist(g, plan.customType, plan.isolationTank ?? null, base, { transferDay: params });
       if (c.error) {
         setError(c.error);
-        return;
+        return false;
       }
       setSaving(true);
       try {
         await act({ action: "setDayParams", execId: exec.id, params, rows: c.rows, stepNotes: c.stepNotes, stepRoutes: c.stepRoutes });
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return false;
       } finally {
         setSaving(false);
       }
-      return;
     }
     // 作成時のルール（⑤）で作り直す
     const r = buildDayChecklist(g, plan, params, base, plan.appliedRules ?? {});
     if (r.error) {
       setError(r.error);
-      return;
+      return false;
     }
     const blocks = plan.appliedRules?.blocks ?? [];
     if (blocks.length) {
@@ -133,6 +141,25 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
     setSaving(true);
     try {
       await act({ action: "setDayParams", execId: exec.id, params, rows: r.rows, stepNotes: r.stepNotes, stepRoutes: r.stepRoutes });
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function apply() {
+    if (!onSubmit) {
+      await save();
+      return;
+    }
+    // 変わっていれば先に保存し、続けて承認する
+    if (changed && !(await save())) return;
+    setSaving(true);
+    try {
+      await onSubmit();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -188,10 +215,10 @@ export default function DayParamsPicker({ graph: g, plan, exec, base, act, compa
           )}
           <button
             onClick={apply}
-            disabled={saving || !params || !changed}
-            className="rounded bg-purple-700 px-3 py-1 font-semibold text-white hover:bg-purple-600 disabled:opacity-40"
+            disabled={saving || !params || (onSubmit ? !!submitDisabled : !changed)}
+            className={`rounded px-3 py-1 font-semibold text-white disabled:opacity-40 ${onSubmit ? "bg-emerald-700 hover:bg-emerald-600" : "bg-purple-700 hover:bg-purple-600"}`}
           >
-            {current ? "変更する" : "この内容で設定"}
+            {onSubmit ? submitLabel ?? "この内容で決定" : current ? "変更する" : "この内容で設定"}
           </button>
         </div>
       ) : (
