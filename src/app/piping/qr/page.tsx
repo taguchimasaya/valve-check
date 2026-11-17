@@ -5,6 +5,7 @@ import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
+import { QrImageExport } from "@/components/QrImageExport";
 import { NfcCardInfo, NfcTagPanel, NfcTagProvider } from "@/components/piping/NfcTagManager";
 
 // 配管系統図で使っている弁（仕切弁・ドレン弁・圧力計元弁）のQRコード印刷シート。
@@ -127,13 +128,23 @@ export default function PipingQrPage() {
               印刷（{list.length}件）
             </button>
           </div>
+          <div className="mt-3">
+            <QrImageExport
+              items={list.map((n) => ({ code: n.label, name: n.name, sub: `${n.area}・${KIND_LABEL[n.kind]}` }))}
+              zipName="系統図QR"
+            />
+          </div>
           <NfcTagPanel />
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 print:mt-0 print:grid-cols-3 print:gap-3">
           {list.map((n) => (
             <div key={n.id} className="flex flex-col items-center rounded-lg border border-zinc-300 p-4 text-center break-inside-avoid">
-              {origin && <QRCodeSVG value={`${origin}/inspect/${n.label}`} size={120} />}
+              {origin && (
+                <div data-qr-export={n.label}>
+                  <QRCodeSVG value={`${origin}/inspect/${n.label}`} size={120} />
+                </div>
+              )}
               <p className="mt-2 text-sm font-semibold text-zinc-900">{n.label}</p>
               <p className="text-xs text-zinc-600">{n.name}</p>
               <p className="text-[10px] text-zinc-400">

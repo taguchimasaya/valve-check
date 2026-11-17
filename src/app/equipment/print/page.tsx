@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useHierarchyFilter } from "@/lib/useHierarchyFilter";
 import { useMe } from "@/lib/auth";
 import { can } from "@/lib/roles";
+import { QrImageExport } from "@/components/QrImageExport";
 
 type EquipmentRecord = {
   id: string;
@@ -94,8 +95,8 @@ function EquipmentPrintContent() {
     <div className="min-h-screen bg-white px-6 py-8">
       <div className="mx-auto max-w-4xl print:max-w-none">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
-          <Link href={isAdmin ? "/equipment" : "/"} className="text-sm text-zinc-500 hover:text-zinc-700">
-            {isAdmin ? "← 機器マスター管理に戻る" : "← ホームに戻る"}
+          <Link href={isAdmin ? "/equipment" : "/classic"} className="text-sm text-zinc-500 hover:text-zinc-700">
+            {isAdmin ? "← 機器マスター管理に戻る" : "← 従来方式のメニューに戻る"}
           </Link>
           <button
             onClick={handlePrint}
@@ -180,6 +181,15 @@ function EquipmentPrintContent() {
           </div>
         )}
 
+        <div className="mb-4">
+          <QrImageExport
+            items={visibleList.map((eq) => ({ code: eq.code, name: eq.name }))}
+            zipName="機器QR"
+            note="出力後、表示中の分を自動で発行済みにします。"
+            onExported={markVisibleAsIssued}
+          />
+        </div>
+
         <div className="mb-4 flex items-center justify-between print:hidden">
           <h1 className="text-lg font-semibold text-zinc-900">
             QRコード印刷シート（{visibleList.length}件）
@@ -200,7 +210,9 @@ function EquipmentPrintContent() {
               className="flex flex-col items-center rounded-lg border border-zinc-300 p-4 text-center break-inside-avoid"
             >
               {origin && (
+                <div data-qr-export={eq.code}>
                 <QRCodeSVG value={`${origin}/inspect/${eq.code}`} size={120} />
+                </div>
               )}
               <p className="mt-2 text-sm font-semibold text-zinc-900">
                 {eq.code}
