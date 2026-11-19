@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
+import { PLATE_QR_PROPS } from "@/lib/plateQr";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useHierarchyFilter } from "@/lib/useHierarchyFilter";
@@ -183,7 +184,7 @@ function EquipmentPrintContent() {
 
         <div className="mb-4">
           <QrImageExport
-            items={visibleList.map((eq) => ({ code: eq.code, name: eq.name }))}
+            items={visibleList.map((eq) => ({ code: eq.code, name: eq.name, url: `${origin}/inspect/${eq.code}` }))}
             zipName="機器QR"
             note="出力後、表示中の分を自動で発行済みにします。"
             onExported={markVisibleAsIssued}
@@ -211,7 +212,7 @@ function EquipmentPrintContent() {
             >
               {origin && (
                 <div data-qr-export={eq.code}>
-                <QRCodeSVG value={`${origin}/inspect/${eq.code}`} size={120} />
+                <QRCodeSVG value={`${origin}/inspect/${eq.code}`} size={120} {...PLATE_QR_PROPS} />
                 </div>
               )}
               <p className="mt-2 text-sm font-semibold text-zinc-900">

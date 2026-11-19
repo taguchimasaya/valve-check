@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { QRCodeSVG } from "qrcode.react";
+import { PLATE_QR_PROPS } from "@/lib/plateQr";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useHierarchyFilter } from "@/lib/useHierarchyFilter";
@@ -659,7 +660,7 @@ export default function EquipmentPage() {
             className="flex flex-col items-center rounded-xl bg-white p-6 dark:bg-zinc-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <QRCodeSVG value={`${origin}/inspect/${qrPreview.code}`} size={220} />
+            <QRCodeSVG value={`${origin}/inspect/${qrPreview.code}`} size={220} {...PLATE_QR_PROPS} />
             <p className="mt-3 font-semibold text-zinc-900 dark:text-zinc-100">
               {qrPreview.code}
             </p>

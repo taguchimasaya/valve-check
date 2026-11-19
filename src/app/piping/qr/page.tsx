@@ -3,6 +3,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
+import { PLATE_QR_PROPS } from "@/lib/plateQr";
 import { useGraph, usePipingStore } from "@/lib/piping/usePiping";
 import type { NodeKind } from "@/lib/piping/types";
 import { QrImageExport } from "@/components/QrImageExport";
@@ -130,7 +131,7 @@ export default function PipingQrPage() {
           </div>
           <div className="mt-3">
             <QrImageExport
-              items={list.map((n) => ({ code: n.label, name: n.name, sub: `${n.area}・${KIND_LABEL[n.kind]}` }))}
+              items={list.map((n) => ({ code: n.label, name: n.name, sub: `${n.area}・${KIND_LABEL[n.kind]}`, url: `${origin}/inspect/${n.label}` }))}
               zipName="系統図QR"
             />
           </div>
@@ -142,7 +143,7 @@ export default function PipingQrPage() {
             <div key={n.id} className="flex flex-col items-center rounded-lg border border-zinc-300 p-4 text-center break-inside-avoid">
               {origin && (
                 <div data-qr-export={n.label}>
-                  <QRCodeSVG value={`${origin}/inspect/${n.label}`} size={120} />
+                  <QRCodeSVG value={`${origin}/inspect/${n.label}`} size={120} {...PLATE_QR_PROPS} />
                 </div>
               )}
               <p className="mt-2 text-sm font-semibold text-zinc-900">{n.label}</p>

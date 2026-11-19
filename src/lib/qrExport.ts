@@ -10,13 +10,14 @@ export type QrExportItem = {
   code: string; // 機器番号（ファイル名にも使う）
   name: string; // 名称
   sub?: string; // 補足（区画・種別など）
+  url?: string; // QR に格納した URL（銘板用一式の検証に使う）
 };
 
-export type QrExportFormat = "png" | "svg" | "svg-qr";
+export type QrExportFormat = "plate" | "png" | "svg" | "svg-qr";
 export type QrLayout = "vertical" | "horizontal";
 
 const QUIET = 4; // QRの周りの余白（モジュール数）。読み取りに必要
-const SVG_QR_MM = 30; // SVG を読み込んだときの QR の大きさ（ソフト側で変更可）
+const SVG_QR_MM = 37; // SVG を読み込んだときの QR 本体の大きさ（1 モジュール 1mm。ソフト側で変更可）
 const FONT = `"Noto Sans JP", "Yu Gothic", "YuGothic", "Meiryo", sans-serif`;
 
 /** 画面上の data-qr-export 属性つき要素から、その機器の QR の <svg> を探す */
@@ -302,8 +303,48 @@ export async function buildZip(files: { name: string; blob: Blob }[]): Promise<B
   return new Blob([...parts, ...central, end], { type: "application/zip" });
 }
 
-/** 1件ならそのファイル、複数なら ZIP でダウンロードする */
-export async function exportQrImages(items: QrExportItem[], format: QrExportFormat, zipName: string, layout: QrLayout = "vertical") {
+/**
+ * 銘板用一式（Version 5-H・45mm）：機器ごとに完成イメージ SVG・レーザー加工 SVG・確認用 PNG・仕様書。
+ * 検証に失敗した機器は出力せず、理由を返す。
+ */
+async function exportPlates(items: QrExportItem[], zipName: string) {
+  const { buildPlateFiles } = await import("./plateQr");
+  const files: { name: string; blob: Blob }[] = [];
+  const failed: string[] = [];
+  let ok = 0;
+  for (const item of items) {
+    const svg = findQrSvg(item.code);
+    if (!svg || !item.url) {
+      failed.push(`${item.code}：QR が見つかりません`);
+      continue;
+    }
+    try {
+      const f = await buildPlateFiles(svg, item.code, item.url);
+      const dir = `${safeFileName(item.code)}/`;
+      const base = safeFileName(f.base);
+      files.push(
+        { name: `${dir}${base}-preview.svg`, blob: new Blob([f.previewSvg], { type: "image/svg+xml" }) },
+        { name: `${dir}${base}-laser.svg`, blob: new Blob([f.laserSvg], { type: "image/svg+xml" }) },
+        { name: `${dir}${base}-preview.png`, blob: f.previewPng },
+        { name: `${dir}QR-specification.txt`, blob: new Blob(["\uFEFF" + f.spec], { type: "text/plain" }) }
+      );
+      ok++;
+    } catch (e) {
+      failed.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (files.length) downloadBlob(await buildZip(files), `${safeFileName(zipName)}_銘板用QR.zip`);
+  return { count: ok, failed };
+}
+
+/** 1件ならそのファイル、複数なら ZIP でダウンロードする（銘板用一式は常に ZIP） */
+export async function exportQrImages(
+  items: QrExportItem[],
+  format: QrExportFormat,
+  zipName: string,
+  layout: QrLayout = "vertical"
+): Promise<{ count: number; failed: string[] }> {
+  if (format === "plate") return exportPlates(items, zipName);
   const files: { name: string; blob: Blob }[] = [];
   const used = new Set<string>();
   const ext = format === "png" ? "png" : "svg";
@@ -319,8 +360,8 @@ export async function exportQrImages(items: QrExportItem[], format: QrExportForm
     used.add(base);
     files.push({ name: `${base}.${ext}`, blob });
   }
-  if (files.length === 0) return 0;
+  if (files.length === 0) return { count: 0, failed: [] };
   if (files.length === 1) downloadBlob(files[0].blob, files[0].name);
   else downloadBlob(await buildZip(files), `${safeFileName(zipName)}.zip`);
-  return files.length;
+  return { count: files.length, failed: [] };
 }
