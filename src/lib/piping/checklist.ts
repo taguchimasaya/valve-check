@@ -1,6 +1,6 @@
 import type { ApprovalSign, ApprovalStage, Rejection } from "./approval";
 import * as XLSX from "xlsx";
-import type { DayParams } from "./workTypes";
+import type { DayParams, TankTransfer } from "./workTypes";
 import {
   buildProcedureExportWorkbook,
   parseProcedureChecklistFile,
@@ -49,11 +49,13 @@ export type SavedPlan = {
   /** 作成時に使った系統図の版（DBの版ID。プログラム内の仮想施設なら null） */
   diagramVersionId?: string | null;
   /** 作業の種類（省略時は燃料抜取） */
-  workType?: "drain" | "flush" | "tankIsolation" | "fireTest" | "custom";
+  workType?: "drain" | "flush" | "tankIsolation" | "tankTransfer" | "fireTest" | "custom";
   /** 燃料末端部作業：末端部として選んだ配管 */
   flushPipeIds?: string[];
   /** タンク縁切り作業：開放するタンク */
   isolationTank?: string;
+  /** タンク間移送：移送元・移送先タンクと使うポンプ（null＝自然流下）。作成時に決める */
+  tankTransfer?: TankTransfer;
   /** 消火設備機能試験：試験対象タンク */
   fireTestTank?: string;
   /** ユーザー定義の作業：作成時の作業の定義（その後ルールを変えても、このチェックリストは変わらない）と対象 */

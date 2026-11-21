@@ -546,7 +546,7 @@ function FireTestForm({ r, onChange }: { r: FireTestRules; onChange: (r: FireTes
 
 // ───────────── ユーザー定義の作業 ─────────────
 
-const TARGET_KINDS = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
+const TARGET_KINDS = ["strainer", "filter", "sampler", "pump", "transferPump", "valve", "check", "tank"];
 
 function CustomTypes({
   g,

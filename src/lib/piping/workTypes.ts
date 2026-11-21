@@ -8,19 +8,22 @@ import { DEFAULT_BLOCK_METHOD, DEFAULT_FLUSH_RULES, DEFAULT_ISOLATION_RULES, typ
 //  2. 燃料末端部作業（不使用ラインの循環）… 作業前 → ラインナップ → 循環 → 復旧
 //  3. タンク縁切り作業（タンク開放のため）… 作業前 → 払出系統で移送 → 移送系統で移送 → 縁切り
 //  4. 消火設備機能試験 … ラインナップ → シリンダー弁開（制御室）→ ポンプ起動 → 泡系統試験 → 水系統試験 → 試験終了 → 復旧（fireTest.ts）
+//  5. タンク間移送（ドレンタンク → スロップタンクなど）… 作業前 → ラインナップ → 移送 → 復旧
 
-export type WorkType = "drain" | "flush" | "tankIsolation" | "fireTest" | "custom";
+export type WorkType = "drain" | "flush" | "tankIsolation" | "tankTransfer" | "fireTest" | "custom";
 
 export const WORK_TYPES: Record<WorkType, { label: string; desc: string }> = {
   drain: { label: "燃料抜取（機器点検・交換等）", desc: "機器・配管の燃料を抜き取り、作業後に充填する" },
   flush: { label: "燃料末端部作業（循環）", desc: "通常使用しないライン（末端部）の燃料をポンプで循環させる" },
   tankIsolation: { label: "タンク縁切り作業", desc: "タンク開放のため、燃料を別タンクへ移送して縁切りする" },
+  tankTransfer: { label: "タンク間移送", desc: "移送元タンクから移送先タンクへ、ポンプ（または自然流下）で移送する（例：ドレンタンク → スロップタンク）" },
   custom: { label: "ユーザー定義の作業", desc: "⑤ でユーザーが工程とルールを組み立てた作業" },
   fireTest: { label: "消火設備機能試験", desc: "試験対象タンクの発泡装置、隣接タンクの冷却散水、近くの消火栓（泡・水）で放射・放水試験をする" },
 };
 
 export const FLUSH_STEPS = ["作業前", "ラインナップ", "循環", "復旧"];
 export const ISOLATION_STEPS = ["作業前", "払出系統で移送", "移送系統で移送", "縁切り"];
+export const TRANSFER_STEPS = ["作業前", "ラインナップ", "移送", "復旧"];
 
 /** 循環量の目安：末端部の配管容量の何倍を流すか */
 export const FLUSH_TURNOVER = 3;
@@ -167,6 +170,75 @@ export function isolationTransferRoute(g: Graph, tank: string, destTank: string,
   const s = nozzles(tank);
   const d = nozzles(destTank);
   return chainPath(g, [tank, s.T, transferPump, d.R, destTank], [[s.R, s.I], undefined, undefined, [d.I, d.T]]);
+}
+
+// ───────────── タンク間移送 ─────────────
+
+/** タンク間移送の選択（作成時に決める。当日の選び直しはない） */
+export type TankTransfer = { src: string; dest: string; pump: string | null };
+
+/** 移送元・移送先になれるタンク（すべてのタンク） */
+export const transferTanks = (g: Graph) => g.facility.nodes.filter((n) => n.kind === "tank").map((n) => n.id);
+
+/**
+ * タンク間移送の経路：移送元タンク → ポンプ → 移送先タンク（ポンプなしは自然流下で、途中にポンプを通らない経路）。
+ * 経路はポンプ・逆止弁の向きに従う。充填弁などの作業用の弁（service）は通らない。
+ */
+export function tankTransferRoute(g: Graph, src: string, dest: string, pump: string | null): OrderedRoute | null {
+  if (src === dest) return null;
+  if (pump) return chainPath(g, [src, pump, dest]);
+  const pumps = new Set(ALL_PUMPS(g));
+  const r = shortestPath(g, src, dest, pumps);
+  return r ? { nodeIds: r.nodeIds, pipeIds: r.pipeIds } : null;
+}
+
+/**
+ * 移送元から移送先へ送れるポンプ。ポンプは短い経路の順で、自然流下（null）は最後
+ * （タンクどうしがサンプリングのドレン管などでつながっていても、ポンプの経路を先に選ぶ）
+ */
+export function tankTransferPumps(g: Graph, src: string, dest: string): (string | null)[] {
+  const pumps = ALL_PUMPS(g)
+    .map((p) => ({ p, r: tankTransferRoute(g, src, dest, p) }))
+    .filter((x): x is { p: string; r: OrderedRoute } => !!x.r)
+    .sort((a, b) => routeLength(g, a.r) - routeLength(g, b.r))
+    .map((x) => x.p as string | null);
+  return tankTransferRoute(g, src, dest, null) ? [...pumps, null] : pumps;
+}
+
+/** タンク間移送のチェックリスト（0 作業前 / 1 ラインナップ / 2 移送（ポンプ起動）/ 3 復旧（ポンプ停止 → 弁を元に戻す）） */
+export function buildTankTransfer(
+  g: Graph,
+  t: TankTransfer,
+  base: Record<string, ValveState>,
+  rules: { blockMethod?: BlockMethod; closeSide?: boolean } = {}
+): DayResult {
+  const route = tankTransferRoute(g, t.src, t.dest, t.pump);
+  if (!route) return { rows: [], stepNotes: {}, stepRoutes: {}, error: "選んだタンク・ポンプでは移送経路が見つかりません" };
+  const closeSide = rules.closeSide ?? true;
+  const label = (id: string) => g.nodeById.get(id)?.label ?? id;
+  const notes: Record<string, string> = {};
+  const pv = t.pump ? pumpValve(g, route, t.pump) : null;
+  if (pv && t.pump) notes[pv] = `${label(t.pump)} の吐出側の弁`;
+  const pumps = t.pump ? [{ id: t.pump, on: 2, off: 3, note: "移送工程で起動、復旧工程の最初に停止" }] : [];
+  const rows = lineupRows(g, TRANSFER_STEPS.length, { 1: route }, base, [], pumps, notes, closeSide, rules.blockMethod ?? DEFAULT_BLOCK_METHOD);
+  const via = route.nodeIds
+    .filter((id) => {
+      const k = g.nodeById.get(id)?.kind;
+      return k === "pump" || k === "transferPump" || k === "filter" || k === "strainer";
+    })
+    .map(label);
+  const path = [label(t.src), ...via, label(t.dest)].join(" → ");
+  return {
+    rows,
+    stepRoutes: { 2: route },
+    stepNotes: {
+      1: `移送経路を構成します：${path}${closeSide ? "（経路の分岐先の弁は閉）" : ""}。移送先 ${label(t.dest)} の空き容量を確認してください。`,
+      2: t.pump
+        ? `${label(t.pump)} を起動し、${label(t.src)} → ${label(t.dest)} へ移送。移送元の液位が下限に達したら ${label(t.pump)} を停止して「移送完了」を押してください。`
+        : `自然流下で ${label(t.src)} → ${label(t.dest)} へ移送。移送が終わったら「移送完了」を押してください。`,
+      3: `${t.pump ? `最初に ${label(t.pump)} を停止し、` : ""}移送経路の弁を元の状態に戻します。`,
+    },
+  };
 }
 
 // ───────────── 当日の選択からチェックリストを作る ─────────────
@@ -360,6 +432,7 @@ export function manualStepsOf(plan: Pick<SavedPlan, "workType" | "customType">):
   if (t === "custom") return (plan.customType?.steps ?? []).flatMap((s, i) => (s.manual ? [i + 1] : []));
   if (t === "flush") return [2];
   if (t === "tankIsolation") return [1, 2];
+  if (t === "tankTransfer") return [2];
   if (t === "fireTest") return [4, 5];
   return [];
 }

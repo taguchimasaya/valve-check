@@ -624,6 +624,21 @@ export default function PipingDiagram({
             )}
           </g>
         );
+      case "sampler":
+        // サンプリング装置：角丸の四角に「採」。ラベルは下に置く（上は配管・弁のラベルと重なりやすい）
+        return (
+          <g>
+            <rect x={n.x - 11} y={n.y - 9} width={22} height={18} rx={4} className="fill-white dark:fill-zinc-900" stroke="#0e7490" strokeWidth={1.6} />
+            <text x={n.x} y={n.y + 3.5} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#0e7490">
+              採
+            </text>
+            {showLabels && (
+              <text x={n.x} y={n.y + 20} textAnchor="middle" fontSize={8} className={textCls}>
+                {n.label}
+              </text>
+            )}
+          </g>
+        );
       case "psv":
         return (
           <g>
@@ -680,7 +695,15 @@ export default function PipingDiagram({
                 {n.label}
               </text>
               <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
-                {n.recovery ? "回収タンク" : n.fluid && n.fluid !== "fuel" ? FLUID_LABEL[n.fluid] : "メンテ用タンク"}
+                {n.recovery
+                  ? "回収タンク"
+                  : n.fluid && n.fluid !== "fuel"
+                    ? FLUID_LABEL[n.fluid]
+                    : n.name.includes("ドレンタンク")
+                      ? "ドレンタンク"
+                      : n.name.includes("スロップ")
+                        ? "スロップタンク"
+                        : "メンテ用タンク"}
               </text>
             </g>
           );
@@ -782,15 +805,19 @@ export default function PipingDiagram({
           ))}
 
           {/* ラベル付きの枠（運用停止範囲など） */}
-          {boxes?.map((b) => (
-            <g key={b.key} pointerEvents="none">
-              <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={10} fill={b.color} fillOpacity={0.08} stroke={b.color} strokeWidth={3} strokeDasharray="12 6" />
-              <rect x={b.x} y={b.y - 34} width={b.label.length * 22 + 20} height={34} rx={5} fill={b.color} />
-              <text x={b.x + 10} y={b.y - 10} fontSize={22} fontWeight={700} fill="#ffffff">
-                {b.label}
-              </text>
-            </g>
-          ))}
+          {boxes?.map((b) => {
+            // 枠が図面の上端に近いときは、名札を枠の内側に置く（図面の外にはみ出さないように）
+            const ly = b.y - 34 < 0 ? b.y : b.y - 34;
+            return (
+              <g key={b.key} pointerEvents="none">
+                <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={10} fill={b.color} fillOpacity={0.08} stroke={b.color} strokeWidth={3} strokeDasharray="12 6" />
+                <rect x={b.x} y={ly} width={b.label.length * 22 + 20} height={34} rx={5} fill={b.color} />
+                <text x={b.x + 10} y={ly + 24} fontSize={22} fontWeight={700} fill="#ffffff">
+                  {b.label}
+                </text>
+              </g>
+            );
+          })}
 
           {/* 配管クリック用の当たり判定 */}
           {onPipeClick &&

@@ -14,6 +14,7 @@ export type NodeKind =
   | "transferPump" // 移送ポンプ
   | "strainer"
   | "filter"
+  | "sampler" // サンプリング装置（タンクの試料採取。流れは通す）
   | "psv" // 安全弁
   | "drain" // ドレン口（抜取口。ドレン弁つき）
   | "gauge" // 圧力計取付口（元弁つき）

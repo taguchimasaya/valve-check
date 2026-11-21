@@ -23,6 +23,8 @@ export function planTargetKey(p: SavedPlan): string {
       return `flush:${sorted(p.flushPipeIds)}`;
     case "tankIsolation":
       return `tankIsolation:${p.isolationTank ?? ""}`;
+    case "tankTransfer":
+      return `tankTransfer:${p.tankTransfer?.src ?? ""}>${p.tankTransfer?.dest ?? ""}`;
     case "fireTest":
       return `fireTest:${p.fireTestTank ?? ""}`;
     case "custom":
@@ -58,6 +60,9 @@ export function planTargets(p: SavedPlan): string[] {
       return (p.flushPipeIds ?? []).map((id) => `pipe:${id}`);
     case "tankIsolation":
       return p.isolationTank ? [`tank:${p.isolationTank}`] : [];
+    case "tankTransfer":
+      // 移送元・移送先の両方のタンク（縁切り・消火試験など、同じタンクを対象とする作業と同時にしない）
+      return [p.tankTransfer?.src, p.tankTransfer?.dest].filter((x): x is string => !!x).map((x) => `tank:${x}`);
     case "fireTest":
       return p.fireTestTank ? [`tank:${p.fireTestTank}`] : [];
     case "custom":

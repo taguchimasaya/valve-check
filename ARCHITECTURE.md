@@ -110,7 +110,7 @@ SQL は `supabase/` にあり、**ユーザーが Supabase ダッシュボード
 | `piping_pipe_specs` | 同上 | 配管仕様マスター（呼び径・スケジュール → 内径。JIS G 3454 Sch40 を投入済み） |
 | `piping_source_documents` / `piping_import_batches` / `piping_validation_issues` | 同上 | 出典図面・取込記録・入力チェック結果 |
 
-v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び順）、v4（タンク発泡装置 `foamChamber`）で拡張しています。
+v3（消火設備の種別・流体 `fluid`・系統 `system`・拠点の並び順）、v4（タンク発泡装置 `foamChamber`）、v5（サンプリング装置 `sampler`、2026-11-21 作成・本番未実行）で拡張しています。
 
 ### 4.3 認証・権限
 
@@ -201,7 +201,7 @@ DB（版：論理データ＋図面データ）
 | `types.ts` | ノード種別（弁・逆止弁・タンク・ポンプ・ドレン・消火設備など）・配管・施設の型 |
 | `graph.ts` | グラフ構築、区間分割、最短経路、ダブルブロック（`secondBlock`）、経路側の分岐弁 |
 | `isolation.ts` | 遮断範囲・液封リスク・抜取量／時間・充填計画の算定（燃料抜取）。抜取時間（`estimateDrain`）は固定の抜取ポンプ、無ければローリー（`LorrySetting`）の能力で1か所から抜く前提 |
-| `workTypes.ts` | 作業種別（drain / flush / tankIsolation / fireTest / custom）と当日選択（DayParams）による行生成 |
+| `workTypes.ts` | 作業種別（drain / flush / tankIsolation / tankTransfer / fireTest / custom）と当日選択（DayParams）による行生成。タンク間移送（`buildTankTransfer`）は作成時に移送元・移送先・ポンプを決める |
 | `fireTest.ts` | 消火設備機能試験（発泡装置・隣接タンク冷却散水・消火栓） |
 | `rules.ts` / `ruleBlocks.ts` | 拠点ごとのチェックリスト作成ルールと、ノーコードの追加ルール（もし〜なら工程ごとに開閉） |
 | `checklist.ts` | チェックリストの型（PlanRow / SavedPlan）、Excel 入出力、工程ごとの状態 |

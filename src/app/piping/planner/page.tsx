@@ -31,6 +31,10 @@ import {
   ISOLATION_STEPS,
   isolationIssueRoute,
   isolationTransferRoute,
+  buildTankTransfer,
+  tankTransferPumps,
+  transferTanks,
+  TRANSFER_STEPS,
   WORK_TYPES,
   workTypeOf,
   type DayParams,
@@ -66,11 +70,12 @@ import { applyBlocks, buildCustomChecklist, isoParts } from "@/lib/piping/ruleBl
 import { unionRoute } from "@/lib/piping/fireTest";
 import type { NodeKind } from "@/lib/piping/types";
 
-const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "pump", "transferPump", "valve", "check", "tank"];
+const TARGET_KINDS: NodeKind[] = ["strainer", "filter", "sampler", "pump", "transferPump", "valve", "check", "tank"];
 const STEPS_OF: Record<WorkType, string[]> = {
   drain: PLAN_STEPS,
   flush: FLUSH_STEPS,
   tankIsolation: ISOLATION_STEPS,
+  tankTransfer: TRANSFER_STEPS,
   fireTest: FIRE_TEST_STEPS,
   custom: [],
 };
@@ -78,6 +83,7 @@ const TYPE_TAG: Record<WorkType, string> = {
   drain: "抜取",
   flush: "末端部",
   tankIsolation: "縁切り",
+  tankTransfer: "移送",
   fireTest: "消火試験",
   custom: "独自",
 };
@@ -112,6 +118,10 @@ export default function PlannerPage() {
   const [isoTank, setIsoTank] = useState<string | null>(null);
   // 消火設備機能試験：試験対象タンク
   const [fireTank, setFireTank] = useState<string | null>(null);
+  // タンク間移送：移送元・移送先タンクと使うポンプ（undefined＝自動で選ぶ、null＝ポンプなし（自然流下））
+  const [trSrc, setTrSrc] = useState<string | null>(null);
+  const [trDest, setTrDest] = useState<string | null>(null);
+  const [trPump, setTrPump] = useState<string | null | undefined>(undefined);
   // ユーザー定義の作業：選んだ作業・対象（保存済みを開いたときは、その時点の定義も持つ）
   const [customId, setCustomId] = useState<string | null>(null);
   const [customTarget, setCustomTarget] = useState<string | null>(null);
@@ -217,6 +227,24 @@ export default function PlannerPage() {
         : null;
   const dayKey = JSON.stringify(dayParams);
   const fireTanks = useMemo(() => fireTestTanks(g), [g]);
+  // ───── タンク間移送：移送元 → ポンプ → 移送先 の経路（作成時に決める） ─────
+  const allTanks = useMemo(() => transferTanks(g), [g]);
+  const trPumpOptions = useMemo(
+    () => (workType === "tankTransfer" && trSrc && trDest ? tankTransferPumps(g, trSrc, trDest) : []),
+    [g, workType, trSrc, trDest]
+  );
+  const effTrPump: string | null | undefined = trPumpOptions.length
+    ? trPump !== undefined && trPumpOptions.includes(trPump)
+      ? trPump
+      : trPumpOptions[0]
+    : undefined;
+  const transferResult = useMemo(
+    () =>
+      workType === "tankTransfer" && trSrc && trDest && effTrPump !== undefined
+        ? buildTankTransfer(g, { src: trSrc, dest: trDest, pump: effTrPump }, baseline, { blockMethod })
+        : null,
+    [g, workType, trSrc, trDest, effTrPump, baseline, blockMethod]
+  );
   const fireResult = useMemo(
     () => (workType === "fireTest" && fireTank ? buildFireTestChecklist(g, fireTank, baseline, fireRules, blockMethod) : null),
     [g, workType, fireTank, baseline, fireRules, blockMethod]
@@ -250,9 +278,12 @@ export default function PlannerPage() {
         : null,
     [g, workType, customDef, customTarget, baseline, lorry, flushPipes, customFlush, effFlushPump, flushSrc, flushRet, customTransfer, effDest, effIssuePump, effTransferPump]
   );
-  const dayResult = workType === "fireTest" ? fireResult : workType === "custom" ? customResult : dayResultOf;
+  const dayResult =
+    workType === "fireTest" ? fireResult : workType === "custom" ? customResult : workType === "tankTransfer" ? transferResult : dayResultOf;
   const dayError =
-    (workType === "flush" || customFlush) && flushT && !effFlushPump
+    workType === "tankTransfer" && trSrc && trDest && effTrPump === undefined
+      ? "移送元から移送先へ送る経路が見つかりません（ポンプ・逆止弁の向きと、つながりを確認してください）"
+      : (workType === "flush" || customFlush) && flushT && !effFlushPump
       ? "送り元・戻り先タンクから末端部へ届くポンプがありません"
       : (workType === "tankIsolation" || customTransfer) && tTank && (!effIssuePump || !effTransferPump)
         ? "移送先タンクへの移送経路が見つかりません"
@@ -286,7 +317,11 @@ export default function PlannerPage() {
   const dayRows = dayResult?.rows;
   const rawRows = useMemo(() => (isDay ? dayRows ?? [] : drainRows.rows), [isDay, dayRows, drainRows]);
   // 作業種別ごとの追加ルール（ブロック）を当てはめる（ユーザー定義の作業は作成時に当てはめ済み）
-  const builtinBlocks = useMemo(() => (workType === "custom" ? [] : blocksOf(storeRules, workType)), [workType, storeRules]);
+  // タンク間移送には ⑤ の追加ルールが無い
+  const builtinBlocks = useMemo(
+    () => (workType === "custom" || workType === "tankTransfer" ? [] : blocksOf(storeRules, workType)),
+    [workType, storeRules]
+  );
   const blockTarget =
     workType === "fireTest"
       ? fireTank
@@ -343,6 +378,8 @@ export default function PlannerPage() {
   const routeKind: RouteFlowKind =
     workType === "flush" || customFlush
       ? "flush"
+      : workType === "tankTransfer"
+        ? "tankTransfer"
       : workType === "tankIsolation" || customTransfer
         ? "transfer"
         : workType === "fireTest" || (workType === "custom" && customDef?.calc?.kind === "fireTest")
@@ -446,6 +483,7 @@ export default function PlannerPage() {
     });
     if (isoTank && workType === "tankIsolation") marks[isoTank] = "selected";
     if (fireTank && workType === "fireTest") marks[fireTank] = "selected";
+    if (workType === "tankTransfer") [trSrc, trDest].forEach((t) => t && (marks[t] = "selected"));
     if (customTarget && workType === "custom") marks[customTarget] = "selected";
   }
   const targetPipes = targets.filter((t) => t.type === "pipe").map((t) => t.id);
@@ -468,6 +506,16 @@ export default function PlannerPage() {
     }
     if (workType === "fireTest") {
       if (fireTanks.includes(id)) setFireTank(id);
+      return;
+    }
+    if (workType === "tankTransfer") {
+      if (n.kind !== "tank") return;
+      // 1回目のクリックで移送元、2回目で移送先。両方決まっていれば移送元から選び直す
+      if (!trSrc || (trDest && trSrc !== id)) {
+        setTrSrc(id);
+        setTrDest(null);
+      } else if (id !== trSrc) setTrDest(id);
+      setTrPump(undefined);
       return;
     }
     if (workType === "custom") {
@@ -521,6 +569,9 @@ export default function PlannerPage() {
     setFlushPipes([]);
     setIsoTank(null);
     setFireTank(null);
+    setTrSrc(null);
+    setTrDest(null);
+    setTrPump(undefined);
     setCustomTarget(null);
     setExtraSectionIds([]);
     setExcludedDrains([]);
@@ -532,6 +583,7 @@ export default function PlannerPage() {
   function buildDayPlan(): SavedPlan | null {
     if (workType === "fireTest") return buildFirePlan();
     if (workType === "custom") return buildCustomPlan();
+    if (workType === "tankTransfer") return buildTransferPlan();
     if (!dayResult || dayResult.error || !dayParams || !rows.length) return null;
     const flush = workType === "flush";
     const auto = flush
@@ -612,6 +664,45 @@ export default function PlannerPage() {
         drains: customResult.iso?.drains ?? [],
         warnings: customResult.warnings,
         notes: [...(customDef.desc ? [customDef.desc] : []), ...(customResult.iso?.notes ?? []), ...(customResult.fire ? [customResult.fire.summary] : [])],
+      },
+    };
+  }
+
+  function buildTransferPlan(): SavedPlan | null {
+    if (!transferResult || transferResult.error || !trSrc || !trDest || effTrPump === undefined || !rows.length) return null;
+    const label = (id: string) => g.nodeById.get(id)?.label ?? id;
+    const route = transferResult.stepRoutes[2];
+    return {
+      id: editingId ?? newId(),
+      name: name.trim() || `タンク間移送（${label(trSrc)} → ${label(trDest)}）`,
+      workType: "tankTransfer",
+      purpose: WORK_TYPES.tankTransfer.label,
+      tankTransfer: { src: trSrc, dest: trDest, pump: effTrPump },
+      createdAt: new Date().toISOString(),
+      source: "planner",
+      appliedRules,
+      diagramVersionId: diagramInfo.versionId,
+      targets: [
+        { type: "node", id: trSrc },
+        { type: "node", id: trDest },
+      ],
+      // 移送経路の配管（運用中のライン・ほかの点検との重なりの判定に使う）
+      regionPipeIds: route?.pipeIds ?? [],
+      regionNodeIds: [trSrc, trDest],
+      sealPipeIds: [],
+      steps,
+      rows,
+      stepNotes: transferResult.stepNotes,
+      stepRoutes: transferResult.stepRoutes,
+      planner: { expandToDrain, baselineMode, extraSectionIds: [], excludedDrains: [], gaugeIds: [], lorryLpm, fillLpm },
+      summary: {
+        volumeL: null,
+        drainMinutes: null,
+        drains: [],
+        warnings: [],
+        notes: [
+          `移送：${label(trSrc)} → ${label(trDest)}（${effTrPump ? `ポンプ ${label(effTrPump)}` : "ポンプなし・自然流下"}）。移送量は当日の液位で確認してください。`,
+        ],
       },
     };
   }
@@ -731,6 +822,9 @@ export default function PlannerPage() {
     setFlushPipes(p.flushPipeIds ?? []);
     setIsoTank(p.isolationTank ?? null);
     setFireTank(p.fireTestTank ?? null);
+    setTrSrc(p.tankTransfer?.src ?? null);
+    setTrDest(p.tankTransfer?.dest ?? null);
+    setTrPump(p.tankTransfer ? p.tankTransfer.pump : undefined);
     if (type === "custom" && p.customType) {
       setLoadedCustom(p.customType);
       setCustomId(p.customType.id);
@@ -807,6 +901,8 @@ export default function PlannerPage() {
                 ? `${customDef?.name ?? "ユーザー定義の作業"}：${
                     customDef?.target === "tank" ? "図面上で対象のタンクをクリックしてください。" : customDef?.target === "equipment" ? "図面上で対象の機器をクリックしてください。" : customDef?.target === "pipes" ? "図面上で末端部の配管をクリックしてください。" : ""
                   }⑤ で組み立てた工程とルールでチェックリストを作ります。${customDef?.desc ? `（${customDef.desc}）` : ""}`
+              : workType === "tankTransfer"
+                ? "図面上で移送元のタンク、続けて移送先のタンクをクリックしてください（右の欄でも選べます）。ポンプ・逆止弁の向きに沿った移送経路を探し、経路の弁の開・分岐先の弁の閉、ポンプの起動・停止と復旧の操作を作ります。"
               : workType === "fireTest"
                 ? `図面上で試験対象タンクをクリックしてください。登録したルール（⑤ チェックリスト作成のルール）に従い、発泡装置・冷却散水・近くの消火栓（泡${fireRules.foamHydrants}口・水${fireRules.waterHydrants}口）を使う試験の操作バルブを作ります。`
                 : "図面上で縁切りするタンクをクリックしてください。払出系統 → 移送系統の順に別のタンクへ移送し、ノズル弁を閉止して縁切りします。"}
@@ -821,7 +917,11 @@ export default function PlannerPage() {
               layers={layers}
               marks={marks}
               onNodeClick={handleNodeClick}
-              onPipeClick={workType === "tankIsolation" || workType === "fireTest" || (workType === "custom" && !customFlush) ? undefined : handlePipeClick}
+              onPipeClick={
+                workType === "tankIsolation" || workType === "tankTransfer" || workType === "fireTest" || (workType === "custom" && !customFlush)
+                  ? undefined
+                  : handlePipeClick
+              }
               clickableKinds={
                 workType === "flush"
                   ? []
@@ -831,7 +931,7 @@ export default function PlannerPage() {
                       : customDef?.target === "equipment"
                         ? TARGET_KINDS
                         : []
-                    : workType === "tankIsolation" || workType === "fireTest"
+                    : workType === "tankIsolation" || workType === "tankTransfer" || workType === "fireTest"
                       ? ["tank"]
                       : mode === "expand"
                         ? ["valve"]
@@ -928,7 +1028,15 @@ export default function PlannerPage() {
                   // 末端部作業・タンク縁切りはタンク・ポンプの番号の付け方に合わせて作ってあるため、仮想施設だけ。
                   // 消火設備機能試験は、冷却散水・発泡装置の付いたタンクがある拠点だけ。ユーザー定義の作業は下に並べる
                   .filter((t) =>
-                    t === "custom" ? false : t === "drain" ? true : t === "fireTest" ? fireTanks.length > 0 : diagramInfo.facilityId === DEFAULT_FACILITY
+                    t === "custom"
+                      ? false
+                      : t === "drain"
+                        ? true
+                        : t === "fireTest"
+                          ? fireTanks.length > 0
+                          : t === "tankTransfer"
+                            ? allTanks.length >= 2
+                            : diagramInfo.facilityId === DEFAULT_FACILITY
                   )
                   .map((t) => (
                   <button
@@ -1020,6 +1128,31 @@ export default function PlannerPage() {
                     )}
                   </p>
                 </div>
+              ) : workType === "tankTransfer" ? (
+                <TransferPanel
+                  g={g}
+                  tanks={allTanks}
+                  src={trSrc}
+                  dest={trDest}
+                  pump={effTrPump}
+                  pumpOptions={trPumpOptions}
+                  onSrc={(t) => {
+                    setTrSrc(t);
+                    if (t === trDest) setTrDest(null);
+                    setTrPump(undefined);
+                  }}
+                  onDest={(t) => {
+                    setTrDest(t);
+                    setTrPump(undefined);
+                  }}
+                  onPump={setTrPump}
+                  error={dayError}
+                  notes={
+                    transferResult && !transferResult.error
+                      ? steps.flatMap((st, i) => (transferResult.stepNotes[i] ? [[st, transferResult.stepNotes[i]] as const] : []))
+                      : []
+                  }
+                />
               ) : isDay ? (
                 <DayTargetPanel
                   g={g}
@@ -1393,7 +1526,7 @@ export default function PlannerPage() {
               </Panel>
             )}
 
-            {isDay && workType !== "fireTest" && (workType !== "custom" || customFlush || customTransfer) && (
+            {isDay && workType !== "fireTest" && workType !== "tankTransfer" && (workType !== "custom" || customFlush || customTransfer) && (
               <Panel title="当日の運用（例）">
                 {workType === "flush" || customFlush ? (
                   <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1613,6 +1746,97 @@ function PickSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+/** タンク間移送：移送元・移送先タンクとポンプの選択、工程の説明 */
+function TransferPanel({
+  g,
+  tanks,
+  src,
+  dest,
+  pump,
+  pumpOptions,
+  onSrc,
+  onDest,
+  onPump,
+  error,
+  notes,
+}: {
+  g: ReturnType<typeof useGraph>;
+  tanks: string[];
+  src: string | null;
+  dest: string | null;
+  pump: string | null | undefined;
+  pumpOptions: (string | null)[];
+  onSrc: (t: string | null) => void;
+  onDest: (t: string | null) => void;
+  onPump: (p: string | null) => void;
+  error?: string;
+  notes: (readonly [string, string])[];
+}) {
+  const name = (id: string) => {
+    const n = g.nodeById.get(id);
+    return n ? (n.name.startsWith(n.label) ? n.name : `${n.label}（${n.name}）`) : id;
+  };
+  const NONE = "__none__";
+  const sel = "w-full rounded border border-zinc-300 bg-transparent px-1.5 py-1 disabled:opacity-40 dark:border-zinc-700";
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-2 gap-2">
+        <label className="space-y-1">
+          <span className="text-zinc-500">移送元タンク（1回目のクリック）</span>
+          <select value={src ?? ""} onChange={(e) => onSrc(e.target.value || null)} className={sel}>
+            <option value="">未選択</option>
+            {tanks.map((t) => (
+              <option key={t} value={t}>
+                {name(t)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-zinc-500">移送先タンク（2回目のクリック）</span>
+          <select value={dest ?? ""} onChange={(e) => onDest(e.target.value || null)} disabled={!src} className={sel}>
+            <option value="">未選択</option>
+            {tanks
+              .filter((t) => t !== src)
+              .map((t) => (
+                <option key={t} value={t}>
+                  {name(t)}
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
+      <label className="block space-y-1">
+        <span className="text-zinc-500">使うポンプ（経路のあるものだけ。ポンプは短い経路の順）</span>
+        <select
+          value={pump === undefined ? "" : pump === null ? NONE : pump}
+          onChange={(e) => onPump(e.target.value === NONE ? null : e.target.value)}
+          disabled={!pumpOptions.length}
+          className={sel}
+        >
+          {!pumpOptions.length && <option value="">（なし）</option>}
+          {pumpOptions.map((p) => (
+            <option key={p ?? NONE} value={p ?? NONE}>
+              {p ? name(p) : "ポンプを使わない（自然流下）"}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && <p className="rounded bg-red-50 px-2 py-1 text-red-700 dark:bg-red-950 dark:text-red-300">{error}</p>}
+      {notes.length > 0 && (
+        <ol className="space-y-1 text-zinc-600 dark:text-zinc-400">
+          {notes.map(([st, n]) => (
+            <li key={st}>
+              <b className="text-zinc-800 dark:text-zinc-200">{st}：</b>
+              {n}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 

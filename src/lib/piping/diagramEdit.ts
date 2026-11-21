@@ -134,6 +134,7 @@ const KIND_PREFIX: Partial<Record<NodeKind, string>> = {
   psv: "PSV-",
   strainer: "ST-",
   filter: "F-",
+  sampler: "SMP-",
   junction: "J-",
 };
 
@@ -252,6 +253,7 @@ const KIND_NAME: Record<NodeKind, string> = {
   transferPump: "移送ポンプ",
   strainer: "ストレーナー",
   filter: "フィルター",
+  sampler: "サンプリング装置",
   psv: "安全弁",
   drain: "ドレン口",
   gauge: "圧力計取付口",
@@ -306,7 +308,7 @@ export function makeNode(kind: NodeKind, code: string, o: Partial<NodeData> = {}
 export const ALL_KINDS: NodeKind[] = Object.keys(KIND_NAME) as NodeKind[];
 
 /** 配管の途中に入れるのが普通の種別（それ以外は枝の先・単独で置く） */
-export const INLINE_KINDS: NodeKind[] = ["valve", "check", "strainer", "filter", "pump", "transferPump", "proportioner", "junction"];
+export const INLINE_KINDS: NodeKind[] = ["valve", "check", "strainer", "filter", "sampler", "pump", "transferPump", "proportioner", "junction"];
 
 /** 枝管の既定の呼び径（ドレン・圧力計・安全弁は細い管、それ以外は元の配管と同じ） */
 function branchSize(kind: NodeKind, parentSize: number) {

@@ -94,6 +94,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   transferPump: "移送ポンプ",
   strainer: "ストレーナー",
   filter: "フィルター",
+  sampler: "サンプリング装置",
   psv: "安全弁",
   drain: "ドレン口",
   gauge: "圧力計取付口",

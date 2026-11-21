@@ -55,7 +55,7 @@ type Tool =
 
 /** 追加する機器の種別の並び（まとまりごと） */
 const KIND_GROUPS: { label: string; kinds: NodeKind[] }[] = [
-  { label: "弁・配管の機器", kinds: ["valve", "check", "strainer", "filter", "junction"] },
+  { label: "弁・配管の機器", kinds: ["valve", "check", "strainer", "filter", "sampler", "junction"] },
   { label: "タンク・ポンプ", kinds: ["tank", "pump", "transferPump"] },
   { label: "安全弁・ドレン・計器", kinds: ["psv", "drain", "gauge"] },
   { label: "受入・払出", kinds: ["source", "sink"] },
@@ -842,7 +842,7 @@ function NodeForm({
           </select>
         </Row>
       )}
-      {(node.kind === "strainer" || node.kind === "filter" || node.kind === "pump" || node.kind === "transferPump") && (
+      {(node.kind === "strainer" || node.kind === "filter" || node.kind === "sampler" || node.kind === "pump" || node.kind === "transferPump") && (
         <NumField label="内容量(L)" value={node.volume_l} onCommit={(v) => set({ volume_l: v })} />
       )}
       {(node.kind === "pump" || node.kind === "transferPump") && <NumField label="定格流量(L/min)" value={node.rated_flow_lpm} onCommit={(v) => set({ rated_flow_lpm: v })} />}

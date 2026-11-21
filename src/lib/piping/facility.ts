@@ -415,7 +415,8 @@ export function buildFacility(): Facility {
     const tEnd = J(`J-TH${n}E`, 1760, Y(420), area);
     chain(150, tStart, ...tJ, tEnd);
 
-    areas.push({ x: 745, y: Math.min(Y(80), Y(440)), w: 1000, h: 360, label: `第${n}ヤード（T-${n}01〜${n}06）` });
+    // 枠の上端（第2ヤードは下端）はタンク頂部のサンプリング装置まで含める
+    areas.push({ x: 745, y: Math.min(Y(5), Y(440)), w: 1000, h: 435, label: `第${n}ヤード（T-${n}01〜${n}06）` });
     return { rStart, rEnd, ix, tEnd };
 
     // タンク間に区分弁を設け、各区間に低部ドレンを置く（抜取範囲を区間単位に絞れるようにする）
@@ -646,6 +647,57 @@ export function buildFacility(): Facility {
     pipe(v, jfl, 50);
   });
   areas.push({ x: 1170, y: 660, w: 560, h: 180, label: "移送ポンプ設備" });
+
+  // ───────────── ドレン設備（各ヤードにドレンタンク1基、両ヤード共用のスロップタンク）─────────────
+  // 各タンクのサンプリング装置 → サンプリングドレン弁 → サンプリングドレン管 → ドレンタンク
+  // → ドレンタンク出口弁 → ドレンポンプ → 逆止弁 → ドレンフィルター → スロップ送油弁 → スロップタンク
+  // 既存の機器・配管の番号（P###）を変えないよう、最後に追加する（保存済みチェックリストは配管番号を持つため）。
+  const slop = add("SLP-1", "tank", 1820, 750, "スロップタンク", {
+    name: "スロップタンク SLP-1（ドレンタンクからの受入）",
+    capacityKL: 50,
+    small: true,
+  });
+  function drainYard(n: 1 | 2, Y: (y: number) => number) {
+    const yardArea = `第${n}ヤード`;
+    const area = `第${n}ヤード ドレン設備`;
+    const header: string[] = [];
+    TANK_X.forEach((tx, i) => {
+      const no = `${n}0${i + 1}`;
+      // サンプリング元弁（タンク頂部のノズル）→ サンプリング装置 → サンプリングドレン弁 → ドレン管
+      const vs = V(`V-S${no}`, `T-${no} サンプリング元弁`, tx + 30, Y(80), "close", yardArea);
+      const smp = add(`SMP-${no}`, "sampler", tx + 62, Y(45), yardArea, { name: `T-${no} サンプリング装置`, volumeL: 5 });
+      const vsd = V(`V-SD${no}`, `T-${no} サンプリングドレン弁（→ドレンタンク DT-${n}）`, tx + 94, Y(45), "close", yardArea);
+      const hj = J(`J-SH${no}`, tx + 115, Y(18), area);
+      pipe(`T-${no}`, vs, 25, [[tx + 30, Y(140)]]);
+      pipe(vs, smp, 25, [[tx + 30, Y(45)]]);
+      pipe(smp, vsd, 25);
+      pipe(vsd, hj, 25, [[tx + 115, Y(45)]]);
+      header.push(hj);
+    });
+    const dt = add(`DT-${n}`, "tank", 1860, Y(75), area, {
+      name: `第${n}ヤード ドレンタンク DT-${n}`,
+      capacityKL: 10,
+      small: true,
+    });
+    chain(40, ...header);
+    pipe(header[header.length - 1], dt, 40, [[1860, Y(18)]]);
+    // ドレンタンクの直近にドレンポンプを置き、ドレンフィルターを通してスロップタンクへ送る
+    const vo = V(`V-DT${n}O`, `ドレンタンク DT-${n} 出口弁`, 1860, Y(112), "close", area);
+    const dp = add(`DP-${n}`, "transferPump", 1860, Y(145), area, { name: `第${n}ヤード ドレンポンプ DP-${n}`, volumeL: 15 });
+    const cv = add(`CV-DP${n}`, "check", 1860, Y(188), area, { name: `ドレンポンプ DP-${n} 逆止弁` });
+    const flt = add(`FLT-DT${n}`, "filter", 1860, Y(228), area, { name: `第${n}ヤード ドレンフィルター`, volumeL: 80 });
+    const vsl = V(`V-DT${n}S`, `ドレンタンク DT-${n} スロップ送油弁（→スロップタンク SLP-1）`, 1860, Y(270), "close", area);
+    chain(50, dt, vo, dp, cv, flt, vsl);
+    setDir(dp, vo);
+    setDir(cv, dp);
+    pipe(flt, drain(`D-FDT${n}`, `第${n}ヤード ドレンフィルター ドレン`, 1890, Y(228), area, { sizeA: 25 }), 25);
+    pipe(vsl, slop, 50, [
+      [1860, Y(690)],
+      [1820, Y(690)],
+    ]);
+  }
+  drainYard(1, top);
+  drainYard(2, bottom);
 
   return {
     name: "仮想空港 給油施設（試作）",

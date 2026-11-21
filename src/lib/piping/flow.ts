@@ -208,7 +208,7 @@ export function stepFlow(
 }
 
 /** 当日の選択などで決まる経路の種類（循環・移送・消火試験・ユーザー定義の作業の経路） */
-export type RouteFlowKind = "flush" | "transfer" | "fire" | "route";
+export type RouteFlowKind = "flush" | "transfer" | "tankTransfer" | "fire" | "route";
 
 /** 図面・凡例に出す流れ（同じ経路を使う工程はまとめる） */
 export type RouteFlowGroup = {
@@ -265,6 +265,8 @@ export function routeFlowGroups(
           ? n === 0
             ? ["移送の流れ（払出系統）", ROUTE_FLOW_COLORS.issue]
             : ["移送の流れ（移送系統）", ROUTE_FLOW_COLORS.move]
+          : kind === "tankTransfer"
+            ? ["移送の流れ（移送経路）", ROUTE_FLOW_COLORS.move]
           : kind === "fire"
             ? foam
               ? ["泡の流れ（泡系統）", ROUTE_FLOW_COLORS.foam]
