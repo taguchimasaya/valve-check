@@ -688,6 +688,21 @@ export default function PipingDiagram({
         );
       case "tank":
         if (n.recovery || n.small) {
+          // ドレンタンク・スロップタンクは、用途（ドレンタンク／スロップタンク）を大きく、機器番号を下に小さく書く
+          const purpose = n.name.includes("スロップ") ? "スロップタンク" : n.name.includes("ドレンタンク") ? "ドレンタンク" : null;
+          if (purpose && !n.recovery) {
+            return (
+              <g>
+                <rect x={n.x - 34} y={n.y - 18} width={68} height={36} rx={5} className="fill-amber-50 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.6} />
+                <text x={n.x} y={n.y - 1} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#b45309">
+                  {purpose}
+                </text>
+                <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
+                  {n.label}
+                </text>
+              </g>
+            );
+          }
           return (
             <g>
               <rect x={n.x - 28} y={n.y - 18} width={56} height={36} rx={5} className="fill-amber-50 dark:fill-amber-950" stroke="#b45309" strokeWidth={1.6} />
@@ -695,15 +710,7 @@ export default function PipingDiagram({
                 {n.label}
               </text>
               <text x={n.x} y={n.y + 11} textAnchor="middle" fontSize={7.5} fill="#b45309">
-                {n.recovery
-                  ? "回収タンク"
-                  : n.fluid && n.fluid !== "fuel"
-                    ? FLUID_LABEL[n.fluid]
-                    : n.name.includes("ドレンタンク")
-                      ? "ドレンタンク"
-                      : n.name.includes("スロップ")
-                        ? "スロップタンク"
-                        : "メンテ用タンク"}
+                {n.recovery ? "回収タンク" : n.fluid && n.fluid !== "fuel" ? FLUID_LABEL[n.fluid] : "メンテ用タンク"}
               </text>
             </g>
           );

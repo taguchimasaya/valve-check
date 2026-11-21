@@ -653,7 +653,7 @@ export function buildFacility(): Facility {
   // → ドレンタンク出口弁 → ドレンポンプ → 逆止弁 → ドレンフィルター → スロップ送油弁 → スロップタンク
   // 既存の機器・配管の番号（P###）を変えないよう、最後に追加する（保存済みチェックリストは配管番号を持つため）。
   const slop = add("SLP-1", "tank", 1820, 750, "スロップタンク", {
-    name: "スロップタンク SLP-1（ドレンタンクからの受入）",
+    name: "スロップタンク SLP-1",
     capacityKL: 50,
     small: true,
   });
@@ -691,13 +691,27 @@ export function buildFacility(): Facility {
     setDir(dp, vo);
     setDir(cv, dp);
     pipe(flt, drain(`D-FDT${n}`, `第${n}ヤード ドレンフィルター ドレン`, 1890, Y(228), area, { sizeA: 25 }), 25);
-    pipe(vsl, slop, 50, [
-      [1860, Y(690)],
-      [1820, Y(690)],
-    ]);
+    // スロップタンクへは右側から入る（上はスロップ移送ラインの出口に使う）
+    pipe(vsl, slop, 50, [[1860, 750]]);
   }
   drainYard(1, top);
   drainYard(2, bottom);
+
+  // スロップ移送ライン：スロップタンク → 出口弁 → スロップ移送ポンプ（専用）→ 逆止弁 → 吐出弁
+  // → 移送ポンプ吐出主管（J-TDD）。移送ラインから受入連絡管・受入ヘッダーを通ってメインタンクへ戻す。
+  // 既存の配管を分けないよう、吐出主管の既存の分岐点（J-TDD）につなぐ。吐出弁は分岐点の近くに置く（主管側の区間を広げない）
+  const sa = "スロップタンク";
+  const vSo = V("V-SLPO", "スロップタンク 出口弁", 1820, 700, "close", sa);
+  const sp = add("SP-1", "transferPump", 1690, 600, sa, { name: "スロップ移送ポンプ SP-1", volumeL: 15 });
+  const cvSp = add("CV-SP1", "check", 1640, 600, sa, { name: "スロップ移送ポンプ SP-1 逆止弁" });
+  const vSd = V("V-SP1D", "スロップ移送ポンプ 吐出弁（→移送ポンプ吐出主管）", 1160, 705, "close", sa);
+  pipe(slop, vSo, 50);
+  pipe(vSo, sp, 50, [[1820, 600]]);
+  pipe(sp, cvSp, 50);
+  pipe(cvSp, vSd, 50, [[1160, 600]]);
+  pipe(vSd, tdd, 50);
+  setDir(sp, vSo);
+  setDir(cvSp, sp);
 
   return {
     name: "仮想空港 給油施設（試作）",

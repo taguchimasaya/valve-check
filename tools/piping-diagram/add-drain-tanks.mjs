@@ -1,6 +1,7 @@
 // 仮想空港の系統図（登録シート Excel）に、ドレン設備を追加した Excel を作る。
 //   各ヤードにドレンタンク1基（DT-1・DT-2）。ドレンタンクは各タンクのサンプリング装置（SMP-101〜206）とつながる。
 //   ドレンタンクの直近にドレンポンプ（DP-1・DP-2）を置き、ドレンフィルターを通してスロップタンク（SLP-1）へ送る。
+//   スロップタンクから専用のスロップ移送ポンプ（SP-1）で移送ポンプ吐出主管（既存の分岐点 J-TDD）へ戻し、メインタンクへ移送する。
 // 追加する機器・配管・座標は src/lib/piping/facility.ts（プログラム内の仮想施設）と同じ。
 //
 // 使い方（プロジェクト直下で）:
@@ -17,7 +18,7 @@ import { buildFacility } from "../../src/lib/piping/facility.ts";
 import { diagramToFacility, diagramToWorkbook, validateDiagram, workbookToDiagram } from "../../src/lib/piping/diagramData.ts";
 
 /** ドレン設備として追加する機器（facility.ts の追加分） */
-export const DRAIN_NODE = (id) => /^(SLP-1|DT-[12]|V-DT[12][OS]|DP-[12]|CV-DP[12]|FLT-DT[12]|D-FDT[12]|V-S\d{3}|SMP-\d{3}|V-SD\d{3}|J-SH\d{3})$/.test(id);
+export const DRAIN_NODE = (id) => /^(SLP-1|V-SLPO|SP-1|CV-SP1|V-SP1D|DT-[12]|V-DT[12][OS]|DP-[12]|CV-DP[12]|FLT-DT[12]|D-FDT[12]|V-S\d{3}|SMP-\d{3}|V-SD\d{3}|J-SH\d{3})$/.test(id);
 const YARD_BOX = /^第([12])ヤード（/;
 
 /** プログラム内の仮想施設から、追加分の機器・配管と、広げた区画枠を取り出す */
@@ -68,7 +69,7 @@ export function addDrainTanks(d) {
   const have = new Set(d.nodes.map((n) => n.code));
   const dup = add.nodes.filter((n) => have.has(n.id)).map((n) => n.id);
   if (dup.length) throw new Error(`すでにある機器番号です（追加済み？）：${dup.slice(0, 10).join("・")}`);
-  for (const t of ["T-101", "T-106", "T-201", "T-206"]) if (!have.has(t)) throw new Error(`タンク ${t} がありません（仮想空港の系統図ではない？）`);
+  for (const t of ["T-101", "T-106", "T-201", "T-206", "J-TDD"]) if (!have.has(t)) throw new Error(`タンク ${t} がありません（仮想空港の系統図ではない？）`);
 
   // 配管番号：既存の P### の続き
   let seq = Math.max(0, ...d.pipes.map((p) => Number(/^P(\d+)$/.exec(p.code)?.[1] ?? 0)));
@@ -125,7 +126,7 @@ export function addDrainTanks(d) {
   });
   return {
     ...d,
-    note: [d.note, "ドレン設備（ドレンタンク DT-1・DT-2、サンプリング装置、ドレンポンプ、ドレンフィルター、スロップタンク SLP-1）を追加"].filter(Boolean).join(" ／ "),
+    note: [d.note, "ドレン設備（ドレンタンク DT-1・DT-2、サンプリング装置、ドレンポンプ、ドレンフィルター、スロップタンク SLP-1、スロップ移送ポンプ SP-1 と移送ラインへの戻り）を追加"].filter(Boolean).join(" ／ "),
     nodes,
     symbols,
     pipes,

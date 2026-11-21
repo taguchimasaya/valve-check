@@ -38,6 +38,23 @@ test("ドレンタンク → ドレンポンプ → ドレンフィルター →
   assert.deepEqual(tankTransferPumps(g, "SLP-1", "DT-1"), []);
 });
 
+test("スロップタンク → スロップ移送ポンプ → 移送ポンプ吐出主管 → 受入ヘッダー → メインタンク", () => {
+  for (const t of ["T-101", "T-206"]) {
+    const opts = tankTransferPumps(g, "SLP-1", t);
+    assert.deepEqual(opts, ["SP-1"], t);
+    const r = tankTransferRoute(g, "SLP-1", t, "SP-1");
+    const ids = r.nodeIds;
+    assert.deepEqual(ids.slice(0, 5), ["SLP-1", "V-SLPO", "SP-1", "CV-SP1", "V-SP1D"]);
+    assert.ok(ids.includes("J-TDD") && ids.includes("V-TDM"), "移送ポンプ吐出主管を通る");
+    assert.ok(ids.includes(`V-${t.slice(2)}R`), "受入弁から入る");
+  }
+  const r = buildTankTransfer(g, { src: "SLP-1", dest: "T-101", pump: "SP-1" }, base);
+  assert.deepEqual(rowOf(r.rows, "SP-1").states, ["close", null, "open", "close"]);
+  assert.deepEqual(rowOf(r.rows, "V-SP1D").states, ["close", "open", null, "close"]);
+  // 分岐先：移送ポンプ側・充填ラインには回り込まない（逆止弁・作業用の弁）。受入連絡弁の第2ヤード側は閉
+  assert.equal(rowOf(r.rows, "V-RX2").states[1], "close");
+});
+
 test("タンク間移送のチェックリスト：ラインナップで開、移送でポンプ起動、復旧で停止・元に戻す", () => {
   const r = buildTankTransfer(g, { src: "DT-1", dest: "SLP-1", pump: "DP-1" }, base);
   assert.equal(r.error, undefined);
